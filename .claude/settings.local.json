@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git fetch *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git symbolic-ref *)",
+      "Bash(mkdir -p niko)",
+      "Bash(mv .git .gitignore docs niko/)",
+      "Bash(git add *)"
+    ]
+  }
+}
