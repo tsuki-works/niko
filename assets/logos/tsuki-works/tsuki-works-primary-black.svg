@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 100" width="300" height="100">
+  <title>Tsuki Works — primary logo (black)</title>
+  <desc>Crescent moon mark with wordmark tucked into the opening. Black version for light backgrounds.</desc>
+  <path d="M 82.857 17.17 A 40 40 0 1 0 82.857 82.83 A 34 34 0 1 1 82.857 17.17 Z" fill="#111111"/>
+  <text x="48" y="60" fill="#111111" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="28" font-weight="400" letter-spacing="1.1">tsuki works</text>
+</svg>

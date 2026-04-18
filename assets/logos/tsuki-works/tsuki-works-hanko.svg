@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <title>Tsuki Works — hanko seal</title>
+  <desc>Vermillion red circular seal with a white crescent moon. Fixed colors for consistent appearance on any background.</desc>
+  <circle cx="60" cy="60" r="55" fill="#C8352C"/>
+  <path d="M 82.857 27.17 A 40 40 0 1 0 82.857 92.83 A 34 34 0 1 1 82.857 27.17 Z" fill="#FFFFFF"/>
+</svg>
