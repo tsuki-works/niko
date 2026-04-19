@@ -21,7 +21,7 @@ Some responsibilities are **shared across the whole team** rather than assigned 
 
 ### Meet — Product, Platform & LLM Lead
 **Primary:** Product ownership, core backend, cloud platform + CI/CD, LLM engineering
-**Secondary:** Toast POS integration (Phase 3.2), business operations
+**Secondary:** Toast POS integration (Phase 3.2)
 
 | Responsibility | Details |
 |---------------|---------|
@@ -33,7 +33,6 @@ Some responsibilities are **shared across the whole team** rather than assigned 
 | Analytics data pipeline | Order / call aggregation, metric computation for the dashboard |
 | POS — Toast | Toast API integration (Phase 3.2) |
 | Sprint planning | Facilitate planning sessions, maintain GitHub Project #2 |
-| Business ops | Legal (deferred to Phase 3/4), finance, company formation |
 
 > **Load note:** Meet's lane is deliberately the heaviest — it sits at the product/tech decision intersection during Phases 0–2. Phase 0 infra + CI/CD is front-loaded work that lightens by Phase 2, freeing capacity for the Toast integration in Phase 3.
 
@@ -101,6 +100,19 @@ See §7 — separate from routine customer support. Handles production alerts an
 **Participants:** Whoever ships the feature documents it.
 
 Daniel owns user-facing help content; engineering docs (API references, runbooks, architecture notes) are authored by whoever built the thing being documented.
+
+### Business operations (legal, finance, company formation)
+**Participants:** All 4
+**Coordinator:** Rotates per workstream — see below
+
+Business ops is explicitly not a single person's job. All four founders have skin in the game on legal structure and finances, and decisions here have unanimous-agreement gates anyway (see §4 Business Decisions). Workstream coordination:
+
+- **LLC formation & operating agreement** — deferred to Phase 3/4 per project memory. When it resumes, all 4 participate; coordinator picked at that point (likely whoever is lightest on sprint load).
+- **Finance** (bookkeeping, expense tracking, shared service billing) — rotates per quarter; no single owner.
+- **Third-party service accounts & billing** — whoever sets up a given service owns its account admin until someone else takes it over; credentials in shared Secret Manager.
+- **Contracts / partnerships / vendor negotiation** — unanimous decision per §4; whoever has the relationship drives the conversation.
+
+This keeps Meet free to focus on the product + platform lane and distributes legal/financial literacy across the team.
 
 ---
 
