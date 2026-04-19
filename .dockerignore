@@ -1,0 +1,15 @@
+.git
+.github
+.claude
+.mcp.json
+.mcp.json.example
+docs
+assets
+*.md
+__pycache__
+*.pyc
+.venv
+venv
+.env
+.env.*
+.DS_Store
