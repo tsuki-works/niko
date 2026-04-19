@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "discord": {
+      "command": "npx",
+      "args": ["-y", "@quadslab.io/discord-mcp"],
+      "env": {
+        "DISCORD_TOKEN": "REPLACE_WITH_YOUR_BOT_TOKEN",
+        "DISCORD_GUILD_ID": "1495086675523797032"
+      }
+    }
+  }
+}

@@ -20,6 +20,19 @@ Key locations:
 ## Available skills
 
 - **`/current-sprint`** — surfaces the active sprint from the project board. Prefers items with Status = "In progress"; falls back to the earliest incomplete Phase.
+- **`/pr-driven-dev`** — enforces feature-branch + PR workflow; never commit directly to `master`. Includes a rescue flow if edits start on `master` by accident.
+
+## Discord integration
+
+The team coordinates in the **Tsuki Works** Discord server. Two integration paths are live:
+
+- **GitHub → Discord webhooks (passive):**
+  - `#code-review` — PR opened/reviewed/merged, PR review comments, issue comments.
+  - `#ci-alerts` — pushes, check runs, workflow runs, status events.
+  Configured on the repo via `gh api repos/tsuki-works/niko/hooks`. Don't duplicate — before adding a webhook, `gh api repos/tsuki-works/niko/hooks` to see what's already there.
+- **MCP (active, Claude-initiated):** `.mcp.json` at the repo root configures the `discord` MCP server (`@quadslab.io/discord-mcp`). File is gitignored; `.mcp.json.example` is the committed template. Use the Discord MCP tools to post to specific channels when the user asks for team updates, decisions-log entries, etc.
+
+Useful channel IDs: `#code-review` = `1495194166886400021`, `#ci-alerts` = `1495194041246285857`, `#okrs-roadmap` = `1495192531766345919`, `#decisions-log` = `1495192153947766885`, `#blockers` = `1495192657545396354`, `#general` (COMPANY) = `1495192027913130074`.
 
 ## Decisions & non-obvious context
 
