@@ -238,7 +238,7 @@ Guiding principle: **free-tier-first**. We have no outside funding, so every pic
 | Telephony | **Twilio Voice** | $15 trial credit; ~$0.0085/min inbound US after | Telnyx (~40% cheaper/min at scale) |
 | STT | **Deepgram (Nova-2 streaming)** | $200 free credit — weeks of POC testing | Stay on Deepgram |
 | TTS | **ElevenLabs** | 10k chars/mo free tier | ElevenLabs Pro ($22/mo) or Cartesia for lower latency |
-| LLM | **Anthropic Claude Haiku 4.5** | Apply to Claude for Startups for credits; cheap + fast, strong instruction-following for constrained menu flows | Claude Sonnet for harder conversations |
+| LLM | **Anthropic Claude Haiku 4.5** | Pay-as-you-go via Console (Claude for Startups requires VC backing — revisit post-raise); Haiku is cheap + fast, strong instruction-following for constrained menu flows | Claude Sonnet for harder conversations |
 | Primary POS (MVP) | **Square** | Developer sandbox + API free | — (Toast/Clover added Phase 3) |
 | Hosting | **GCP — Cloud Run + Firestore** | $300 credit (90d) + always-free Cloud Run (2M req/mo) + Firestore free tier. Scales to zero = $0 when idle. | Stay on GCP; raise tier + min-instances when funded |
 | Frontend framework | **Next.js 15 (static export)** | Built inside monolith — no separate Vercel account needed | Split to Vercel Pro if dashboard grows beyond static export |
