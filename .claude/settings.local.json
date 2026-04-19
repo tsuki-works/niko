@@ -8,7 +8,15 @@
       "Bash(git symbolic-ref *)",
       "Bash(mkdir -p niko)",
       "Bash(mv .git .gitignore docs niko/)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git branch *)",
+      "Bash(gh api *)",
+      "Bash(gh project *)",
+      "Bash(gh auth *)",
+      "Bash(mkdir -p /tmp/niko-issues)",
+      "Read(//tmp/**)"
     ]
   }
 }
