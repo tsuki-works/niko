@@ -75,23 +75,27 @@
 ### Voice / AI Pipeline
 | Component | Recommended | Alternative | Rationale |
 |-----------|-------------|-------------|-----------|
-| **Telephony** | Twilio Voice | Telnyx / Vonage | Most mature API, best docs, programmable voice |
-| **STT (Speech-to-Text)** | Deepgram Nova-3 | OpenAI Whisper API | Real-time streaming, low latency, high accuracy |
-| **LLM (Conversation)** | Anthropic Claude Sonnet | OpenAI GPT-4o | Strong instruction following, structured output |
-| **TTS (Text-to-Speech)** | ElevenLabs | OpenAI TTS / PlayHT | Most natural voices, low latency streaming |
+| **Telephony** | Twilio Voice | Telnyx / Vonage | Most mature API, best docs, programmable voice. $15 trial credit for POC; migrate to Telnyx once volume makes per-minute margin matter |
+| **STT (Speech-to-Text)** | Deepgram Nova-2 (streaming) | OpenAI Whisper API | Real-time streaming, low latency, high accuracy. $200 free credit covers POC |
+| **LLM (Conversation)** | Anthropic Claude Haiku 4.5 (POC/MVP) → Sonnet (production) | OpenAI GPT-4o | Haiku is cheap + fast with strong instruction following for constrained menu flows. Upgrade to Sonnet for harder conversations once funded. Apply to Claude for Startups for credits |
+| **TTS (Text-to-Speech)** | ElevenLabs | OpenAI TTS / PlayHT / Cartesia | Most natural voices, low latency streaming. 10k chars/mo free tier |
 
 ### Infrastructure
-| Component | Recommended | Alternative | Rationale |
-|-----------|-------------|-------------|-----------|
-| **Cloud** | AWS | GCP / Azure | Broadest service offering, best for startups (credits) |
-| **Compute** | ECS Fargate (containers) | EC2 / Lambda | Serverless containers, auto-scaling, no server mgmt |
-| **Database** | PostgreSQL (RDS) | Supabase / PlanetScale | Reliable, scalable, great for structured restaurant data |
-| **Cache** | Redis (ElastiCache) | Memcached | Session state, call state, real-time data |
-| **Object Storage** | S3 | — | Call recordings, transcripts, menu images |
-| **CDN** | CloudFront | — | Low-latency asset delivery |
-| **DNS** | Route 53 | Cloudflare | Integrated with AWS |
-| **Monitoring** | Datadog | Grafana + Prometheus | Full-stack observability (traces, logs, metrics) |
-| **CI/CD** | GitHub Actions | GitLab CI | Integrated with GitHub, simple YAML config |
+
+Guiding principle for Phase 0/1/2: **free-tier-first**. Swap to paid tiers once revenue or startup credits justify it.
+
+| Component | Recommended (POC → MVP) | Production swap | Rationale |
+|-----------|------------------------|------------------|-----------|
+| **Cloud** | GCP | Stay on GCP | $300 credit (90d) + always-free Cloud Run; strong free-tier bundle |
+| **Compute** | Cloud Run (single service, scale-to-zero) | Cloud Run (min-instances≥1, higher concurrency) | Managed containers, auto-scale, $0 when idle. 60min request timeout accommodates phone calls |
+| **Database** | Firestore (free tier) | Cloud SQL (PostgreSQL) | Firestore free tier covers POC/MVP scale; migrate to Cloud SQL when relational queries or multi-restaurant analytics demand it |
+| **Cache** | In-process (per-container) → Memorystore Redis | Memorystore Redis | Skip managed cache during POC; add when session-state concurrency needs cross-instance sharing |
+| **Object Storage** | Google Cloud Storage (free tier: 5GB) | GCS standard | Call recordings, transcripts, menu images |
+| **CDN** | Cloud CDN (only if needed) | Cloud CDN | Cloud Run fronts requests directly during POC; add CDN for static assets at MVP |
+| **DNS** | Cloud DNS | Cloud DNS | Integrated with GCP |
+| **Monitoring** | Cloud Logging + Cloud Trace (free tier) | Datadog or Grafana Cloud | Start with GCP-native observability; move to Datadog when tracing across services gets painful |
+| **Secrets** | Secret Manager | Secret Manager | Referenced by Cloud Run env at deploy time |
+| **CI/CD** | GitHub Actions → Cloud Run | Same, plus staging env | Unlimited free minutes on public repos; single workflow deploys on push to `master` |
 
 ### Third-Party Services
 | Service | Provider | Purpose |
@@ -261,14 +265,14 @@ Caller finishes speaking
 
 | Component | POC | MVP | Production |
 |-----------|-----|-----|------------|
-| Compute | Single EC2 / local | ECS Fargate (2 tasks) | ECS Fargate (auto-scale) |
-| Database | SQLite / local Postgres | RDS PostgreSQL (single) | RDS PostgreSQL (multi-AZ) |
-| Cache | Local Redis | ElastiCache (single) | ElastiCache (cluster) |
-| Storage | Local filesystem | S3 (single region) | S3 (cross-region replication) |
-| Monitoring | Console logs | Sentry + CloudWatch | Datadog full stack |
-| CI/CD | Manual deploy | GitHub Actions → ECS | GitHub Actions + staging env |
-| Domains | ngrok tunnel | Custom domain (single) | Custom domains + CDN |
-| Cost estimate | ~$50/mo | ~$200-400/mo | ~$1,000-3,000/mo |
+| Compute | Cloud Run (scale-to-zero, 1 service) | Cloud Run (min-instances=1) | Cloud Run (min-instances≥2, higher concurrency) |
+| Database | Firestore (free tier) | Firestore or Cloud SQL (small) | Cloud SQL PostgreSQL (HA, read replicas) |
+| Cache | In-process only | Memorystore Redis (basic) | Memorystore Redis (standard HA) |
+| Storage | GCS (free tier: 5GB) | GCS standard (single region) | GCS multi-region |
+| Monitoring | Cloud Logging + Trace | + Sentry | Datadog / Grafana Cloud full stack |
+| CI/CD | GitHub Actions → Cloud Run | Same, auto on `master` merge | + staging env + canary deploy |
+| Domains | `*.run.app` default | Custom domain (single) | Custom domains + Cloud CDN |
+| Cost estimate | **~$0–20/mo** (credits + telephony) | ~$80–200/mo | ~$800–2,500/mo |
 
 ---
 
@@ -278,26 +282,102 @@ Caller finishes speaking
 # Prerequisites
 - Python 3.12+
 - Node.js 20+
-- Docker + Docker Compose
-- PostgreSQL 16 (or Docker)
-- Redis (or Docker)
+- Docker (for local parity with Cloud Run)
+- gcloud CLI (for deploys; not needed for local dev)
 
 # Quick start (target)
 git clone <repo>
 cp .env.example .env          # Add API keys
-docker-compose up -d           # Start Postgres + Redis
 pip install -r requirements.txt
-python manage.py migrate
-python manage.py runserver     # Backend API
+cd web && npm install && npm run build && cd ..
+uvicorn app.main:app --reload  # FastAPI serves API + static web/
 
-cd frontend
-npm install
-npm run dev                    # Dashboard at localhost:3000
+# For Twilio webhook testing, expose localhost:
+ngrok http 8000
 ```
 
 ### Required API Keys for Development
 - Twilio (Account SID, Auth Token, Phone Number)
 - Deepgram (API Key)
-- Anthropic or OpenAI (API Key)
+- Anthropic (API Key)
 - ElevenLabs (API Key)
 - Square (Sandbox Application ID, Access Token)
+- GCP service account JSON (for Firestore + Secret Manager)
+
+---
+
+## 9. Deployment Model
+
+**One monolith, one Dockerfile, one Cloud Run service, auto-deployed from `master`.**
+
+```
+Push to master
+      │
+      ▼
+GitHub Actions (.github/workflows/deploy.yml)
+      │
+      ├── 1. Build Docker image (multi-stage: node builds web/, python serves)
+      ├── 2. Push to GCP Artifact Registry
+      ├── 3. gcloud run deploy (rolling, zero-downtime)
+      │
+      ▼
+Live on Cloud Run (~2-3 min after push)
+```
+
+**Why one service (not two):**
+- Team of 4, POC stage — one deploy target, one log stream, one URL to remember
+- FastAPI serves Twilio webhooks, WebSocket audio streams, dashboard REST, and the built Next.js static bundle from the same process
+- Splitting into separate services (voice worker + dashboard API) is a Phase 3+ concern when independent scaling matters
+
+**Dockerfile shape:**
+```dockerfile
+# Stage 1: build Next.js static export
+FROM node:20-alpine AS web-builder
+WORKDIR /web
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build    # outputs to /web/out
+
+# Stage 2: python runtime
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app/ ./app/
+COPY --from=web-builder /web/out ./app/static/
+ENV PORT=8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+**GitHub Actions workflow (outline):**
+```yaml
+name: Deploy to Cloud Run
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write          # Workload Identity Federation (no long-lived keys)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT/niko/app:${{ github.sha }}
+      - run: gcloud run deploy niko --image $REGION-docker.pkg.dev/$PROJECT/niko/app:${{ github.sha }} --region $REGION
+```
+
+**Secrets / env vars:**
+- Store API keys (Twilio, Deepgram, Anthropic, ElevenLabs, Square) in **Secret Manager**
+- Reference them from Cloud Run via `--set-secrets` at deploy time — never bake secrets into the image
+
+**Escape hatches:**
+- **Cloud Run WebSocket strain:** long-lived audio streams count against per-instance concurrency. If POC exposes issues, move just the voice worker to Fly.io (WebSocket-native networking) and keep the dashboard on Cloud Run.
+- **Cold starts:** scale-to-zero adds ~1–2s on the first request after idle. Acceptable for POC; set `--min-instances=1` (~$5/mo) when the first restaurant goes live.
