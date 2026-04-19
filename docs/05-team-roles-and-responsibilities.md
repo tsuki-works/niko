@@ -9,63 +9,64 @@
 
 ## 1. Team Overview
 
-We are a 4-person founding team. Each member will wear multiple hats, but having primary ownership areas ensures accountability and reduces coordination overhead.
+We are a 4-person founding team: **three backend engineers** (Meet, Sandeep, Kailash) and **one frontend engineer** (Daniel). Each member has a primary ownership area but will wear multiple hats given the team's size.
 
-> **Important:** The role assignments below are a starting proposal. Discuss and adjust based on each person's actual skills, interests, and availability during the Week 1 kickoff.
+The backend weight reflects where the product's difficulty lives: real-time voice pipeline, LLM orchestration, POS integrations, and infrastructure. Daniel owns the full dashboard + marketing surface solo, which keeps the frontend lane well-defined.
 
 ---
 
-## 2. Proposed Role Assignments
+## 2. Role Assignments
 
-### Meet — Product & Frontend Lead
-**Primary:** Product management, frontend development, UX
-**Secondary:** Business operations, customer research
+### Meet — Product & Core Backend Lead
+**Primary:** Product ownership + core backend API (FastAPI app, data layer, business logic)
+**Secondary:** POS integrations support, business operations
 
 | Responsibility | Details |
 |---------------|---------|
 | Product ownership | Maintain PRD, prioritize backlog, define requirements |
-| Frontend development | Restaurant dashboard (Next.js), landing page |
-| UX/UI design | Wireframes, user flows, design system |
+| Core backend | FastAPI app structure, data models (Firestore schemas), business logic |
+| Analytics data pipeline | Order / call aggregation, metric computation for the dashboard |
 | Customer discovery | Talk to restaurant owners, gather feedback |
-| Sprint planning | Facilitate planning sessions, maintain board |
-| Business ops | Legal, finance, company formation |
+| Sprint planning | Facilitate planning sessions, maintain GitHub Project #2 |
+| Business ops | Legal (deferred to Phase 3/4), finance, company formation |
 
-### Sandeep — Backend & Voice Pipeline Lead
-**Primary:** Voice orchestrator, AI/LLM pipeline, core backend
-**Secondary:** Infrastructure, performance optimization
+### Sandeep — Voice Pipeline Backend Lead
+**Primary:** Voice orchestrator, AI/LLM pipeline, real-time audio
+**Secondary:** Performance optimization, conversation quality
 
 | Responsibility | Details |
 |---------------|---------|
-| Voice pipeline | STT → LLM → TTS real-time streaming architecture |
-| LLM engineering | Prompt engineering, conversation flows, context management |
-| Core backend API | FastAPI services, data models, business logic |
+| Voice pipeline | Deepgram STT → Claude Haiku LLM → ElevenLabs TTS streaming |
+| LLM engineering | Prompt engineering, menu context injection, conversation flows |
 | Audio engineering | Latency optimization, barge-in detection, audio quality |
 | Performance | Ensure < 1 second voice response latency |
+| Call state management | Session state, interruption handling, timeout/silence detection |
 
-### Kailash — Infrastructure & Integrations Lead
-**Primary:** DevOps, cloud infrastructure, POS integrations
-**Secondary:** Backend development, security
-
-| Responsibility | Details |
-|---------------|---------|
-| Cloud infrastructure | AWS setup, ECS, RDS, ElastiCache, S3 |
-| CI/CD | GitHub Actions pipelines, automated testing, deploys |
-| POS integrations | Square, Toast, Clover API integrations |
-| Telephony | Twilio setup, phone number management, webhooks |
-| Monitoring | Logging, alerting, error tracking (Sentry/Datadog) |
-| Security | Authentication, data encryption, PCI compliance |
-
-### Daniel — Full-Stack & Growth Lead
-**Primary:** Full-stack development, analytics, growth
-**Secondary:** Customer support, documentation
+### Kailash — Infrastructure & Integrations Backend Lead
+**Primary:** DevOps, GCP infrastructure, POS integrations, telephony
+**Secondary:** Security, monitoring
 
 | Responsibility | Details |
 |---------------|---------|
-| Full-stack dev | Support both frontend and backend as needed |
-| Analytics | Dashboard analytics, reporting, data pipeline |
-| SMS/notifications | Twilio SMS, email notifications, order confirmations |
-| Growth | Marketing site, SEO, content, customer acquisition |
-| Documentation | API docs, internal guides, onboarding materials |
+| Cloud infrastructure | GCP project, Cloud Run, Firestore, Artifact Registry, Workload Identity Federation |
+| CI/CD | GitHub Actions → Cloud Run auto-deploy from `master`, secrets via Secret Manager |
+| POS integrations | Square (MVP), then Toast, Clover API integrations |
+| Telephony | Twilio setup, phone numbers, webhooks, Media Streams WebSocket |
+| Monitoring | Cloud Logging + Trace, Sentry when added |
+| Security | Auth, data encryption, PCI scope minimization via tokenization |
+
+### Daniel — Frontend & Growth Lead
+**Primary:** Dashboard (Next.js), marketing site, UX/UI
+**Secondary:** Customer support, documentation, branding
+
+| Responsibility | Details |
+|---------------|---------|
+| Dashboard | Next.js 15 (static export), served by FastAPI monolith; menu editor, call/order history, analytics UI |
+| UX/UI design | Wireframes, user flows, design system, component library |
+| Branding | Logos, visual identity (already shipped Tsuki Works brand to `assets/`) |
+| Landing / marketing site | Public marketing pages, SEO |
+| SMS/notifications UX | Copy + flows for Twilio SMS order confirmations |
+| Documentation | User-facing help content, onboarding materials |
 | Customer support | Handle early customer issues, build support processes |
 
 ---
@@ -113,7 +114,7 @@ We are a 4-person founding team. Each member will wear multiple hats, but having
 
 ## 5. Code Review Policy
 
-- Every PR requires **at least 1 approval** before merge
+- Every PR requires **at least 1 approval** before merge (enforced by `master` branch ruleset)
 - Reviewer should be someone from a **different domain** when possible (cross-pollination)
 - Review within **24 hours** of PR creation
 - Author is responsible for merging after approval
@@ -121,11 +122,13 @@ We are a 4-person founding team. Each member will wear multiple hats, but having
 ### Review Rotation
 | PR Domain | Primary Reviewer | Secondary |
 |-----------|-----------------|-----------|
-| Frontend | Daniel | Sandeep |
-| Backend / API | Meet | Kailash |
-| Voice pipeline | Kailash | Daniel |
-| Infrastructure | Sandeep | Meet |
-| POS integrations | Daniel | Sandeep |
+| Frontend (dashboard, marketing site) | Daniel | Meet |
+| Core backend / API | Meet | Kailash |
+| Voice pipeline | Sandeep | Kailash |
+| Infrastructure (Cloud Run, CI/CD, GCP) | Kailash | Sandeep |
+| POS integrations | Kailash | Meet |
+
+**Note on cross-pollination:** With 3 backend engineers and 1 frontend engineer, frontend PRs won't always get a cross-domain reviewer. Meet (who splits product + backend) is the natural cross-domain backup for Daniel's frontend PRs; where that's unavailable, Daniel self-merges after addressing automated checks.
 
 ---
 
