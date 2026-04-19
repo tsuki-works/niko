@@ -4,6 +4,13 @@
 .mcp.json
 node_modules/
 
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
 # Claude Code: per-developer local permissions (team-shared config lives in settings.json)
 .claude/settings.local.json
 **/.claude/settings.local.json
