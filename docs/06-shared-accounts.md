@@ -10,7 +10,7 @@ Phase 0 exit requires shared accounts for every service in the niko stack. Each 
 |---|---|---|---|---|
 | GCP | Cloud Run hosting + Firestore | Meet | ✅ Done | Live; Cloud Run auto-deploys from `master` via `.github/workflows/deploy.yml` |
 | Twilio | Voice telephony | Meet | ✅ Done | Trial account, $15 credit. Toronto (647) number — swap to US before pilot. Upgrade to paid before Phase 1 demo day to drop trial watermark. Creds in `#shared-creds` |
-| Deepgram | STT (Nova-2 streaming) | Meet | ⬜ Todo | $200 free credit on signup |
+| Deepgram | STT (Nova-2 streaming) | Meet | ✅ Done | $200 signup credit. Key `niko-poc` (member scope). Creds in `#shared-creds` |
 | Anthropic | Claude Haiku 4.5 LLM | Meet | ✅ Done | Pay-as-you-go on Console; Claude for Startups is VC-gated (revisit post-raise). Key posted to `#shared-creds` |
 | ElevenLabs | TTS streaming | Meet | ⬜ Todo | Free tier: 10k chars/month |
 | Square Developer | POS sandbox + production API | Meet | ⬜ Todo | Sandbox access is free |
