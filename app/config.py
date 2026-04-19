@@ -27,5 +27,10 @@ class Settings(BaseSettings):
     square_access_token: Optional[str] = None
     square_application_id: Optional[str] = None
 
+    # Enables dev-only routes like POST /dev/seed-order. Must stay false
+    # in production; flip to true locally or in a preview env when the
+    # dashboard needs seed data before the voice loop is wired up.
+    niko_dev_endpoints: bool = False
+
 
 settings = Settings()
