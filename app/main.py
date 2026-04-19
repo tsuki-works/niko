@@ -8,6 +8,6 @@ def root():
     return {"service": "niko", "status": "ok"}
 
 
-@app.get("/healthz")
-def healthz():
+@app.get("/health")
+def health():
     return {"status": "ok"}
