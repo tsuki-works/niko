@@ -13,7 +13,7 @@ Phase 0 exit requires shared accounts for every service in the niko stack. Each 
 | Deepgram | STT (Nova-2 streaming) | Meet | ✅ Done | $200 signup credit. Key `niko-poc` (member scope). Creds in `#shared-creds` |
 | Anthropic | Claude Haiku 4.5 LLM | Meet | ✅ Done | Pay-as-you-go on Console; Claude for Startups is VC-gated (revisit post-raise). Key posted to `#shared-creds` |
 | ElevenLabs | TTS streaming | Meet | ✅ Done | Free tier (10k chars/mo). Key `niko-poc`, scoped to TTS + Models + Voices-read. Upgrade to Creator ($22/mo) needed around Phase 1 demo day — team-agreement gate |
-| Square Developer | POS sandbox + production API | Meet | ⬜ Todo | Sandbox access is free |
+| Square Developer | POS sandbox + production API | Meet | ✅ Done | Sandbox app `niko-poc` on a CA seller account (Phase 2.3 dev only — real US restaurants use their own Square US account via OAuth). Creds in `#shared-creds` |
 
 > **Owner note:** Meet is doing all Phase 0 signups in one pass to avoid parallel-coordination overhead. Domain owners (per `05-team-roles`) take over admin once the account is live and the service is used in code — e.g., Kailash inherits Twilio/Deepgram/Square admin when the telephony + STT + POS work lands; Sandeep inherits ElevenLabs admin with the TTS pipeline.
 
