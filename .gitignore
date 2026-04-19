@@ -3,3 +3,7 @@
 .env.*.local
 .mcp.json
 node_modules/
+
+# Claude Code: per-developer local permissions (team-shared config lives in settings.json)
+.claude/settings.local.json
+**/.claude/settings.local.json
