@@ -228,16 +228,43 @@ Build a **single, hardcoded restaurant** demo that can:
 
 ---
 
-## Key Decisions Needed
+## Key Decisions (Resolved — Phase 0)
 
-| Decision | Options | Deadline | Owner |
-|----------|---------|----------|-------|
-| Company name | Brainstorm session | Week 1 | All |
-| Telephony provider | Twilio / Vonage / Telnyx | Week 1 | TBD |
-| STT provider | Deepgram / AssemblyAI / OpenAI Whisper | Week 2 | TBD |
-| TTS provider | ElevenLabs / PlayHT / OpenAI TTS | Week 2 | TBD |
-| LLM provider | OpenAI / Anthropic / Open-source | Week 2 | TBD |
-| Primary POS for MVP | Square (recommended) | Week 2 | TBD |
-| Hosting provider | AWS / GCP / Azure | Week 1 | TBD |
-| Frontend framework | React / Next.js | Week 1 | TBD |
-| Backend language | Python / Node.js / Go | Week 1 | TBD |
+Guiding principle: **free-tier-first**. We have no outside funding, so every pick minimizes fixed cost for POC/MVP and documents the paid successor we'd move to once revenue or credits justify the swap. Telephony is the only category with no real free tier — it's metered from day one.
+
+| Decision | Pick | Free tier / cost at POC | Successor (post-funding) |
+|----------|------|------------------------|--------------------------|
+| Company name | **Tsuki Works** | — | — |
+| Telephony | **Twilio Voice** | $15 trial credit; ~$0.0085/min inbound US after | Telnyx (~40% cheaper/min at scale) |
+| STT | **Deepgram (Nova-2 streaming)** | $200 free credit — weeks of POC testing | Stay on Deepgram |
+| TTS | **ElevenLabs** | 10k chars/mo free tier | ElevenLabs Pro ($22/mo) or Cartesia for lower latency |
+| LLM | **Anthropic Claude Haiku 4.5** | Apply to Claude for Startups for credits; cheap + fast, strong instruction-following for constrained menu flows | Claude Sonnet for harder conversations |
+| Primary POS (MVP) | **Square** | Developer sandbox + API free | — (Toast/Clover added Phase 3) |
+| Hosting | **GCP — Cloud Run + Firestore** | $300 credit (90d) + always-free Cloud Run (2M req/mo) + Firestore free tier. Scales to zero = $0 when idle. | Stay on GCP; raise tier + min-instances when funded |
+| Frontend framework | **Next.js 15 (static export)** | Built inside monolith — no separate Vercel account needed | Split to Vercel Pro if dashboard grows beyond static export |
+| Backend language | **Python 3.12 + FastAPI** | — | — |
+| Deployment model | **Single Docker image → Cloud Run, auto-deploy from `master`** | GitHub Actions: unlimited free minutes on public repos | — |
+| CI/CD | **GitHub Actions** | Free forever (public repo) | — |
+
+### Deployment shape (monolith)
+
+```
+niko/
+├── app/                    # FastAPI: voice, dashboard API, static serving
+│   ├── voice/             # Twilio webhooks, STT/LLM/TTS orchestration
+│   ├── dashboard/         # Dashboard REST API
+│   └── main.py            # FastAPI app + static mount
+├── web/                   # Next.js (static export, built in Docker)
+├── Dockerfile             # Multi-stage: node builds web/, python serves
+└── .github/workflows/
+    └── deploy.yml         # push master → build → Artifact Registry → Cloud Run
+```
+
+One service, one URL, one observability surface. Cloud Run's scale-to-zero covers the idle cost. Split into separate services only when Phase 3+ scaling demands it.
+
+### Known quirks to watch
+
+- **Cloud Run WebSocket** — 60min request timeout (fine for phone calls); long-lived connections count against concurrency. Fly.io is the escape hatch if audio streaming strains Cloud Run.
+- **Cloud Run cold starts** (~1–2s) when scaled to zero — unnoticeable for dashboard, potentially felt on first call of the day. Min-instances=1 costs ~$5/mo when we want to eliminate it.
+- **Telephony cost** — not free; budget ~$20–50 for POC testing.
+- **Vercel free tier** is not used — Next.js is built inside the Docker image and served by FastAPI, which keeps the monolith model clean and sidesteps Vercel's commercial-use restriction on Hobby.
