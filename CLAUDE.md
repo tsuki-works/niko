@@ -38,7 +38,8 @@ Useful channel IDs: `#code-review` = `1495194166886400021`, `#ci-alerts` = `1495
 
 - **Legal/LLC is intentionally deferred** until the product is near market-readiness (Phase 3 Beta or Phase 4 Production). Do not flag it as missing from Phase 0 exit criteria — this is a deliberate choice. The item lives under a "Deferred to Phase 3 / 4" section in issue #2.
 - **Default branch is `master`** (not `main`).
-- Branch protection on `master` is **not** enabled — GitHub requires a paid plan for this on private repos, and the org is on free. Treat `master` pushes with care.
+- **Repo is public** — flipped from private to unlock branch-protection features on the free tier until the org moves to a paid/enterprise plan.
+- **`master` is protected by a repository ruleset** (`gh api repos/tsuki-works/niko/rulesets`): PR required (1 approval, conversation resolution, stale-review dismissal), linear history enforced, force-push and deletion blocked, Copilot code review + code-quality checks on push. Repo admins can bypass — don't rely on bypass as the default path; land changes via PR.
 - **Company branding** lives in an `assets/` folder (logos by Daniel).
 
 ## Conventions
