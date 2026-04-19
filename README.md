@@ -42,6 +42,30 @@ This repo is set up to be worked on with [Claude Code](https://claude.com/claude
 
 Skills live under [`.claude/skills/`](.claude/skills/).
 
+### MCP setup (Discord)
+
+The Claude skills talk to Discord through an MCP server. The runtime config lives in `.mcp.json`, which is gitignored because it holds a bot token. A committed `.mcp.json.example` shows the shape.
+
+To set up locally:
+
+1. Copy the example: `cp .mcp.json.example .mcp.json`
+2. Ask an admin for the Tsuki Works Discord bot token, or generate your own at https://discord.com/developers/applications.
+3. Paste it into the `DISCORD_TOKEN` field. Leave `DISCORD_GUILD_ID` as-is.
+4. Restart Claude Code — the `discord` MCP server will start automatically.
+
+Never commit a filled-in `.mcp.json`.
+
+## Discord integration
+
+GitHub activity auto-posts to the Tsuki Works Discord server:
+
+| Event | Channel |
+|-------|---------|
+| PR opened / reviewed / merged, issue comments | `#code-review` |
+| Pushes, CI check runs, workflow results | `#ci-alerts` |
+
+Wired via GitHub → Discord channel webhooks (Discord's native GitHub integration — `/github` suffix on the webhook URL). Adjust event types in repo settings → Webhooks if the volume is wrong.
+
 ## Team
 
 Four-person founding team at Tsuki Works. Role breakdown in [`docs/05-team-roles-and-responsibilities.md`](docs/05-team-roles-and-responsibilities.md).
