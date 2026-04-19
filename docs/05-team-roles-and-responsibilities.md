@@ -13,51 +13,57 @@ We are a 4-person founding team: **three backend engineers** (Meet, Sandeep, Kai
 
 The backend weight reflects where the product's difficulty lives: real-time voice pipeline, LLM orchestration, POS integrations, and infrastructure. Daniel owns the full dashboard + marketing surface solo, which keeps the frontend lane well-defined.
 
+Some responsibilities are **shared across the whole team** rather than assigned to one person — see §3. This is deliberate: customer discovery and customer support are learning signals we want every team member exposed to, not cost centers to delegate.
+
 ---
 
 ## 2. Role Assignments
 
-### Meet — Product & Core Backend Lead
-**Primary:** Product ownership + core backend API (FastAPI app, data layer, business logic)
-**Secondary:** POS integrations support, business operations
+### Meet — Product, Platform & LLM Lead
+**Primary:** Product ownership, core backend, cloud platform + CI/CD, LLM engineering
+**Secondary:** Toast POS integration (Phase 3.2), business operations
 
 | Responsibility | Details |
 |---------------|---------|
 | Product ownership | Maintain PRD, prioritize backlog, define requirements |
 | Core backend | FastAPI app structure, data models (Firestore schemas), business logic |
+| Cloud infrastructure | GCP project, Cloud Run, Firestore, Artifact Registry, Workload Identity Federation |
+| CI/CD | GitHub Actions → Cloud Run auto-deploy from `master`, secrets via Secret Manager |
+| LLM engineering | Claude Haiku 4.5 prompt engineering, menu context injection, conversation flows, structured output |
 | Analytics data pipeline | Order / call aggregation, metric computation for the dashboard |
-| Customer discovery | Talk to restaurant owners, gather feedback |
+| POS — Toast | Toast API integration (Phase 3.2) |
 | Sprint planning | Facilitate planning sessions, maintain GitHub Project #2 |
 | Business ops | Legal (deferred to Phase 3/4), finance, company formation |
 
-### Sandeep — Voice Pipeline Backend Lead
-**Primary:** Voice orchestrator, AI/LLM pipeline, real-time audio
-**Secondary:** Performance optimization, conversation quality
+> **Load note:** Meet's lane is deliberately the heaviest — it sits at the product/tech decision intersection during Phases 0–2. Phase 0 infra + CI/CD is front-loaded work that lightens by Phase 2, freeing capacity for the Toast integration in Phase 3.
+
+### Sandeep — Voice I/O & Audio Backend Lead
+**Primary:** STT + TTS pipelines, audio engineering, performance
+**Secondary:** Clover POS integration (Phase 3.2)
 
 | Responsibility | Details |
 |---------------|---------|
-| Voice pipeline | Deepgram STT → Claude Haiku LLM → ElevenLabs TTS streaming |
-| LLM engineering | Prompt engineering, menu context injection, conversation flows |
-| Audio engineering | Latency optimization, barge-in detection, audio quality |
-| Performance | Ensure < 1 second voice response latency |
-| Call state management | Session state, interruption handling, timeout/silence detection |
+| STT pipeline | Deepgram Nova-2 streaming from Twilio Media Streams WebSocket |
+| TTS pipeline | ElevenLabs streaming back to Twilio |
+| Audio engineering | Barge-in detection, audio quality, interruption handling |
+| Performance | Ensure < 1 second end-to-end voice response latency |
+| Call state management | Session state, timeout/silence detection |
+| POS — Clover | Clover API integration (Phase 3.2) |
 
-### Kailash — Infrastructure & Integrations Backend Lead
-**Primary:** DevOps, GCP infrastructure, POS integrations, telephony
-**Secondary:** Security, monitoring
+### Kailash — Telephony, Security & Integrations Backend Lead
+**Primary:** Telephony, security, monitoring, Square POS integration
+**Secondary:** Cross-cutting backend support
 
 | Responsibility | Details |
 |---------------|---------|
-| Cloud infrastructure | GCP project, Cloud Run, Firestore, Artifact Registry, Workload Identity Federation |
-| CI/CD | GitHub Actions → Cloud Run auto-deploy from `master`, secrets via Secret Manager |
-| POS integrations | Square (MVP), then Toast, Clover API integrations |
-| Telephony | Twilio setup, phone numbers, webhooks, Media Streams WebSocket |
-| Monitoring | Cloud Logging + Trace, Sentry when added |
+| Telephony | Twilio setup, phone numbers, webhooks, Media Streams WebSocket plumbing |
+| POS — Square | Square API integration (Phase 2.3, MVP) — sets the pattern reused by Toast/Clover |
 | Security | Auth, data encryption, PCI scope minimization via tokenization |
+| Monitoring | Cloud Logging + Trace, Sentry, alerting, error tracking |
 
 ### Daniel — Frontend & Growth Lead
 **Primary:** Dashboard (Next.js), marketing site, UX/UI
-**Secondary:** Customer support, documentation, branding
+**Secondary:** Branding, documentation
 
 | Responsibility | Details |
 |---------------|---------|
@@ -67,11 +73,36 @@ The backend weight reflects where the product's difficulty lives: real-time voic
 | Landing / marketing site | Public marketing pages, SEO |
 | SMS/notifications UX | Copy + flows for Twilio SMS order confirmations |
 | Documentation | User-facing help content, onboarding materials |
-| Customer support | Handle early customer issues, build support processes |
 
 ---
 
-## 3. Decision-Making Framework
+## 3. Shared Responsibilities
+
+Responsibilities every team member participates in — not owned by a single person.
+
+### Customer discovery (Phases 0–2 especially)
+**Participants:** All 4
+**Coordinator:** Meet (logistics — scheduling, discovery journal, synthesizing findings)
+
+Each team member is expected to talk to at least 1–2 restaurant owners per sprint during Phases 0–2. The goal isn't to offload discovery onto product — it's to build shared product intuition across the team so engineering decisions stay grounded in real customer constraints.
+
+### Customer support (from first pilot onwards)
+**Participants:** All 4, on a weekly rotation
+**Coordinator:** Daniel (support process, templates, escalation paths)
+
+Early customer support is a learning signal, not a cost center. Everyone rotates so the whole team hears real friction firsthand. Daniel owns the support *system* (templates, escalation docs, response SLAs) but isn't the sole responder. Rotation schedule gets set once the first pilot restaurant is onboarded.
+
+### On-call incident response
+See §7 — separate from routine customer support. Handles production alerts and outages, not general inquiries.
+
+### Documentation (engineering-side)
+**Participants:** Whoever ships the feature documents it.
+
+Daniel owns user-facing help content; engineering docs (API references, runbooks, architecture notes) are authored by whoever built the thing being documented.
+
+---
+
+## 4. Decision-Making Framework
 
 ### Technical Decisions
 - **Within your domain** — Make the call, inform the team async
@@ -90,7 +121,7 @@ The backend weight reflects where the product's difficulty lives: real-time voic
 
 ---
 
-## 4. Communication Cadence
+## 5. Communication Cadence
 
 | Meeting | Frequency | Duration | Attendees |
 |---------|-----------|----------|-----------|
@@ -112,7 +143,7 @@ The backend weight reflects where the product's difficulty lives: real-time voic
 
 ---
 
-## 5. Code Review Policy
+## 6. Code Review Policy
 
 - Every PR requires **at least 1 approval** before merge (enforced by `master` branch ruleset)
 - Reviewer should be someone from a **different domain** when possible (cross-pollination)
@@ -123,16 +154,22 @@ The backend weight reflects where the product's difficulty lives: real-time voic
 | PR Domain | Primary Reviewer | Secondary |
 |-----------|-----------------|-----------|
 | Frontend (dashboard, marketing site) | Daniel | Meet |
-| Core backend / API | Meet | Kailash |
-| Voice pipeline | Sandeep | Kailash |
-| Infrastructure (Cloud Run, CI/CD, GCP) | Kailash | Sandeep |
-| POS integrations | Kailash | Meet |
+| Core backend / API | Meet | Sandeep |
+| Voice — STT / TTS / audio | Sandeep | Meet |
+| Voice — LLM / prompts | Meet | Sandeep |
+| Infrastructure (Cloud Run, CI/CD, GCP) | Meet | Kailash |
+| Telephony / Security / Monitoring | Kailash | Sandeep |
+| POS — Square | Kailash | Meet |
+| POS — Toast | Meet | Kailash |
+| POS — Clover | Sandeep | Kailash |
 
-**Note on cross-pollination:** With 3 backend engineers and 1 frontend engineer, frontend PRs won't always get a cross-domain reviewer. Meet (who splits product + backend) is the natural cross-domain backup for Daniel's frontend PRs; where that's unavailable, Daniel self-merges after addressing automated checks.
+**Note on cross-pollination:** With 3 backend engineers and 1 frontend engineer, frontend PRs won't always get a cross-domain reviewer. Meet is the natural cross-domain backup for Daniel's frontend PRs (product context); where that's unavailable, Daniel self-merges after addressing automated checks.
+
+**Note on LLM/STT coupling:** LLM (Meet) and STT (Sandeep) are split but tightly coupled — conversation quality depends on both prompt design and transcription fidelity. Expect frequent pairing and mutual review; each is the other's primary secondary reviewer.
 
 ---
 
-## 6. On-Call (Post-MVP)
+## 7. On-Call (Post-MVP)
 
 Once we have live customers, establish a simple on-call rotation:
 
@@ -150,7 +187,7 @@ Once we have live customers, establish a simple on-call rotation:
 
 ---
 
-## 7. Availability & Commitments
+## 8. Availability & Commitments
 
 > **Fill this out as a team — be honest about availability so sprints can be planned realistically.**
 
@@ -163,7 +200,7 @@ Once we have live customers, establish a simple on-call rotation:
 
 ---
 
-## 8. Equity & Compensation
+## 9. Equity & Compensation
 
 > **This section intentionally left blank.** Equity splits and compensation should be discussed separately with legal counsel. Document the agreement formally in an operating agreement or founders' agreement.
 
