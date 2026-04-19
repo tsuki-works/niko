@@ -9,11 +9,13 @@ Phase 0 exit requires shared accounts for every service in the niko stack. Each 
 | Service | Purpose | Owner | Status | Notes |
 |---|---|---|---|---|
 | GCP | Cloud Run hosting + Firestore | Meet | ✅ Done | Live; Cloud Run auto-deploys from `master` via `.github/workflows/deploy.yml` |
-| Twilio | Voice telephony | Kailash | ⬜ Todo | Free trial includes $15 credit |
-| Deepgram | STT (Nova-2 streaming) | Kailash | ⬜ Todo | $200 free credit on signup |
+| Twilio | Voice telephony | Meet | ⬜ Todo | Free trial includes $15 credit |
+| Deepgram | STT (Nova-2 streaming) | Meet | ⬜ Todo | $200 free credit on signup |
 | Anthropic | Claude Haiku 4.5 LLM | Meet | ⬜ Todo | Apply to Claude for Startups for additional credits |
-| ElevenLabs | TTS streaming | Sandeep | ⬜ Todo | Free tier: 10k chars/month |
-| Square Developer | POS sandbox + production API | Kailash | ⬜ Todo | Sandbox access is free |
+| ElevenLabs | TTS streaming | Meet | ⬜ Todo | Free tier: 10k chars/month |
+| Square Developer | POS sandbox + production API | Meet | ⬜ Todo | Sandbox access is free |
+
+> **Owner note:** Meet is doing all Phase 0 signups in one pass to avoid parallel-coordination overhead. Domain owners (per `05-team-roles`) take over admin once the account is live and the service is used in code — e.g., Kailash inherits Twilio/Deepgram/Square admin when the telephony + STT + POS work lands; Sandeep inherits ElevenLabs admin with the TTS pipeline.
 
 ## How to complete a signup
 
