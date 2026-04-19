@@ -1,13 +1,14 @@
 import time
 
-from fastapi import FastAPI, HTTPException, Response
-from twilio.twiml.voice_response import VoiceResponse
+from fastapi import FastAPI, HTTPException
 
 from app.config import settings
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import firestore as order_storage
+from app.telephony.router import router as telephony_router
 
 app = FastAPI(title="niko")
+app.include_router(telephony_router)
 
 
 @app.get("/")
@@ -18,22 +19,6 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-
-@app.post("/voice")
-def voice():
-    """Twilio Voice webhook — POC scaffold.
-
-    Returns a canned TwiML greeting so Kailash can wire the Twilio number
-    to this URL and prove the webhook round-trip. Replaced with Media
-    Streams + STT/LLM/TTS integration as the pipeline comes online.
-    """
-    twiml = VoiceResponse()
-    twiml.say(
-        "Hello, thanks for calling niko. The voice agent is coming soon.",
-        voice="alice",
-    )
-    return Response(content=str(twiml), media_type="application/xml")
 
 
 @app.get("/orders")
