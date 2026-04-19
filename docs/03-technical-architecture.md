@@ -77,7 +77,7 @@
 |-----------|-------------|-------------|-----------|
 | **Telephony** | Twilio Voice | Telnyx / Vonage | Most mature API, best docs, programmable voice. $15 trial credit for POC; migrate to Telnyx once volume makes per-minute margin matter |
 | **STT (Speech-to-Text)** | Deepgram Nova-2 (streaming) | OpenAI Whisper API | Real-time streaming, low latency, high accuracy. $200 free credit covers POC |
-| **LLM (Conversation)** | Anthropic Claude Haiku 4.5 (POC/MVP) → Sonnet (production) | OpenAI GPT-4o | Haiku is cheap + fast with strong instruction following for constrained menu flows. Upgrade to Sonnet for harder conversations once funded. Apply to Claude for Startups for credits |
+| **LLM (Conversation)** | Anthropic Claude Haiku 4.5 (POC/MVP) → Sonnet (production) | OpenAI GPT-4o | Haiku is cheap + fast with strong instruction following for constrained menu flows. Upgrade to Sonnet for harder conversations once funded. Pay-as-you-go via Console during bootstrap; Claude for Startups is VC-gated, revisit after raising |
 | **TTS (Text-to-Speech)** | ElevenLabs | OpenAI TTS / PlayHT / Cartesia | Most natural voices, low latency streaming. 10k chars/mo free tier |
 
 ### Infrastructure
