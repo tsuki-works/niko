@@ -37,31 +37,31 @@ Some responsibilities are **shared across the whole team** rather than assigned 
 
 > **Load note:** Meet's lane is deliberately the heaviest — it sits at the product/tech decision intersection during Phases 0–2. Phase 0 infra + CI/CD is front-loaded work that lightens by Phase 2, freeing capacity for the Toast integration in Phase 3.
 
-### Sandeep — Voice Input & Audio Backend Lead
-**Primary:** STT pipeline, audio engineering, performance
+### Sandeep — Voice Output & Audio Backend Lead
+**Primary:** TTS pipeline, audio engineering, performance
 **Secondary:** Clover POS integration (Phase 3.2)
 
 | Responsibility | Details |
 |---------------|---------|
-| STT pipeline | Deepgram Nova-2 streaming from Twilio Media Streams WebSocket |
+| TTS pipeline | ElevenLabs streaming back to Twilio |
 | Audio engineering | Barge-in detection, audio quality, interruption handling |
 | Performance | Ensure < 1 second end-to-end voice response latency |
 | Call state management | Session state, timeout/silence detection |
 | POS — Clover | Clover API integration (Phase 3.2) |
 
-### Kailash — Telephony, TTS & Security Backend Lead
-**Primary:** Telephony, TTS pipeline, security, monitoring, Square POS integration
+### Kailash — Telephony, STT & Security Backend Lead
+**Primary:** Telephony, STT pipeline, security, monitoring, Square POS integration
 **Secondary:** Cross-cutting backend support
 
 | Responsibility | Details |
 |---------------|---------|
 | Telephony | Twilio setup, phone numbers, webhooks, Media Streams WebSocket plumbing |
-| TTS pipeline | ElevenLabs streaming back to Twilio (outbound audio — pairs naturally with telephony) |
+| STT pipeline | Deepgram Nova-2 streaming from Twilio Media Streams WebSocket (inbound audio — pairs naturally with telephony ingress) |
 | POS — Square | Square API integration (Phase 2.3, MVP) — sets the pattern reused by Toast/Clover |
 | Security | Auth, data encryption, PCI scope minimization via tokenization |
 | Monitoring | Cloud Logging + Trace, Sentry, alerting, error tracking |
 
-> **Voice I/O split rationale:** Sandeep owns inbound audio (Twilio → STT, audio quality, interruption handling); Kailash owns outbound audio (LLM response → TTS → Twilio). Latency budget crosses both lanes — they pair on end-to-end performance.
+> **Voice I/O split rationale:** Kailash owns inbound audio (Twilio ingress → STT) alongside the telephony lane — both are ingest-side concerns. Sandeep owns outbound audio (LLM response → TTS → Twilio) alongside audio engineering and the overall latency contract, since perceived responsiveness lives in the output path. Meet (LLM) sits between them; all three pair frequently on the < 1s end-to-end budget.
 
 ### Daniel — Frontend & Growth Lead
 **Primary:** Dashboard (Next.js), marketing site, UX/UI
@@ -157,9 +157,9 @@ Daniel owns user-facing help content; engineering docs (API references, runbooks
 |-----------|-----------------|-----------|
 | Frontend (dashboard, marketing site) | Daniel | Meet |
 | Core backend / API | Meet | Sandeep |
-| Voice — STT / audio / performance | Sandeep | Meet |
+| Voice — STT | Kailash | Sandeep |
 | Voice — LLM / prompts | Meet | Sandeep |
-| Voice — TTS | Kailash | Sandeep |
+| Voice — TTS / audio / performance | Sandeep | Meet |
 | Infrastructure (Cloud Run, CI/CD, GCP) | Meet | Kailash |
 | Telephony / Security / Monitoring | Kailash | Sandeep |
 | POS — Square | Kailash | Meet |
@@ -168,7 +168,7 @@ Daniel owns user-facing help content; engineering docs (API references, runbooks
 
 **Note on cross-pollination:** With 3 backend engineers and 1 frontend engineer, frontend PRs won't always get a cross-domain reviewer. Meet is the natural cross-domain backup for Daniel's frontend PRs (product context); where that's unavailable, Daniel self-merges after addressing automated checks.
 
-**Note on voice-pipeline coupling:** LLM (Meet), STT (Sandeep), and TTS (Kailash) are split across three owners but tightly coupled — conversation quality and the < 1s latency budget depend on all three. Expect frequent pairing and mutual review across these three lanes; Sandeep is the secondary reviewer for both LLM and TTS since he owns the end-to-end performance contract.
+**Note on voice-pipeline coupling:** STT (Kailash), LLM (Meet), and TTS (Sandeep) are split across three owners but tightly coupled — conversation quality and the < 1s latency budget depend on all three. Expect frequent pairing and mutual review across these three lanes; Sandeep is the secondary reviewer for STT and LLM since he owns the end-to-end performance contract.
 
 ---
 
