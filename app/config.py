@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     # eleven_monolingual_v1  — legacy English-only
     elevenlabs_model_id: str = "eleven_turbo_v2_5"
 
-    # Rachel voice — natural, neutral accent, good for phone agents.
+    # Adam voice — free-tier premade voice. Rachel (21m00Tcm4TlvDq8ikWAM) requires a paid plan.
     # Browse voices at https://elevenlabs.io/voice-library and override via ELEVENLABS_VOICE_ID.
-    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    elevenlabs_voice_id: str = "pNInz6obpgDQGcFmaJgB"
 
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
