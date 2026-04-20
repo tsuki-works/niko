@@ -20,6 +20,17 @@ class Settings(BaseSettings):
 
     elevenlabs_api_key: Optional[str] = None
 
+    # Available ElevenLabs models (ordered by latency, fastest first):
+    # eleven_turbo_v2_5      — lowest latency, recommended for real-time voice (default)
+    # eleven_turbo_v2        — slightly higher quality, ~20ms slower
+    # eleven_multilingual_v2 — best quality, multi-language, highest latency
+    # eleven_monolingual_v1  — legacy English-only
+    elevenlabs_model_id: str = "eleven_turbo_v2_5"
+
+    # Rachel voice — natural, neutral accent, good for phone agents.
+    # Browse voices at https://elevenlabs.io/voice-library and override via ELEVENLABS_VOICE_ID.
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None
