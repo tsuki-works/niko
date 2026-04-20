@@ -1,9 +1,11 @@
 """Runtime settings loaded from environment variables.
 
-All third-party credentials the POC will consume live here. Fields are
-``Optional`` because services are wired in across multiple sprints — a
-missing key shouldn't crash import of unrelated modules. Each service
-module that needs a key should assert it at use time.
+All third-party credentials the POC will consume live here. Credential
+fields are ``Optional`` because services are wired in across multiple
+sprints — a missing key shouldn't crash import of unrelated modules.
+Each service module that needs a key should assert it at use time.
+Non-credential config fields (model IDs, voice IDs) use ``str`` with
+safe defaults so they never need a None-guard.
 """
 
 from typing import Optional
