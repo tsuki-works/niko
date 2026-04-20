@@ -86,6 +86,18 @@ async def test_speak_empty_text_sends_nothing():
 
 
 @pytest.mark.asyncio
+async def test_speak_whitespace_only_sends_nothing():
+    """Whitespace-only text is treated as empty — ElevenLabs not called."""
+    client = make_mock_client([b"\x00"])
+    ws = make_mock_websocket()
+
+    await speak("   ", ws, stream_sid="MZ123", client=client)
+
+    client.stream.assert_not_called()
+    ws.send_json.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_speak_missing_api_key_raises():
     """RuntimeError raised when ELEVENLABS_API_KEY is not set."""
     ws = make_mock_websocket()
@@ -133,8 +145,9 @@ async def test_speak_uses_configured_voice_and_model():
 
         await speak("Hello", ws, stream_sid="MZ123", client=client)
 
-    _, kwargs = client.stream.call_args
+    assert client.stream.call_args.args[0] == "POST"
     assert "test-voice-id" in client.stream.call_args.args[1]
+    kwargs = client.stream.call_args.kwargs
     body = kwargs["json"]
     assert body["model_id"] == "eleven_turbo_v2_5"
     assert body["output_format"] == "ulaw_8000"
