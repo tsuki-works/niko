@@ -73,12 +73,20 @@ async def speak(
     }
 
     created_client = client is None
-    _client = client or httpx.AsyncClient()
+    _client = client or httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+    )
 
     try:
         async with _client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 error_body = await response.aread()
+                logger.error(
+                    "tts: ElevenLabs returned %d stream_sid=%s body=%s",
+                    response.status_code,
+                    stream_sid,
+                    error_body.decode(errors="replace")[:200],
+                )
                 raise RuntimeError(
                     f"ElevenLabs returned {response.status_code}: "
                     f"{error_body.decode(errors='replace')}"

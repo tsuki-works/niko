@@ -67,7 +67,7 @@ async def test_speak_sends_media_events():
     assert ws.send_json.call_count == 2
     call_args = [call.args[0] for call in ws.send_json.call_args_list]
 
-    for i, (chunk, call) in enumerate(zip(chunks, call_args)):
+    for chunk, call in zip(chunks, call_args):
         assert call["event"] == "media"
         assert call["streamSid"] == "MZ123"
         assert call["media"]["payload"] == base64.b64encode(chunk).decode()
