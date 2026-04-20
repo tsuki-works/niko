@@ -6,22 +6,58 @@ POST /voice        — TwiML webhook: answers the inbound call, plays a
 
 WS   /media-stream — Receives the Twilio Media Stream over WebSocket.
                      Each frame is a JSON envelope; the ``media`` event
-                     carries base64-encoded mulaw 8 kHz audio. STT
-                     integration lands in #38 — this handler logs
-                     lifecycle events and proves the WebSocket
-                     round-trip works end-to-end.
+                     carries base64-encoded mulaw 8 kHz audio. Forwarded
+                     to Deepgram Nova-2 for live transcription (#37).
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 
+from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 from twilio.twiml.voice_response import Connect, VoiceResponse
 
+from app.config import settings
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _open_deepgram_connection(call_sid: str | None):
+    assert settings.deepgram_api_key, "DEEPGRAM_API_KEY is not set"
+
+    dg = DeepgramClient(settings.deepgram_api_key)
+    conn = dg.listen.asynclive.v("1")
+
+    async def on_transcript(self, result, **kwargs):
+        alt = result.channel.alternatives[0]
+        text = alt.transcript.strip()
+        if not text:
+            return
+        label = "final" if result.is_final else "interim"
+        logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
+
+    async def on_error(self, error, **kwargs):
+        logger.error("deepgram error call_sid=%s error=%s", call_sid, error)
+
+    conn.on(LiveTranscriptionEvents.Transcript, on_transcript)
+    conn.on(LiveTranscriptionEvents.Error, on_error)
+
+    options = LiveOptions(
+        model="nova-2",
+        encoding="mulaw",
+        sample_rate=8000,
+        channels=1,
+        interim_results=True,
+        endpointing=300,
+    )
+    started = await conn.start(options)
+    if not started:
+        raise RuntimeError(f"Deepgram connection failed to start call_sid={call_sid}")
+    return conn
 
 
 @router.post("/voice")
@@ -64,6 +100,7 @@ async def media_stream(websocket: WebSocket) -> None:
     """
     await websocket.accept()
     call_sid: str | None = None
+    dg_conn = None
 
     try:
         while True:
@@ -83,10 +120,12 @@ async def media_stream(websocket: WebSocket) -> None:
                     call_sid,
                     stream_sid,
                 )
+                dg_conn = await _open_deepgram_connection(call_sid)
 
             elif event == "media":
-                # base64 mulaw 8 kHz; consumed by Deepgram STT in #38
-                pass
+                if dg_conn is not None:
+                    audio = base64.b64decode(msg["media"]["payload"])
+                    await dg_conn.send(audio)
 
             elif event == "stop":
                 logger.info("media-stream stop call_sid=%s", call_sid)
@@ -94,3 +133,6 @@ async def media_stream(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         logger.info("media-stream disconnected call_sid=%s", call_sid)
+    finally:
+        if dg_conn is not None:
+            await dg_conn.finish()
