@@ -5,8 +5,14 @@ Run locally with your key in .env to verify the full round-trip.
 
 Usage:
     pytest tests/test_tts_integration.py -v -s
+    pytest tests/test_tts_integration.py -v -s --phrase "Hi, welcome to Niko's Pizza!"
+
+Audio is saved to tts_test_output.raw after each run.
+Play it back with:
+    ffplay -f mulaw -ar 8000 -ac 1 tts_test_output.raw
 """
 import base64
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,27 +25,34 @@ pytestmark = pytest.mark.skipif(
     reason="ELEVENLABS_API_KEY not set — skipping live ElevenLabs test",
 )
 
+OUTPUT_FILE = Path("tts_test_output.raw")
 
-@pytest.mark.asyncio
-async def test_speak_returns_audio_chunks():
-    """Real ElevenLabs call produces at least one valid base64 mulaw chunk."""
+
+async def test_speak_returns_audio_chunks(tts_phrase):
+    """Real ElevenLabs call produces audio saved to tts_test_output.raw."""
     received: list[dict] = []
 
     ws = AsyncMock()
     ws.send_json = AsyncMock(side_effect=lambda msg: received.append(msg))
 
-    await speak(
-        "Your order is one large pepperoni pizza for pickup. Does that sound right?",
-        ws,
-        stream_sid="TEST-STREAM-SID",
-    )
+    print(f"\nPhrase: {tts_phrase!r}")
+
+    await speak(tts_phrase, ws, stream_sid="TEST-STREAM-SID")
 
     assert len(received) > 0, "Expected at least one media event from ElevenLabs"
 
     for event in received:
         assert event["event"] == "media"
         assert event["streamSid"] == "TEST-STREAM-SID"
-        payload = event["media"]["payload"]
-        # Valid base64 decodes without error
-        decoded = base64.b64decode(payload)
+        decoded = base64.b64decode(event["media"]["payload"])
         assert len(decoded) > 0
+
+    audio_bytes = b"".join(
+        base64.b64decode(e["media"]["payload"]) for e in received
+    )
+    OUTPUT_FILE.write_bytes(audio_bytes)
+
+    print(f"Chunks received: {len(received)}")
+    print(f"Total audio: {len(audio_bytes):,} bytes")
+    print(f"Saved to: {OUTPUT_FILE.resolve()}")
+    print(f"Play with: ffplay -f mulaw -ar 8000 -ac 1 {OUTPUT_FILE}")
