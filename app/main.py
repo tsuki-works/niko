@@ -1,6 +1,9 @@
+import logging
 import time
 
 from fastapi import FastAPI, HTTPException
+
+logging.basicConfig(level=logging.INFO)
 
 from app.config import settings
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
