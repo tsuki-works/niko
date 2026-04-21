@@ -4,9 +4,11 @@ import { cn } from '@/lib/utils';
  * The Niko smiling-moon icon as an inline SVG.
  *
  * Source: assets/niko/niko_moon_icon_aligned.svg
- * Colors are hardcoded brand values (navy #28456F + cream #DDCCA8)
- * because the mark is a fixed brand asset — it shouldn't adopt
- * arbitrary text/background colors.
+ *
+ * Colors flow through CSS vars (`--niko-ink`, `--niko-paper`) defined
+ * in globals.css so the mark inverts in dark mode: navy ↔ cream swap.
+ * "ink" is the drawing color (crescent + strokes + features), "paper"
+ * is the moon face fill.
  */
 export function NikoMark({
   size = 40,
@@ -32,28 +34,28 @@ export function NikoMark({
       {...rest}
     >
       <g fill="none" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="420" cy="540" r="305" fill="#28456F" />
+        <circle cx="420" cy="540" r="305" fill="var(--niko-ink)" />
         <circle
           cx="585"
           cy="500"
           r="305"
-          fill="#DDCCA8"
-          stroke="#28456F"
+          fill="var(--niko-paper)"
+          stroke="var(--niko-ink)"
           strokeWidth="8"
         />
         <path
           d="M445 500 C458 470 502 470 515 500"
-          stroke="#28456F"
+          stroke="var(--niko-ink)"
           strokeWidth="24"
         />
         <path
           d="M665 500 C678 470 722 470 735 500"
-          stroke="#28456F"
+          stroke="var(--niko-ink)"
           strokeWidth="24"
         />
         <path
           d="M455 650 C520 720 650 720 715 650"
-          stroke="#28456F"
+          stroke="var(--niko-ink)"
           strokeWidth="28"
         />
       </g>

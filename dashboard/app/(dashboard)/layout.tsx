@@ -1,10 +1,6 @@
 import { AppSidebar } from '@/components/app-sidebar';
 import { ThemeToggle } from '@/components/shared/theme-toggle';
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from '@/components/ui/sidebar';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 
 export default function DashboardLayout({
   children,
@@ -17,7 +13,6 @@ export default function DashboardLayout({
       <SidebarInset>
         <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
           <div className="flex items-center gap-2">
-            <SidebarTrigger />
             <h1 className="text-lg font-medium">Niko Pizza Kitchen</h1>
           </div>
           <ThemeToggle />

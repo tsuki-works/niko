@@ -50,7 +50,7 @@ export function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar collapsible="none">
       <SidebarHeader>
         <div className="flex items-center gap-2.5 px-2 py-3">
           {/* 48px lines up with the "Niko" + "by Tsuki Works" stack

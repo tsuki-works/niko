@@ -74,31 +74,39 @@
   --sidebar-accent-foreground: oklch(0.389 0.08 257.7);
   --sidebar-border: oklch(0.90 0.02 85.7);
   --sidebar-ring: oklch(0.389 0.08 257.7);
+
+  /* Niko mark — explicit brand hex, swapped for dark mode. `ink` is
+     the drawing color (crescent fill, strokes, eyes, smile); `paper`
+     is the moon face fill. */
+  --niko-ink: #28456F;
+  --niko-paper: #DDCCA8;
 }
 
 .dark {
-  /* Deep brand navy surface, sits below the logo navy for contrast. */
-  --background: oklch(0.23 0.06 257.7);
+  /* Warm-charcoal surfaces — very low chroma at cream hue so any visible
+     tint is a whisper of warmth, never a navy wash. Brand pop comes from
+     text/primary/sidebar-accent, not from painting every surface navy. */
+  --background: oklch(0.18 0.01 85);
   --foreground: oklch(0.94 0.03 85.7);
 
-  --card: oklch(0.29 0.06 257.7);
+  --card: oklch(0.22 0.012 85);
   --card-foreground: oklch(0.94 0.03 85.7);
 
-  --popover: oklch(0.29 0.06 257.7);
+  --popover: oklch(0.22 0.012 85);
   --popover-foreground: oklch(0.94 0.03 85.7);
 
-  /* Brand — cream on navy */
+  /* Primary stays cream — where the brand genuinely "pops" on buttons. */
   --primary: oklch(0.85 0.052 85.7);
-  --primary-foreground: oklch(0.28 0.08 257.7);
+  --primary-foreground: oklch(0.22 0.08 257.7);
 
-  --secondary: oklch(0.35 0.06 257.7);
-  --secondary-foreground: oklch(0.85 0.052 85.7);
+  --secondary: oklch(0.28 0.015 85);
+  --secondary-foreground: oklch(0.94 0.03 85.7);
 
-  --muted: oklch(0.32 0.05 257.7);
-  --muted-foreground: oklch(0.76 0.035 85.7);
+  --muted: oklch(0.25 0.012 85);
+  --muted-foreground: oklch(0.72 0.03 85.7);
 
-  --accent: oklch(0.35 0.06 257.7);
-  --accent-foreground: oklch(0.85 0.052 85.7);
+  --accent: oklch(0.28 0.015 85);
+  --accent-foreground: oklch(0.94 0.03 85.7);
 
   --success: oklch(0.75 0.13 135);
   --success-foreground: oklch(0.18 0.03 135);
@@ -109,8 +117,8 @@
   --destructive: oklch(0.68 0.19 28);
   --destructive-foreground: oklch(0.18 0.03 28);
 
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
   --ring: oklch(0.85 0.052 85.7);
 
   --chart-1: oklch(0.85 0.052 85.7);
@@ -119,17 +127,24 @@
   --chart-4: oklch(0.68 0.19 28);
   --chart-5: oklch(0.50 0.09 257.7);
 
-  /* Sidebar slightly deeper than main bg → visible surface boundary. */
-  --sidebar: oklch(0.20 0.06 257.7);
+  /* Sidebar noticeably deeper than main bg so the boundary reads
+     without needing a hard border. */
+  --sidebar: oklch(0.12 0.006 85);
   --sidebar-foreground: oklch(0.94 0.03 85.7);
   --sidebar-primary: oklch(0.85 0.052 85.7);
-  --sidebar-primary-foreground: oklch(0.28 0.08 257.7);
-  /* Active nav item — brand-saturation navy that pops against the
-     deeper sidebar bg. */
+  --sidebar-primary-foreground: oklch(0.22 0.08 257.7);
+  /* Active nav item — saturated brand navy. This is intentionally the
+     one place saturated blue shows up in dark mode so the active route
+     reads as "the brand highlight" rather than being lost in a navy
+     field. */
   --sidebar-accent: oklch(0.42 0.09 257.7);
-  --sidebar-accent-foreground: oklch(0.94 0.03 85.7);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-accent-foreground: oklch(0.97 0.03 85.7);
+  --sidebar-border: oklch(1 0 0 / 14%);
   --sidebar-ring: oklch(0.85 0.052 85.7);
+
+  /* Niko mark — inverted in dark mode: ink becomes cream, paper becomes navy. */
+  --niko-ink: #DDCCA8;
+  --niko-paper: #28456F;
 }
 
 @theme inline {
