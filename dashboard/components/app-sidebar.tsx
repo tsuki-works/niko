@@ -56,7 +56,7 @@ export function AppSidebar() {
           {/* Full lockup — hidden when the sidebar collapses to icons. */}
           <div className="relative h-10 w-40 group-data-[collapsible=icon]:hidden">
             <Image
-              src="/niko/niko-logo-full-dark.png"
+              src="/niko/niko-logo-light.png"
               alt="Niko by Tsuki Works"
               fill
               priority
@@ -64,7 +64,7 @@ export function AppSidebar() {
               className="object-contain object-left dark:hidden"
             />
             <Image
-              src="/niko/niko-logo-full-light.png"
+              src="/niko/niko-logo-dark.png"
               alt=""
               aria-hidden
               fill
@@ -75,11 +75,11 @@ export function AppSidebar() {
           </div>
           {/* Mark only — shown when collapsed. */}
           <Image
-            src="/icon.svg"
+            src="/niko/niko-mark.svg"
             alt="Niko"
             width={24}
             height={24}
-            className="hidden shrink-0 dark:invert group-data-[collapsible=icon]:block"
+            className="hidden shrink-0 group-data-[collapsible=icon]:block"
           />
         </div>
       </SidebarHeader>

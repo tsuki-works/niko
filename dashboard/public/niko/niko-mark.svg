@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Niko smiling moon icon">
+  <title>Niko smiling moon icon</title>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- rear moon / shadow -->
+    <circle cx="420" cy="540" r="305" fill="#28456F"/>
+
+    <!-- front moon face -->
+    <circle cx="585" cy="500" r="305" fill="#DDCCA8" stroke="#28456F" stroke-width="8"/>
+
+    <!-- eyes -->
+    <path d="M445 500 C458 470 502 470 515 500" stroke="#28456F" stroke-width="24"/>
+    <path d="M665 500 C678 470 722 470 735 500" stroke="#28456F" stroke-width="24"/>
+
+    <!-- smile -->
+    <path d="M455 650 C520 720 650 720 715 650" stroke="#28456F" stroke-width="28"/>
+  </g>
+</svg>
