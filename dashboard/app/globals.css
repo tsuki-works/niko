@@ -3,6 +3,18 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Brand palette (derived from assets/niko/niko_moon_icon_aligned.svg):
+ *   navy  #28456F → oklch(0.389 0.080 257.7)   primary ink on light
+ *   cream #DDCCA8 → oklch(0.850 0.052 85.7)    primary ink on dark
+ *
+ * Semantic tokens (success / warning / destructive) are tuned to sit
+ * in the same warm family rather than borrowing cold Tailwind defaults:
+ *   - success: warm sage (hue 135) instead of cold emerald
+ *   - warning: amber (hue 85, shared with cream)
+ *   - destructive: warm clay (hue 28) instead of cold crimson
+ */
+
 :root {
   --radius: 0.75rem;
 
@@ -15,42 +27,50 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.141 0.005 285.823);
 
-  /* Primary — emerald 600 */
-  --primary: oklch(0.596 0.145 163.225);
-  --primary-foreground: oklch(0.979 0.021 166.113);
+  /* Brand — navy on cream, light mode */
+  --primary: oklch(0.389 0.08 257.7);
+  --primary-foreground: oklch(0.97 0.03 85.7);
 
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
+  /* Secondary — soft cream tint for surfaces / tags */
+  --secondary: oklch(0.94 0.025 85.7);
+  --secondary-foreground: oklch(0.389 0.08 257.7);
 
   --muted: oklch(0.967 0.001 286.375);
   --muted-foreground: oklch(0.552 0.016 285.938);
 
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.21 0.006 285.885);
+  --accent: oklch(0.94 0.025 85.7);
+  --accent-foreground: oklch(0.389 0.08 257.7);
 
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
+  /* Semantic — warm family */
+  --success: oklch(0.68 0.12 135);
+  --success-foreground: oklch(0.99 0.005 135);
+
+  --warning: oklch(0.75 0.15 85);
+  --warning-foreground: oklch(0.28 0.05 85);
+
+  --destructive: oklch(0.58 0.18 28);
+  --destructive-foreground: oklch(0.99 0.005 28);
 
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.596 0.145 163.225);
+  --ring: oklch(0.389 0.08 257.7);
 
-  /* Chart palette — 5 distinct hues, oklch, readable in both modes */
-  --chart-1: oklch(0.596 0.145 163.225);  /* emerald */
-  --chart-2: oklch(0.588 0.158 241.966);  /* blue */
-  --chart-3: oklch(0.645 0.246 16.439);   /* rose */
-  --chart-4: oklch(0.606 0.25 292.717);   /* violet */
-  --chart-5: oklch(0.666 0.178 58.318);   /* amber */
+  /* Chart palette — warm family, readable in both modes */
+  --chart-1: oklch(0.389 0.08 257.7);   /* navy */
+  --chart-2: oklch(0.75 0.15 85);       /* amber */
+  --chart-3: oklch(0.68 0.12 135);      /* sage */
+  --chart-4: oklch(0.58 0.18 28);       /* clay */
+  --chart-5: oklch(0.850 0.052 85.7);   /* cream */
 
-  /* Sidebar — pre-wired for Phase 2 */
+  /* Sidebar — inherits brand in dark mode; light sidebar stays neutral */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-primary: oklch(0.596 0.145 163.225);
-  --sidebar-primary-foreground: oklch(0.979 0.021 166.113);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
+  --sidebar-primary: oklch(0.389 0.08 257.7);
+  --sidebar-primary-foreground: oklch(0.97 0.03 85.7);
+  --sidebar-accent: oklch(0.94 0.025 85.7);
+  --sidebar-accent-foreground: oklch(0.389 0.08 257.7);
   --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.596 0.145 163.225);
+  --sidebar-ring: oklch(0.389 0.08 257.7);
 }
 
 .dark {
@@ -63,40 +83,47 @@
   --popover: oklch(0.21 0.006 285.885);
   --popover-foreground: oklch(0.985 0 0);
 
-  /* Primary — emerald 500 (brighter for dark backgrounds) */
-  --primary: oklch(0.696 0.17 162.48);
-  --primary-foreground: oklch(0.393 0.095 152.535);
+  /* Brand — cream on navy, dark mode */
+  --primary: oklch(0.85 0.052 85.7);
+  --primary-foreground: oklch(0.28 0.08 257.7);
 
-  --secondary: oklch(0.274 0.006 286.033);
-  --secondary-foreground: oklch(0.985 0 0);
+  /* Secondary — desaturated navy that reads lighter than card bg */
+  --secondary: oklch(0.30 0.05 257.7);
+  --secondary-foreground: oklch(0.85 0.052 85.7);
 
   --muted: oklch(0.274 0.006 286.033);
   --muted-foreground: oklch(0.705 0.015 286.067);
 
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground: oklch(0.985 0 0);
+  --accent: oklch(0.30 0.05 257.7);
+  --accent-foreground: oklch(0.85 0.052 85.7);
 
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.75 0.13 135);
+  --success-foreground: oklch(0.18 0.03 135);
+
+  --warning: oklch(0.80 0.15 85);
+  --warning-foreground: oklch(0.22 0.05 85);
+
+  --destructive: oklch(0.68 0.19 28);
+  --destructive-foreground: oklch(0.18 0.03 28);
 
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.696 0.17 162.48);
+  --ring: oklch(0.85 0.052 85.7);
 
-  --chart-1: oklch(0.696 0.17 162.48);
-  --chart-2: oklch(0.7 0.15 241.966);
-  --chart-3: oklch(0.704 0.191 22.216);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.769 0.188 70.08);
+  --chart-1: oklch(0.85 0.052 85.7);
+  --chart-2: oklch(0.80 0.15 85);
+  --chart-3: oklch(0.75 0.13 135);
+  --chart-4: oklch(0.68 0.19 28);
+  --chart-5: oklch(0.50 0.09 257.7);
 
-  --sidebar: oklch(0.21 0.006 285.885);
+  --sidebar: oklch(0.18 0.006 285.885);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.696 0.17 162.48);
-  --sidebar-primary-foreground: oklch(0.393 0.095 152.535);
-  --sidebar-accent: oklch(0.274 0.006 286.033);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.85 0.052 85.7);
+  --sidebar-primary-foreground: oklch(0.28 0.08 257.7);
+  --sidebar-accent: oklch(0.30 0.05 257.7);
+  --sidebar-accent-foreground: oklch(0.85 0.052 85.7);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.696 0.17 162.48);
+  --sidebar-ring: oklch(0.85 0.052 85.7);
 }
 
 @theme inline {
@@ -122,6 +149,10 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);

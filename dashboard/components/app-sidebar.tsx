@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import Image from 'next/image';
 import { ListOrdered, Menu, Phone, Settings } from 'lucide-react';
 
+import { NikoMark } from '@/components/shared/niko-mark';
 import {
   Sidebar,
   SidebarContent,
@@ -52,35 +52,20 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center px-2 py-1.5">
-          {/* Full lockup — hidden when the sidebar collapses to icons. */}
-          <div className="relative h-10 w-40 group-data-[collapsible=icon]:hidden">
-            <Image
-              src="/niko/niko-logo-light.png"
-              alt="Niko by Tsuki Works"
-              fill
-              priority
-              sizes="160px"
-              className="object-contain object-left dark:hidden"
-            />
-            <Image
-              src="/niko/niko-logo-dark.png"
-              alt=""
-              aria-hidden
-              fill
-              priority
-              sizes="160px"
-              className="hidden object-contain object-left dark:block"
-            />
+        <div className="flex items-center gap-2.5 px-2 py-3">
+          <NikoMark size={40} className="group-data-[collapsible=icon]:size-7" />
+          {/* Wordmark — hidden when the sidebar collapses to icons.
+              Font-weight 600 is an intentional exception to the
+              dashboard's "400/500 only" rule: this is brand typography,
+              not body copy. */}
+          <div className="flex flex-col leading-tight group-data-[collapsible=icon]:hidden">
+            <span className="text-2xl font-semibold tracking-tight text-primary">
+              Niko
+            </span>
+            <span className="text-xs text-muted-foreground">
+              by Tsuki Works
+            </span>
           </div>
-          {/* Mark only — shown when collapsed. */}
-          <Image
-            src="/niko/niko-mark.svg"
-            alt="Niko"
-            width={24}
-            height={24}
-            className="hidden shrink-0 group-data-[collapsible=icon]:block"
-          />
         </div>
       </SidebarHeader>
       <SidebarContent>
