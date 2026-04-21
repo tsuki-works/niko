@@ -52,19 +52,35 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1.5">
+        <div className="flex items-center px-2 py-1.5">
+          {/* Full lockup — hidden when the sidebar collapses to icons. */}
+          <div className="relative h-10 w-40 group-data-[collapsible=icon]:hidden">
+            <Image
+              src="/niko/niko-logo-full-dark.png"
+              alt="Niko by Tsuki Works"
+              fill
+              priority
+              sizes="160px"
+              className="object-contain object-left dark:hidden"
+            />
+            <Image
+              src="/niko/niko-logo-full-light.png"
+              alt=""
+              aria-hidden
+              fill
+              priority
+              sizes="160px"
+              className="hidden object-contain object-left dark:block"
+            />
+          </div>
+          {/* Mark only — shown when collapsed. */}
           <Image
             src="/icon.svg"
-            alt=""
+            alt="Niko"
             width={24}
             height={24}
-            className="shrink-0 dark:invert"
-            aria-hidden
+            className="hidden shrink-0 dark:invert group-data-[collapsible=icon]:block"
           />
-          <div className="flex flex-col leading-tight group-data-[collapsible=icon]:hidden">
-            <span className="text-sm font-medium">Niko</span>
-            <span className="text-xs text-muted-foreground">Pizza Kitchen</span>
-          </div>
         </div>
       </SidebarHeader>
       <SidebarContent>
