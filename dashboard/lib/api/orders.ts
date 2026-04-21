@@ -1,0 +1,118 @@
+/**
+ * HTTP client for the FastAPI orders endpoints.
+ *
+ * Only used on the server (RSC fetch + Server Actions) — the dashboard
+ * never calls these from the browser, because real-time updates come
+ * through Firestore `onSnapshot` instead (see dashboard/CLAUDE.md).
+ *
+ * Endpoints:
+ *   GET  /orders                         ← LIVE (app/main.py)
+ *   GET  /orders/{call_sid}              ← NOT YET IMPLEMENTED
+ *   POST /orders/{call_sid}/cancel       ← NOT YET IMPLEMENTED
+ *
+ * The two missing endpoints are stubbed here so the dashboard compiles
+ * and the UI paths light up. When Meet lands them on the backend, flip
+ * the `STUB_*` constants to `false`.
+ */
+import 'server-only';
+
+import {
+  type Order,
+  OrderSchema,
+  OrderStatusSchema,
+  type OrderStatus,
+} from '@/lib/schemas/order';
+import { parseOrderFromJson } from '@/lib/firebase/converters';
+
+const STUB_GET_ORDER_BY_ID = true;
+const STUB_CANCEL_ORDER = true;
+
+function apiBase(): string {
+  const base = process.env.NIKO_API_BASE_URL;
+  if (!base) throw new Error('NIKO_API_BASE_URL is not set');
+  return base.replace(/\/$/, '');
+}
+
+export async function listOrders(params: {
+  status?: OrderStatus;
+  limit?: number;
+}): Promise<Order[]> {
+  const limit = params.limit ?? 50;
+  const url = new URL(`${apiBase()}/orders`);
+  url.searchParams.set('limit', String(limit));
+
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error(`GET /orders failed: ${res.status} ${res.statusText}`);
+  }
+
+  const body = (await res.json()) as { orders: unknown[] };
+  const parsed = body.orders.map((raw, i) =>
+    parseOrderFromJson(raw, `listOrders[${i}]`),
+  );
+
+  if (params.status) {
+    return parsed.filter((o) => o.status === params.status);
+  }
+  return parsed;
+}
+
+export async function getOrder(callSid: string): Promise<Order | null> {
+  if (STUB_GET_ORDER_BY_ID) {
+    // TODO(backend): GET /orders/{call_sid}. Until then, fall back to the
+    // list endpoint and filter. Cheap for POC (≤50 docs) — swap this
+    // when Meet ships the per-order route.
+    const all = await listOrders({ limit: 200 });
+    return all.find((o) => o.call_sid === callSid) ?? null;
+  }
+
+  const url = `${apiBase()}/orders/${encodeURIComponent(callSid)}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(
+      `GET /orders/${callSid} failed: ${res.status} ${res.statusText}`,
+    );
+  }
+  return parseOrderFromJson(await res.json(), `getOrder(${callSid})`);
+}
+
+export type CancelResult =
+  | { success: true; order: Order }
+  | { success: false; error: string };
+
+export async function cancelOrderApi(callSid: string): Promise<CancelResult> {
+  if (STUB_CANCEL_ORDER) {
+    return {
+      success: false,
+      error:
+        "Cancel isn't wired up yet — backend endpoint POST /orders/{call_sid}/cancel is pending.",
+    };
+  }
+
+  const url = `${apiBase()}/orders/${encodeURIComponent(callSid)}/cancel`;
+  const res = await fetch(url, {
+    method: 'POST',
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    return {
+      success: false,
+      error: `POST cancel failed: ${res.status} ${res.statusText}`,
+    };
+  }
+  const body = await res.json();
+  const parsed = OrderSchema.safeParse(
+    body && typeof body === 'object' && 'order' in body ? body.order : body,
+  );
+  if (!parsed.success) {
+    return { success: false, error: 'Cancel response failed validation' };
+  }
+  return { success: true, order: parsed.data };
+}
+
+export function parseStatusParam(raw: string | undefined): OrderStatus | undefined {
+  if (!raw) return undefined;
+  const parsed = OrderStatusSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
+}

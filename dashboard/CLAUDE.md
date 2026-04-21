@@ -1,180 +1,201 @@
 # Restaurant Order Platform — Dashboard
 
-Next.js dashboard for an AI-powered voice ordering platform for restaurants. Phone callers talk to an AI agent; orders land in Firestore; this dashboard lets staff see what's coming in.
+Next.js dashboard for an AI voice ordering platform. Phone callers talk to an AI agent, orders land in Firestore, this dashboard surfaces them for the kitchen.
 
-Competitive context: loman.ai, Canadian market focus. Expect expansion beyond ordering (reservations, upsell flows, loyalty) after Phase 1.
+Competitive context: loman.ai, Canadian market focus. Expansion beyond ordering (reservations, upsell, loyalty) comes after Phase 1.
 
-**Team:** Kailash (telephony), Meet (LLM/backend), Sandeep (TTS), Daniel (this codebase — dashboard + Firestore schema).
+**Team:** Kailash (telephony), Meet (LLM/backend), Sandeep (TTS), Daniel (this codebase).
 
 ## Scope (Phase 1 — POC, Weeks 3-6)
 
-**In scope for now:**
+**In scope:**
 
-- Single demo restaurant (pizza menu)
-- Read-only-ish dashboard: incoming orders feed, order detail view, basic status updates
-- Firestore as the data store, read both server-side (Firebase Admin) and client-side (onSnapshot for live updates)
-- English-only UI
-- No auth (demo context) or minimal shared-secret gating — do **not** invest in auth plumbing yet
+- Single demo restaurant (`niko-pizza-kitchen`), pizza menu
+- Orders feed with live updates; order detail view
+- One dashboard-side mutation: cancelling a confirmed order
+- Firestore as the data store — read server-side via firebase-admin, live via `onSnapshot` client-side
+- English only, dark + light modes
+- No auth (demo context). Minimal or no gating.
 
-**Deferred to Phase 2+ (track decisions now, but don't build):**
+**Deferred to Phase 2+:**
 
 - Multi-tenancy (multiple restaurants, locations)
-- Roles / proper auth
-- Bilingual EN-CA / FR-CA (Bill 96 requirement — mandatory before production in Quebec)
-- Provincial tax (GST/HST/PST/QST)
-- POS write-back to Square (Phase 1 stops at Firestore)
+- Auth / roles
+- Bilingual EN-CA / FR-CA (Bill 96 requirement for Quebec)
+- Provincial tax (GST/HST/PST/QST) and `total` calculation
+- Staff workflow statuses (preparing / ready / completed)
+- POS write-back to Square
 - Payments
+- Call recording playback, transcripts view
+- Structured modifiers with IDs and price deltas (POC uses free-text)
+- Integer-cents money (POC uses floats to match backend)
 
-When making architectural choices now, pick options that don't **block** Phase 2+ — but don't over-engineer. A deferred-items checklist is at the bottom of this doc.
+A more complete deferred list with migration notes is at the bottom.
+
+## Backend contract
+
+The backend is the source of truth. This dashboard is a reader of Firestore docs that FastAPI writes.
+
+- **Pydantic models live at `app/orders/models.py`** in the monorepo. When they change, `lib/schemas/order.ts` updates to match.
+- **`lib/schemas/order.ts`** is the single source of truth on the dashboard side. Every Firestore read goes through the Zod converter it exports — no ad-hoc parsing of `doc.data()` anywhere.
+- **Field names stay snake_case** on the dashboard (`call_sid`, `caller_phone`, `unit_price`, `line_total`, `order_type`, `delivery_address`, `created_at`, `confirmed_at`). That's what's in Firestore. Do not rename to camelCase on read — naming consistency with the backend matters more than TS idiom.
+- **FastAPI owns order creation and all writes during a call** (`in_progress` → `confirmed`). The dashboard only writes to transition a `confirmed` order to `cancelled`.
+- **The voice pipeline (Twilio → Deepgram → Claude Haiku → ElevenLabs → Firestore) is not this codebase's concern.** If a new capability needs server-side logic touching the pipeline, it goes in FastAPI. Don't recreate it in Next.js.
 
 ## Domain glossary
 
-Use these terms precisely. Don't invent synonyms.
+Use these terms precisely.
 
-- **Restaurant** — the tenant (one, for now).
-- **Location** — physical venue (one, for now).
-- **Menu** — items, categories, modifiers. Pizza demo menu for POC.
-- **Item** — sellable thing. Name, price, description, image, availability.
-- **Modifier / Modifier group** — customizations with min/max rules.
-- **Call** — single inbound phone interaction with the AI agent. Has recording, transcript, duration, outcome.
-- **Order** — finalized or in-progress purchase, linked to a call.
-- **Agent** — the AI voice agent (Claude Haiku 4.5 via the Anthropic API).
-- **Handoff** — live-call transfer from agent to a human.
+- **Restaurant** — the tenant (one, for now: `niko-pizza-kitchen`, displayed as "Niko Pizza Kitchen").
+- **Order** — what the agent captures on a call. Firestore doc keyed by `call_sid`.
+- **Line item** — one entry on an order. Has `name`, `category` (pizza / side / drink), optional `size`, `quantity`, `unit_price`, free-text `modifications` list, `line_total`.
+- **Call** — the inbound phone interaction. Identified by Twilio's `call_sid`. The dashboard links orders to calls by `call_sid`; call records themselves aren't surfaced in Phase 1.
+- **Agent** — the AI voice agent (Claude Haiku 4.5).
+- **Status** — `in_progress` (call live, order still being built), `confirmed` (caller confirmed, call ended cleanly), `cancelled` (caller cancelled, call failed, or staff-cancelled via dashboard). No other values.
 
-Always "Order," never "Ticket." Always "Call," never "Session."
+Always "order," never "ticket." Always "call," never "session."
 
 ## Stack
 
-### Platform (for context — not this codebase)
+### Platform (not this codebase)
 
-- **Telephony:** Twilio (inbound → FastAPI `/voice` endpoint)
-- **Backend:** FastAPI on GCP Cloud Run
+- **Telephony:** Twilio → FastAPI `/voice` on GCP Cloud Run
 - **STT:** Deepgram Nova-2 streaming
-- **LLM:** Claude Haiku 4.5 via Anthropic API (`claude-haiku-4-5-20251001`)
+- **LLM:** Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) via Anthropic API
 - **TTS:** ElevenLabs streaming
 - **POS (Phase 2+):** Square
-- **Latency contract:** <1s end-to-end (voice pipeline, not dashboard)
+- **Latency contract:** <1s end-to-end on the voice pipeline
 
-### This codebase (dashboard)
+### This codebase
 
 - Next.js 15+ App Router, React Server Components
 - React 19
 - TypeScript strict mode
-- Tailwind CSS v4, oklch-based CSS variables
-- ShadCN/ui (Radix underneath)
+- Tailwind CSS v4, OKLCH tokens in `app/globals.css` (`@theme inline`)
+- ShadCN/ui, `new-york` style, `neutral` base
+- Primary color: emerald (ties to "confirmed" = the product's success state)
+- Fonts: Geist Sans + Geist Mono via `geist` package
+- Border radius: `0.75rem`
 - lucide-react icons
-- next-themes for dark mode
-- **Firestore** via `firebase-admin` (server) and `firebase` web SDK (client, for `onSnapshot`)
-- TanStack Table for tables
-- Zod for schema validation (including Firestore document shapes)
-- React Hook Form with Zod resolver
-- Zustand only when RSC/URL state isn't enough (rarely)
-- pnpm, Biome
+- next-themes for dark mode (class strategy)
+- **firebase-admin** (server) and **firebase** web SDK (client, for `onSnapshot`)
+- Zod for schema validation of every Firestore read
+- React Hook Form + Zod resolver for any forms (not needed in Phase 1)
+- date-fns for relative time formatting
+- libphonenumber-js for phone formatting
+- pnpm, ESLint (from `create-next-app`)
 
 ## Architecture
 
 ### Frontend / backend split
 
-The Next.js app **is not the backend.** FastAPI on Cloud Run owns the voice pipeline and writes orders to Firestore. This dashboard:
+The Next.js app **is not the backend.** FastAPI on Cloud Run owns the voice pipeline and writes orders to Firestore. This dashboard reads Firestore and performs exactly one mutation (cancel).
 
-- Reads Firestore (server-side for initial render, client-side `onSnapshot` for live updates)
-- Performs dashboard-local mutations (e.g. mark order ready) via Firestore writes or a thin FastAPI endpoint
-- Does **not** own business logic for order-taking, LLM prompting, or audio processing
+Never recreate FastAPI's responsibilities in Next.js.
 
-Never recreate FastAPI's responsibilities in Next.js. If a new capability needs server-side logic that touches the voice pipeline, it goes in FastAPI.
+### Server-first
 
-### Server-first (for the dashboard)
-
-- Default to Server Components. Only add `"use client"` when you need interactivity, browser APIs, stateful hooks, or Firestore `onSnapshot`.
+- Default to Server Components. `"use client"` only when you need interactivity, browser APIs, stateful hooks, or `onSnapshot`.
 - Initial data fetch in Server Components via `firebase-admin`. Pass down as props.
 - Real-time subscriptions in Client Components via `onSnapshot`, seeded from the server-rendered initial state.
-- Server Actions only for dashboard-local concerns. No `app/api/` routes unless it's a webhook from FastAPI (probably not needed in Phase 1).
+- Server Actions for the cancel mutation. No `app/api/` routes in Phase 1.
 
 ### Real-time via Firestore
 
-- Use `onSnapshot` on the client. Firestore gives real-time for free — no SSE, no WebSockets, no polling.
+- `onSnapshot` on the client. No SSE, no WebSockets, no polling.
 - Pattern: Server Component renders from `firebase-admin`; Client Component receives initial data as a prop and subscribes for updates.
-- Scope subscriptions narrowly — subscribe at the component that needs the feed, not at the layout.
-- Clean up listeners on unmount. Always.
+- Scope subscriptions narrowly — at the component that needs the feed, not at the layout.
+- Clean up listeners on unmount.
 
 ## File structure
 
 ```
 app/
   (dashboard)/
-    layout.tsx
-    page.tsx               overview / orders feed
+    layout.tsx                top bar + theme provider
+    page.tsx                  orders feed (Server Component)
+    loading.tsx               table skeleton
     orders/
-      page.tsx
-      [id]/page.tsx
-    calls/                 (Phase 1 stretch — optional)
-    menu/                  (Phase 2+)
-    settings/              (Phase 2+)
+      [id]/
+        page.tsx              order detail (Server Component)
+        loading.tsx
+        not-found.tsx
+  actions/
+    cancel-order.ts           Server Action
   globals.css
+  layout.tsx                  root (fonts, ThemeProvider, Toaster)
 components/
-  ui/                      ShadCN primitives
+  ui/                         ShadCN primitives
   orders/
+    orders-feed.tsx           Client: onSnapshot + rendering
+    orders-table.tsx          presentational
+    order-detail.tsx          presentational
+    cancel-order-button.tsx   Client: AlertDialog + optimistic update
   shared/
+    local-time.tsx            tz-aware time rendering
+    theme-toggle.tsx
 lib/
   firebase/
-    admin.ts               firebase-admin init (server only)
-    client.ts              firebase web SDK init (client only)
-    converters.ts          Firestore <-> Zod-validated TS type converters
-  schemas/                 Zod schemas (orders, calls, items, ...)
-  formatters/              currency, phone, date
-  status-styles.ts         order/call status → badge style (single source)
-  utils.ts                 cn, etc.
-hooks/
-  use-orders-feed.ts       onSnapshot wrapper
-types/
+    admin.ts                  firebase-admin init (server only)
+    client.ts                 web SDK init (client only)
+    converters.ts             Zod-validated orderConverter
+  schemas/
+    order.ts                  Zod schemas + display helpers
+  formatters/
+    money.ts                  formatCAD()
+  status-styles.ts            order status → badge style
+  utils.ts                    cn helper
+scripts/
+  seed-orders.ts              emulator seeding
 ```
 
 ## Data flow
 
-- **Read path:** Server Component → `firebase-admin` → props → Client Component → `onSnapshot` for live updates.
-- **Dashboard writes (e.g. status change):** client-side Firestore write, or Server Action → `firebase-admin` write. For POC, direct client writes are fine with permissive security rules; tighten for Phase 2.
-- **URL state (`searchParams`)** for filters, sorting, pagination, date ranges — not client state.
-- `useOptimistic` for snappy status toggles.
-- Firestore writes from FastAPI are the source of truth for new orders — the dashboard reacts to them, never races them.
+- **Read path:** Server Component → `firebase-admin` with `orderConverter` → props → Client Component → `onSnapshot` with the same converter for live updates.
+- **Cancel path:** `<CancelOrderButton>` → Server Action → admin SDK write → `revalidatePath`. `onSnapshot` will also fire and reconcile.
+- **URL state (`searchParams`)** for status filter. Not client state.
+- **FastAPI writes are the source of truth for new orders** — the dashboard reacts, it never races.
+- **Dashboard cancel writes do race with FastAPI** in principle. In Phase 1 we only cancel `confirmed` orders (FastAPI is done by then), so no practical race. Flag a code comment rather than solving now.
 
 ## Firestore conventions
 
-- **One collection per top-level entity:** `orders`, `calls`, `menu_items` (pizza demo).
-- **Every document validates through a Zod schema** on read. Use `.withConverter()` to plug Zod validation into both admin and client SDKs. If a doc fails validation, log and surface as a typed error — don't silently coerce.
-- **Timestamps** stored as Firestore `Timestamp`, converted to `Date` on read. Never strings.
-- **Money** stored as integer cents plus currency code. Never floats. (See Type Safety.)
-- **Document IDs** from Firestore auto-ID or a purpose-built ULID helper — never user-supplied.
-- **Denormalize for read performance.** Order documents embed the line items and totals snapshot; don't rely on joins that Firestore doesn't have.
+- **Collections:** `orders`. Documents keyed by `call_sid`.
+- **Every read validates through `OrderSchema`** via the converter in `lib/firebase/converters.ts`. On parse failure, log and throw — never silently coerce.
+- **Timestamps:** Firestore `Timestamp` on the wire, JS `Date` after the converter. Never let a raw `Timestamp` cross an RSC → Client Component boundary — it won't serialize.
+- **Money is stored as `number` (float)** to match the backend and Firestore's native number type. Do not convert to integer cents on read. This is a conscious POC choice — migration plan in deferred section.
+- **Computed fields** (`line_total`, `subtotal`) are persisted by FastAPI on write. The dashboard reads them as values; do not recompute.
+- **`modifications` is `list[str]`** — free-text strings. Render them as-is. Phase 2 will restructure with IDs and price deltas.
 
 ## Component conventions
 
 ### ShadCN and accessibility
 
-- Never break Radix behavior. ShadCN wraps Radix — focus management, ARIA, keyboard nav come from Radix.
+- Never break Radix behavior. Focus management, ARIA, keyboard nav come from Radix through ShadCN.
 - `asChild` children must be focusable (`button`, `a`, `input` — never `div`).
-- Every interactive control has an accessible name (visible text, `aria-label`, `aria-labelledby`).
+- Every interactive control has an accessible name.
 - Icon-only buttons require `aria-label`.
 - Preserve focus traps in dialogs, dropdowns, popovers.
 
 ### Forms
 
-- React Hook Form + Zod for all non-trivial forms.
-- ShadCN Form primitives (`FormField`, `FormItem`, `FormLabel`, `FormMessage`) — they wire ARIA correctly.
-- `aria-required="true"` on required fields.
-- Phone fields: `libphonenumber-js`, store E.164, display formatted.
+Not used in Phase 1. When we add them:
+
+- React Hook Form + Zod resolver.
+- ShadCN Form primitives (they wire ARIA).
+- Phone fields: `libphonenumber-js`, E.164 storage.
 
 ### Tables
 
-- TanStack Table for anything beyond trivial display.
-- Right-align numeric columns (counts, currencies, durations).
-- Filtering, sorting, pagination via URL `searchParams`.
-- **Currency columns** always formatted via `Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' })`. Never display raw cents.
-- **Order status** uses a single badge mapping from `lib/status-styles.ts`: `pending` (amber), `confirmed` (blue), `preparing` (indigo), `ready` (green), `completed` (gray), `cancelled` (red), `failed` (red). New statuses go in this file first.
-- **Timestamps** render in the restaurant's local time. Use a `<LocalTime />` component — even in POC, don't render browser-local by accident.
+- TanStack Table for anything beyond trivial display. (Phase 1 orders table can be hand-rolled since it's ~5 columns of read-only data.)
+- Right-align numeric columns (subtotal, quantity).
+- `font-variant-numeric: tabular-nums` on currency and ID columns so `$18.99` and `$9.00` align.
+- Filter / sort state via URL `searchParams`.
+- **Status** always rendered via `lib/status-styles.ts`. New status values get added to that file (and to the Zod enum) before any component uses them.
+- **Timestamps** render in `America/Toronto` via `<LocalTime />`. Never rely on browser tz — the restaurant's tz is what matters.
 
 ### Empty states
 
-Every list surface (orders, calls) has a considered empty state. Explain what the surface is for and what the user should expect to see. No default "No results" text — during demo day an empty dashboard is the first thing Kailash/Meet will show.
+Every list surface has a considered empty state. The orders feed empty state is the first thing the team will show on demo day — explain what to expect ("Calls to +1 647-905-8093 will appear here in real time"), don't ship default "No results" text.
 
 ### Icons
 
@@ -183,98 +204,102 @@ Every list surface (orders, calls) has a considered empty state. Explain what th
 
 ## Styling
 
-- Tailwind v4 — config in CSS (`@theme` in `globals.css`), not `tailwind.config.ts`.
-- Theme colors use oklch. No hex or rgb for theme tokens — extend the set in `globals.css`.
+- Tailwind v4. Theme in CSS (`@theme inline` in `app/globals.css`), not `tailwind.config.ts`.
+- All theme colors are OKLCH tokens. No hex or rgb in components — extend tokens in `globals.css` instead.
 - Dark mode via next-themes, class strategy.
 - `cn()` from `lib/utils.ts` for conditional classes.
 - Container queries preferred over media queries for component-level responsive behavior.
+- Headings use font-weight 500, not 600+ — dashboard density makes heavier weights read cramped.
+- Two weights: 400 and 500.
 
 ## Performance
 
 - `next/image` for images.
-- `next/font` for fonts.
-- Dynamic imports for heavy client components where it helps.
-- `loading.tsx` at route level.
-- `error.tsx` at route level.
-- No `"use client"` at the top of `layout.tsx` / `page.tsx` unless necessary.
-- Keep Firestore subscriptions at the lowest component that needs them.
+- `next/font` via the `geist` package for fonts.
+- Route-level `loading.tsx` and `error.tsx`.
+- No `"use client"` on `layout.tsx` or `page.tsx`.
+- Firestore subscriptions live at the lowest component that needs them, not in layouts.
+- `export const dynamic = 'force-dynamic'` on the orders feed page — it's a live dashboard, caching is the wrong default.
 
 ## Type safety
 
-- TypeScript strict mode. No `any` — use `unknown` + narrowing.
-- **Zod schemas are the source of truth** for every Firestore document shape. TS types derived via `z.infer`.
-- Server Actions (where used) return discriminated unions (`{ success: true, data } | { success: false, error }`).
-- Status enums (`OrderStatus`, `CallOutcome`) are Zod enums. Exhaustive `switch` required — `never` assertion in default branches.
-- **Money is never `number`.** Store integer cents in Firestore; wrap in a `Money` type (`{ amount: number; currency: 'CAD' }`) at the boundary. All arithmetic goes through helpers in `lib/formatters/money.ts`.
+- Strict mode. No `any` — use `unknown` + narrowing.
+- **`lib/schemas/order.ts` is the source of truth** for every Firestore document shape. TS types via `z.infer`.
+- Server Actions return discriminated unions (`{ success: true, data } | { success: false, error }`). Don't throw.
+- Exhaustive `switch` on `OrderStatus` — `never` assertion in default branches. If the Zod enum grows, every switch is a compile error until updated.
+- **Money is `number` (float) in Phase 1.** Don't fight it — the backend decided. All arithmetic should go through helpers in `lib/formatters/money.ts` so the Phase 2 Decimal migration is a file-scoped change.
 
 ## State management
 
-- URL state first — filters, pagination, selected order, tabs, date ranges.
-- Server state from RSC fetch + Firestore `onSnapshot`. Don't duplicate into client state.
+- URL state (`searchParams`) first — filter tabs, selected order implied by route.
+- Server state from RSC fetch + Firestore `onSnapshot`. Don't duplicate into a client store.
 - Local component state via `useState` / `useReducer`.
-- Zustand only for genuinely global client state. For POC, probably none needed.
-- No Redux.
+- `useOptimistic` for the cancel mutation.
+- No Zustand in Phase 1. No Redux ever.
 
 ## Accessibility
 
-- Target WCAG 2.1 AA.
+- WCAG 2.1 AA.
 - `eslint-plugin-jsx-a11y` enforced.
-- Keyboard navigation on every interactive flow.
-- Color contrast 4.5:1 normal text, 3:1 large text.
-- **Audio players** (call recordings, when added) need keyboard controls and visible focus. Transcripts always available as text, not only audio.
-- **Real-time surfaces** announce new orders via `aria-live="polite"`. Throttle — don't spam the region.
+- Keyboard navigation works on every flow.
+- Color contrast 4.5:1 normal, 3:1 large.
+- **Real-time surfaces** announce new orders via `aria-live="polite"`. Throttle — at most one announcement per 2s.
+- Audio players (Phase 2) need keyboard controls, visible focus, and text transcripts as equivalents.
 
 ## Testing
 
-- Vitest for unit tests (schemas, formatters, status-styles).
-- Playwright for E2E (smoke tests before demo day; axe scan on key routes).
-- Zod schemas get round-trip tests (`parse(valid)` succeeds; `parse(invalid)` fails clearly).
-- Firestore: use the Firebase Emulator Suite for integration tests, never hit production.
-- For POC, prioritize: schema validity, money formatting, status badge mapping, empty states render.
+- Vitest for unit tests. Phase 1 minimum: `orderConverter` round-trip, `formatCAD`, `orderShortId`, `formatLineItemTitle`, `status-styles` completeness.
+- Playwright deferred until Phase 2 unless demo-day smoke tests feel needed.
+- **Firebase Emulator Suite** for integration tests. Never hit production Firestore in tests.
+- A `scripts/seed-orders.ts` inserts sample orders against the emulator for manual iteration.
 
 ## PR review focus
 
 In order:
 
 1. Correctness and logic errors
-2. **Firestore schema consistency** — document shape matches the Zod schema; no ad-hoc fields added without updating the schema
-3. **Money handled as cents, never float**
-4. RSC/client boundary violations — unnecessary `"use client"`, Firestore web SDK imported on the server or admin SDK on the client
-5. Listener leaks — `onSnapshot` without cleanup
-6. Accessibility regressions (Radix, ARIA, focus, keyboard)
-7. Convention adherence (oklch tokens, URL state, Zod schemas, status-styles map)
-8. Performance (missing `next/image`, bloated client bundles, over-broad subscriptions)
+2. **Schema consistency** — Firestore doc shape matches `OrderSchema`; no ad-hoc fields or inline `as any` coercions
+3. RSC / Client boundary violations — unnecessary `"use client"`; `firebase-admin` imported on the client; `firebase` web SDK imported on the server; raw Firestore `Timestamp` crossing RSC props
+4. Listener leaks — `onSnapshot` without cleanup
+5. Accessibility regressions (Radix, ARIA, focus, keyboard, `aria-live`)
+6. Convention adherence (OKLCH tokens, URL state, Zod schemas via converter, status-styles map)
+7. Performance (missing `next/image`, over-broad subscriptions, caching a live page)
+8. Secrets — never in committed code; `.env.example` stays current
 
 Skip:
 
 - Style nits that don't affect behavior
 - Generated files in `components/ui/`
-- Lock files, `node_modules/`, `.next/`
+- Lock files, `.next/`, `node_modules/`
 
 ## Before suggesting changes
 
-- Adding `"use client"` → confirm it's actually needed (interactivity, browser API, or `onSnapshot`)
-- Building server-side business logic → confirm it doesn't belong in FastAPI instead
-- Creating an API route → confirm it's not duplicating what FastAPI or a Server Action should do
-- Adding client state → confirm URL state or Firestore state wouldn't be better
-- Introducing a color → confirm it uses an oklch token
-- Adding a Firestore field → add to the Zod schema in the same PR
-- Math on prices with `number` → switch to cents via `lib/formatters/money.ts`
+- Adding `"use client"` → confirm it's actually needed (interactivity, browser API, `onSnapshot`)
+- Building server-side business logic → confirm it doesn't belong in FastAPI
+- Creating `app/api/` → confirm a Server Action wouldn't be better
+- Renaming fields to camelCase → don't; mirror the Pydantic model
+- Switching money to integer cents → don't; backend is float in Phase 1
+- Parsing `doc.data()` directly → route it through the converter
+- Adding a new order status → update `OrderStatusSchema` and `status-styles.ts` in the same PR
 - Rendering a raw timestamp → wrap in `<LocalTime />`
-- New status value → add to Zod enum and `status-styles.ts`
-- New user-facing string → acceptable in English for Phase 1; flag for i18n in Phase 2
+- Hardcoding `$` or `CAD` → use `formatCAD()`
+- Introducing a color not in the theme → extend `globals.css` tokens, don't inline
+- Adding a user-facing string → English is fine in Phase 1; no i18n plumbing needed yet
 
 ## Deferred to Phase 2+
 
-Track these as architectural constraints to leave room for, without building them now:
+Architectural constraints to leave room for, without building now. If a Phase 1 decision would paint us into a corner on any of these, flag it in the PR.
 
-- **Multi-tenancy.** For Phase 2, every query scoped by restaurant (and location). Data access layer around Firestore to enforce it. Don't scatter `restaurantId` filters in components — centralize from day one of Phase 2.
+- **Money as Decimal / integer cents.** Backend writes floats today. Migration plan: introduce a `Money` type in `lib/formatters/money.ts`, swap storage representation on the backend, update the converter to translate. Every component already routes through `formatCAD()`, so the refactor is file-scoped.
+- **Staff workflow statuses** (`preparing`, `ready`, `completed`). Requires backend `OrderStatus` expansion and new transition endpoints (FastAPI). Dashboard gets additional action buttons on the order detail view. `status-styles.ts` and the Zod enum absorb the new values.
+- **Structured modifiers.** Today: `modifications: list[str]`. Phase 2: `list[{id, group_id, group_name, name, price_delta}]`. Breaks analytics and POS integration if left as strings. Backend-driven migration.
+- **Multi-tenancy.** Every query scoped by `restaurant_id` (and `location_id`). Centralized data access layer around Firestore enforces it. Don't scatter filters in components when the time comes.
 - **Auth & roles.** `owner`, `manager`, `staff`. Role checks at the Server Action / Firestore security rule level, not UI-only.
-- **Bilingual EN-CA / FR-CA.** `next-intl`, locale URL segment, message catalogs. Required before Quebec launch (Bill 96). Do not machine-translate FR-CA without human review.
-- **Provincial tax.** GST / HST / PST / QST. Tax calc server-side (FastAPI), keyed by the location's province. Never compute tax in the browser.
-- **Multi-location.** Locations have their own timezones, hours, menus. `<LocalTime />` already accepts a tz prop — use that pattern.
-- **Phone formatting by locale.** E.164 storage is already in place; display formatting can localize when we add FR-CA.
-- **POS write-back (Square).** Adapter pattern in `lib/pos/` when we get there.
-- **Payments.** Out of scope until after POS integration.
-
-If a Phase 1 decision would paint us into a corner on any of the above, flag it in the PR.
+- **Bilingual EN-CA / FR-CA.** `next-intl`, locale URL segment, message catalogs. Required before Quebec launch (Bill 96). Never machine-translate FR-CA without human review — Quebec French diverges from France French, especially in restaurant vocabulary.
+- **Provincial tax.** GST / HST / PST / QST computed server-side (FastAPI), keyed by the location's province. Never compute tax in the browser.
+- **Multi-location.** Each location has its own timezone, hours, menu. `<LocalTime />` already accepts a tz prop; use that pattern.
+- **`order_number`.** Today we display a short-ID derived from `call_sid`. A real human-readable `order_number` (sequential with prefix, e.g. `P-0042`) belongs on the backend — the agent needs to read it to the caller, so it can't be dashboard-only.
+- **Call recording / transcript playback.** Requires exposing FastAPI's recording URL + transcript fields on the order document, and an audio player with keyboard controls and text equivalents.
+- **POS write-back (Square).** Adapter in `lib/pos/` when we get there.
+- **Payments.** After POS.
+- **Connection-state live indicator.** Phase 1 shows solid green when subscribed. Phase 2 should reflect Firestore reconnect / disconnect states (amber "Reconnecting…", red "Disconnected" after N seconds).
