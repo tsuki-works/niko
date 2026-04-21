@@ -4,44 +4,48 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Brand palette (derived from assets/niko/niko_moon_icon_aligned.svg):
+ * Brand palette (from assets/niko/niko_moon_icon_aligned.svg):
  *   navy  #28456F → oklch(0.389 0.080 257.7)   primary ink on light
  *   cream #DDCCA8 → oklch(0.850 0.052 85.7)    primary ink on dark
  *
- * Semantic tokens (success / warning / destructive) are tuned to sit
- * in the same warm family rather than borrowing cold Tailwind defaults:
- *   - success: warm sage (hue 135) instead of cold emerald
+ * Surface strategy:
+ *   - Light mode: very light warm cream background, white cards.
+ *   - Dark mode:  deep navy background (darker than brand for text
+ *     contrast), lifted-navy cards/popovers. Sidebar slightly deeper
+ *     than main surface so the boundary is visible without a hard line.
+ *
+ * Semantic tokens stay in the same warm family:
+ *   - success: warm sage (hue 135)
  *   - warning: amber (hue 85, shared with cream)
- *   - destructive: warm clay (hue 28) instead of cold crimson
+ *   - destructive: warm clay (hue 28)
  */
 
 :root {
   --radius: 0.75rem;
 
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.141 0.005 285.823);
+  /* Warm cream surface */
+  --background: oklch(0.98 0.012 85.7);
+  --foreground: oklch(0.28 0.06 257.7);
 
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.141 0.005 285.823);
+  --card-foreground: oklch(0.28 0.06 257.7);
 
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.141 0.005 285.823);
+  --popover-foreground: oklch(0.28 0.06 257.7);
 
-  /* Brand — navy on cream, light mode */
+  /* Brand — navy on cream */
   --primary: oklch(0.389 0.08 257.7);
   --primary-foreground: oklch(0.97 0.03 85.7);
 
-  /* Secondary — soft cream tint for surfaces / tags */
-  --secondary: oklch(0.94 0.025 85.7);
+  --secondary: oklch(0.93 0.035 85.7);
   --secondary-foreground: oklch(0.389 0.08 257.7);
 
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
+  --muted: oklch(0.95 0.022 85.7);
+  --muted-foreground: oklch(0.48 0.05 257.7);
 
-  --accent: oklch(0.94 0.025 85.7);
+  --accent: oklch(0.93 0.035 85.7);
   --accent-foreground: oklch(0.389 0.08 257.7);
 
-  /* Semantic — warm family */
   --success: oklch(0.68 0.12 135);
   --success-foreground: oklch(0.99 0.005 135);
 
@@ -51,50 +55,49 @@
   --destructive: oklch(0.58 0.18 28);
   --destructive-foreground: oklch(0.99 0.005 28);
 
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
+  --border: oklch(0.90 0.02 85.7);
+  --input: oklch(0.90 0.02 85.7);
   --ring: oklch(0.389 0.08 257.7);
 
-  /* Chart palette — warm family, readable in both modes */
+  /* Chart palette — warm family */
   --chart-1: oklch(0.389 0.08 257.7);   /* navy */
   --chart-2: oklch(0.75 0.15 85);       /* amber */
   --chart-3: oklch(0.68 0.12 135);      /* sage */
   --chart-4: oklch(0.58 0.18 28);       /* clay */
   --chart-5: oklch(0.850 0.052 85.7);   /* cream */
 
-  /* Sidebar — inherits brand in dark mode; light sidebar stays neutral */
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.141 0.005 285.823);
+  --sidebar: oklch(0.97 0.015 85.7);
+  --sidebar-foreground: oklch(0.28 0.06 257.7);
   --sidebar-primary: oklch(0.389 0.08 257.7);
   --sidebar-primary-foreground: oklch(0.97 0.03 85.7);
-  --sidebar-accent: oklch(0.94 0.025 85.7);
+  --sidebar-accent: oklch(0.90 0.04 85.7);
   --sidebar-accent-foreground: oklch(0.389 0.08 257.7);
-  --sidebar-border: oklch(0.92 0.004 286.32);
+  --sidebar-border: oklch(0.90 0.02 85.7);
   --sidebar-ring: oklch(0.389 0.08 257.7);
 }
 
 .dark {
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.985 0 0);
+  /* Deep brand navy surface, sits below the logo navy for contrast. */
+  --background: oklch(0.23 0.06 257.7);
+  --foreground: oklch(0.94 0.03 85.7);
 
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.985 0 0);
+  --card: oklch(0.29 0.06 257.7);
+  --card-foreground: oklch(0.94 0.03 85.7);
 
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.29 0.06 257.7);
+  --popover-foreground: oklch(0.94 0.03 85.7);
 
-  /* Brand — cream on navy, dark mode */
+  /* Brand — cream on navy */
   --primary: oklch(0.85 0.052 85.7);
   --primary-foreground: oklch(0.28 0.08 257.7);
 
-  /* Secondary — desaturated navy that reads lighter than card bg */
-  --secondary: oklch(0.30 0.05 257.7);
+  --secondary: oklch(0.35 0.06 257.7);
   --secondary-foreground: oklch(0.85 0.052 85.7);
 
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
+  --muted: oklch(0.32 0.05 257.7);
+  --muted-foreground: oklch(0.76 0.035 85.7);
 
-  --accent: oklch(0.30 0.05 257.7);
+  --accent: oklch(0.35 0.06 257.7);
   --accent-foreground: oklch(0.85 0.052 85.7);
 
   --success: oklch(0.75 0.13 135);
@@ -106,7 +109,7 @@
   --destructive: oklch(0.68 0.19 28);
   --destructive-foreground: oklch(0.18 0.03 28);
 
-  --border: oklch(1 0 0 / 10%);
+  --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.85 0.052 85.7);
 
@@ -116,12 +119,15 @@
   --chart-4: oklch(0.68 0.19 28);
   --chart-5: oklch(0.50 0.09 257.7);
 
-  --sidebar: oklch(0.18 0.006 285.885);
-  --sidebar-foreground: oklch(0.985 0 0);
+  /* Sidebar slightly deeper than main bg → visible surface boundary. */
+  --sidebar: oklch(0.20 0.06 257.7);
+  --sidebar-foreground: oklch(0.94 0.03 85.7);
   --sidebar-primary: oklch(0.85 0.052 85.7);
   --sidebar-primary-foreground: oklch(0.28 0.08 257.7);
-  --sidebar-accent: oklch(0.30 0.05 257.7);
-  --sidebar-accent-foreground: oklch(0.85 0.052 85.7);
+  /* Active nav item — brand-saturation navy that pops against the
+     deeper sidebar bg. */
+  --sidebar-accent: oklch(0.42 0.09 257.7);
+  --sidebar-accent-foreground: oklch(0.94 0.03 85.7);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.85 0.052 85.7);
 }

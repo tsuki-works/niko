@@ -55,7 +55,7 @@ export function AppSidebar() {
         <div className="flex items-center gap-2.5 px-2 py-3">
           {/* 48px lines up with the "Niko" + "by Tsuki Works" stack
               (text-2xl ≈ 30px + text-xs ≈ 17px); collapsed → 28px. */}
-          <NikoMark size={48} className="group-data-[collapsible=icon]:size-7" />
+          <NikoMark size={54} className="group-data-[collapsible=icon]:size-7" />
           {/* Wordmark — hidden when the sidebar collapses to icons.
               Font-weight 600 is an intentional exception to the
               dashboard's "400/500 only" rule: this is brand typography,
