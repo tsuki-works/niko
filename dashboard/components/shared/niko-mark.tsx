@@ -19,7 +19,11 @@ export function NikoMark({
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 1024 1024"
+      /* Tight square crop around the actual moon content (original paths
+         sit inside a 1024×1024 canvas with ~18% padding top/bottom and
+         ~12% sides, which made the favicon render visibly smaller than
+         peers and the sidebar mark look short next to adjacent text). */
+      viewBox="115 128 780 780"
       width={size}
       height={size}
       role="img"
