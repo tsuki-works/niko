@@ -7,11 +7,10 @@ Usage:
     pytest tests/test_tts_integration.py -v -s
     pytest tests/test_tts_integration.py -v -s --phrase "Hi, welcome to Niko's Pizza!"
 
-Audio is saved to tts_test_output.wav — double-click to play in any media player.
+Audio is saved to tts_test_output.wav (mulaw) or tts_test_output.mp3 (free tier).
 """
-import array
 import base64
-import wave
+import struct
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -25,33 +24,45 @@ pytestmark = pytest.mark.skipif(
     reason="ELEVENLABS_API_KEY not set — skipping live ElevenLabs test",
 )
 
-OUTPUT_FILE = Path("tts_test_output.wav")
+# G.711 mu-law decode table (ITU-T, matches CPython audioop implementation).
+_EXP_LUT = [0, 132, 396, 924, 1980, 4092, 8316, 16764]
 
 
 def _mulaw_to_pcm16(mulaw_data: bytes) -> bytes:
-    """Decode mu-law bytes to 16-bit signed PCM (ITU-T G.711)."""
-    samples = array.array("h")
-    for byte in mulaw_data:
-        byte = ~byte & 0xFF
-        sign = byte & 0x80
-        exponent = (byte >> 4) & 0x07
-        mantissa = byte & 0x0F
-        sample = (((mantissa << 3) + 0x84) << exponent) - 0x84
-        samples.append(-sample if sign else sample)
-    return samples.tobytes()
+    out = bytearray(len(mulaw_data) * 2)
+    for i, ulaw in enumerate(mulaw_data):
+        ulaw = ~ulaw & 0xFF
+        sign = ulaw & 0x80
+        exp = (ulaw >> 4) & 0x07
+        mant = ulaw & 0x0F
+        sample = _EXP_LUT[exp] + (mant << (exp + 3))
+        if sign:
+            sample = -sample
+        struct.pack_into("<h", out, i * 2, sample)
+    return bytes(out)
 
 
-def _write_wav(mulaw_data: bytes, path: Path) -> None:
-    pcm = _mulaw_to_pcm16(mulaw_data)
+def _save_audio(audio_bytes: bytes) -> Path:
+    """Save audio to the right format based on what ElevenLabs actually returned."""
+    if audio_bytes[:3] == b"ID3" or audio_bytes[:2] == b"\xff\xfb":
+        # Free tier returns MP3 regardless of requested ulaw_8000 format
+        path = Path("tts_test_output.mp3")
+        path.write_bytes(audio_bytes)
+        return path
+
+    import wave
+    path = Path("tts_test_output.wav")
+    pcm = _mulaw_to_pcm16(audio_bytes)
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(2)   # 16-bit
+        wf.setsampwidth(2)
         wf.setframerate(8000)
         wf.writeframes(pcm)
+    return path
 
 
 async def test_speak_returns_audio_chunks(tts_phrase):
-    """Real ElevenLabs call — audio saved to tts_test_output.wav."""
+    """Real ElevenLabs call — audio saved to tts_test_output.wav or .mp3."""
     received: list[dict] = []
 
     ws = AsyncMock()
@@ -71,8 +82,8 @@ async def test_speak_returns_audio_chunks(tts_phrase):
     audio_bytes = b"".join(
         base64.b64decode(e["media"]["payload"]) for e in received
     )
-    _write_wav(audio_bytes, OUTPUT_FILE)
+    output_path = _save_audio(audio_bytes)
 
     print(f"Chunks received : {len(received)}")
     print(f"Total audio     : {len(audio_bytes):,} bytes")
-    print(f"Saved to        : {OUTPUT_FILE.resolve()}")
+    print(f"Saved to        : {output_path.resolve()}")
