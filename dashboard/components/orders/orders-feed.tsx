@@ -44,6 +44,13 @@ export function OrdersFeed({
   const lastAnnouncedAt = useRef(0);
 
   useEffect(() => {
+    if (!db) {
+      // Firebase web config isn't wired up yet. Feed already rendered
+      // from RSC props; live updates just won't come in until the config
+      // lands. See lib/firebase/client.ts for the guard.
+      return;
+    }
+
     const base = collection(db, 'orders').withConverter(orderConverter);
     const q = statusFilter
       ? query(

@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
@@ -28,8 +29,21 @@ export function ThemeToggle() {
       size="icon"
       aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      className={cn(
+        'relative transition-colors',
+        // Warm hover/focus state — amber tint matches the brand's warm family.
+        'hover:bg-warning/20 hover:text-warning',
+        'focus-visible:bg-warning/20 focus-visible:text-warning',
+      )}
     >
-      {isDark ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+      {/* Sun = amber-ish to feel sunlit; Moon = cream for brand consistency.
+          Icons swap based on the active theme, not the target one — so the
+          toggle shows what mode you're *in*, not what you're switching to. */}
+      {isDark ? (
+        <Moon className="h-5 w-5 text-primary" />
+      ) : (
+        <Sun className="h-5 w-5 text-warning" />
+      )}
     </Button>
   );
 }

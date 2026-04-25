@@ -5,21 +5,21 @@ export type StatusStyle = {
   className: string;
 };
 
+// Pills use the semantic color at low-opacity bg and the same color
+// saturated for text. The *-foreground tokens are reserved for solid
+// surfaces (buttons, toasts) where the color is the background.
 const STYLES: Record<OrderStatus, StatusStyle> = {
   in_progress: {
     label: 'Live call',
-    className:
-      'bg-amber-500/15 text-amber-700 border-amber-500/30 dark:text-amber-300',
+    className: 'bg-warning/15 text-warning border-warning/30',
   },
   confirmed: {
     label: 'Confirmed',
-    className:
-      'bg-emerald-500/15 text-emerald-700 border-emerald-500/30 dark:text-emerald-300',
+    className: 'bg-success/15 text-success border-success/40',
   },
   cancelled: {
     label: 'Cancelled',
-    className:
-      'bg-rose-500/15 text-rose-700 border-rose-500/30 dark:text-rose-300',
+    className: 'bg-destructive/15 text-destructive border-destructive/30',
   },
 };
 

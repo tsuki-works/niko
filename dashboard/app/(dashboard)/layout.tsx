@@ -1,4 +1,6 @@
+import { AppSidebar } from '@/components/app-sidebar';
 import { ThemeToggle } from '@/components/shared/theme-toggle';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 
 export default function DashboardLayout({
   children,
@@ -6,12 +8,17 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="flex items-center justify-between border-b px-6 py-3">
-        <h1 className="text-lg font-medium">Niko Pizza Kitchen</h1>
-        <ThemeToggle />
-      </header>
-      <main className="flex-1">{children}</main>
-    </div>
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-medium">Niko Pizza Kitchen</h1>
+          </div>
+          <ThemeToggle />
+        </header>
+        <div className="flex flex-1 flex-col">{children}</div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

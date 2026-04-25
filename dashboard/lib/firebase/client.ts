@@ -1,5 +1,5 @@
-import { getApp, getApps, initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { type FirebaseApp, getApp, getApps, initializeApp } from 'firebase/app';
+import { type Firestore, getFirestore } from 'firebase/firestore';
 
 const config = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -8,6 +8,30 @@ const config = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = getApps().length ? getApp() : initializeApp(config);
+/**
+ * Whether the Firebase web config has the minimum fields needed to run
+ * onSnapshot. When false, subscribers should skip the listener entirely
+ * — otherwise the SDK tries to connect to `projects//databases/...`
+ * and fills the console with errors until the config lands.
+ *
+ * Meet owns Firebase web-app registration; see #53 PR notes.
+ */
+export const isFirebaseConfigured = Boolean(
+  config.projectId && config.apiKey && config.appId,
+);
 
-export const db = getFirestore(app);
+let app: FirebaseApp | null = null;
+let _db: Firestore | null = null;
+
+if (isFirebaseConfigured) {
+  app = getApps().length ? getApp() : initializeApp(config);
+  _db = getFirestore(app);
+} else if (typeof window !== 'undefined') {
+  // One-time dev warning. Keeps the console quiet after that.
+  console.warn(
+    '[firebase/client] NEXT_PUBLIC_FIREBASE_* not set — live updates disabled. ' +
+      'Feed still renders from the FastAPI fetch path; refresh to see new orders.',
+  );
+}
+
+export const db = _db;
