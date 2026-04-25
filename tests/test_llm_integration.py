@@ -59,3 +59,57 @@ def test_greeting_does_not_mutate_order():
 
     assert len(result.reply_text) > 5, "Haiku should greet back"
     assert len(result.order.items) == 0, "No items added from a pure greeting"
+
+
+def test_off_menu_item_is_declined_without_adding():
+    """Asking for something not on the demo menu (sushi) should produce
+    a polite decline and NOT add anything to the order."""
+
+    order = Order(call_sid="CAintegration-offmenu")
+    transcript = "Hi, can I get some sushi please?"
+
+    result = generate_reply(transcript=transcript, history=[], order=order)
+
+    print(f"\n--- Caller ---\n{transcript}")
+    print(f"\n--- Haiku reply ---\n{result.reply_text}")
+    print(f"\n--- Order items ---\n{result.order.items}")
+
+    assert len(result.reply_text) > 5, "Haiku should respond"
+    assert len(result.order.items) == 0, (
+        "Off-menu requests must not be added to the order"
+    )
+
+
+def test_caller_changes_mind_replaces_pizza():
+    """A multi-turn conversation where the caller switches pizzas
+    mid-order. The final order should reflect ONLY the new pizza —
+    the model is instructed to emit full state, not diffs."""
+
+    order = Order(call_sid="CAintegration-changemind")
+
+    first = generate_reply(
+        transcript="I'd like a medium pepperoni for pickup.",
+        history=[],
+        order=order,
+    )
+    print(f"\n--- Turn 1 reply ---\n{first.reply_text}")
+    print(f"\n--- Turn 1 order ---\n{first.order.model_dump_json(indent=2)}")
+    assert any(
+        "pepperoni" in item.name.lower() for item in first.order.items
+    ), "Turn 1 should record the pepperoni"
+
+    second = generate_reply(
+        transcript="Actually, scratch that — make it a large veggie supreme instead.",
+        history=first.history,
+        order=first.order,
+    )
+    print(f"\n--- Turn 2 reply ---\n{second.reply_text}")
+    print(f"\n--- Turn 2 order ---\n{second.order.model_dump_json(indent=2)}")
+
+    pizza_names = [item.name.lower() for item in second.order.items]
+    assert any("veggie" in name for name in pizza_names), (
+        "Turn 2 should record the veggie supreme"
+    )
+    assert not any("pepperoni" in name for name in pizza_names), (
+        "Turn 2 should have replaced the pepperoni, not kept both"
+    )
