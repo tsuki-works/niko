@@ -191,3 +191,171 @@ def test_missing_api_key_raises(monkeypatch):
     monkeypatch.setattr(client_module.settings, "anthropic_api_key", None)
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
         client_module._client()
+
+
+def test_off_menu_request_leaves_order_empty():
+    """When the caller asks for something off-menu, the model declines
+    without calling update_order. Order state must not advance."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(
+                type="text",
+                text=(
+                    "Sorry, we don't offer sushi here. We have pizzas, "
+                    "sides, and drinks — would any of those work?"
+                ),
+            )
+        ]
+    )
+
+    result = generate_reply(
+        transcript="can I get some sushi",
+        history=[],
+        order=order,
+        client=fake_client,
+    )
+
+    assert "sushi" in result.reply_text.lower()
+    assert result.order.items == []
+    assert result.order.status is OrderStatus.IN_PROGRESS
+    assert fake_client.messages.create.call_count == 1
+
+
+def test_unclear_utterance_asks_for_clarification():
+    """A garbled / unclear caller utterance should produce a clarifying
+    question with no order mutation."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(
+                type="text",
+                text="Sorry, I didn't catch that. Could you say it again?",
+            )
+        ]
+    )
+
+    result = generate_reply(
+        transcript="mmrgh pfftbl",
+        history=[],
+        order=order,
+        client=fake_client,
+    )
+
+    assert "again" in result.reply_text.lower() or "didn't catch" in result.reply_text.lower()
+    assert result.order.items == []
+    assert fake_client.messages.create.call_count == 1
+
+
+def test_caller_changes_mind_replaces_items():
+    """When the caller switches their order mid-conversation, the model
+    emits the FULL new state via update_order — the previous item is
+    replaced, not appended to."""
+
+    order = Order(call_sid="CAtest")
+    order = _apply_update(
+        order,
+        {
+            "items": [
+                {
+                    "name": "Pepperoni",
+                    "category": "pizza",
+                    "size": "medium",
+                    "quantity": 1,
+                    "unit_price": 17.99,
+                }
+            ],
+            "order_type": "pickup",
+            "status": "in_progress",
+        },
+    )
+    assert order.items[0].name == "Pepperoni"
+
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(
+                type="tool_use",
+                id="toolu_change",
+                name="update_order",
+                input={
+                    "items": [
+                        {
+                            "name": "Veggie Supreme",
+                            "category": "pizza",
+                            "size": "medium",
+                            "quantity": 1,
+                            "unit_price": 18.99,
+                            "modifications": [],
+                        }
+                    ],
+                    "order_type": "pickup",
+                    "status": "in_progress",
+                },
+            ),
+            FakeBlock(
+                type="text",
+                text="Got it — one medium veggie supreme for pickup instead.",
+            ),
+        ]
+    )
+
+    result = generate_reply(
+        transcript="actually scratch that, make it a veggie supreme",
+        history=[],
+        order=order,
+        client=fake_client,
+    )
+
+    assert len(result.order.items) == 1
+    assert result.order.items[0].name == "Veggie Supreme"
+    assert result.order.items[0].unit_price == 18.99
+    assert result.order.order_type is OrderType.PICKUP
+
+
+def test_modifications_round_trip_into_line_item():
+    """Modifications like 'extra cheese' or 'no onions' must survive
+    tool-use payload → LineItem deserialization."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(
+                type="tool_use",
+                id="toolu_mods",
+                name="update_order",
+                input={
+                    "items": [
+                        {
+                            "name": "Margherita",
+                            "category": "pizza",
+                            "size": "large",
+                            "quantity": 1,
+                            "unit_price": 20.99,
+                            "modifications": ["extra cheese", "no basil"],
+                        }
+                    ],
+                    "order_type": "pickup",
+                    "status": "in_progress",
+                },
+            ),
+            FakeBlock(
+                type="text",
+                text="One large margherita with extra cheese and no basil.",
+            ),
+        ]
+    )
+
+    result = generate_reply(
+        transcript="large margherita extra cheese no basil",
+        history=[],
+        order=order,
+        client=fake_client,
+    )
+
+    assert result.order.items[0].modifications == ["extra cheese", "no basil"]
