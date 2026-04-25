@@ -241,30 +241,37 @@ Guiding principle: **free-tier-first**. We have no outside funding, so every pic
 | LLM | **Anthropic Claude Haiku 4.5** | Pay-as-you-go via Console (Claude for Startups requires VC backing — revisit post-raise); Haiku is cheap + fast, strong instruction-following for constrained menu flows | Claude Sonnet for harder conversations |
 | Primary POS (MVP) | **Square** | Developer sandbox + API free | — (Toast/Clover added Phase 3) |
 | Hosting | **GCP — Cloud Run + Firestore** | $300 credit (90d) + always-free Cloud Run (2M req/mo) + Firestore free tier. Scales to zero = $0 when idle. | Stay on GCP; raise tier + min-instances when funded |
-| Frontend framework | **Next.js 15 (static export)** | Built inside monolith — no separate Vercel account needed | Split to Vercel Pro if dashboard grows beyond static export |
+| Frontend framework | **Next.js 16 (server runtime, RSC)** | Built into its own Docker image — server-side rendering for the orders feed, plus `onSnapshot` for live updates | Vercel if we want managed Next.js infra |
 | Backend language | **Python 3.12 + FastAPI** | — | — |
-| Deployment model | **Single Docker image → Cloud Run, auto-deploy from `master`** | GitHub Actions: unlimited free minutes on public repos | — |
+| Deployment model | **Two Cloud Run services (`niko` API, `niko-dashboard` UI), auto-deploy from `master`** | GitHub Actions: unlimited free minutes on public repos | — |
 | CI/CD | **GitHub Actions** | Free forever (public repo) | — |
 
-### Deployment shape (monolith)
+### Deployment shape (two services)
 
 ```
 niko/
-├── app/                    # FastAPI: voice, dashboard API, static serving
-│   ├── voice/             # Twilio webhooks, STT/LLM/TTS orchestration
-│   ├── dashboard/         # Dashboard REST API
-│   └── main.py            # FastAPI app + static mount
-├── web/                   # Next.js (static export, built in Docker)
-├── Dockerfile             # Multi-stage: node builds web/, python serves
+├── app/                            # FastAPI: voice, dashboard REST API
+│   ├── telephony/                  # Twilio webhooks + Media Streams ingress
+│   ├── llm/                        # Claude Haiku conversation engine
+│   ├── tts/                        # ElevenLabs streaming
+│   ├── orders/                     # Pydantic models (shared schema)
+│   ├── storage/                    # Firestore reads/writes
+│   └── main.py                     # /voice, /orders, /health, /dev/seed-order
+├── Dockerfile                      # Python runtime for the API
+├── dashboard/                      # Next.js 16 (server runtime, RSC)
+│   ├── app/(dashboard)/            # Orders feed + detail pages
+│   ├── lib/firebase/client.ts      # web SDK for live onSnapshot
+│   └── Dockerfile                  # Multi-stage Node build → standalone server
 └── .github/workflows/
-    └── deploy.yml         # push master → build → Artifact Registry → Cloud Run
+    ├── deploy.yml                  # API: push master → niko on Cloud Run
+    └── deploy-dashboard.yml        # UI: dashboard/** changes → niko-dashboard on Cloud Run
 ```
 
-One service, one URL, one observability surface. Cloud Run's scale-to-zero covers the idle cost. Split into separate services only when Phase 3+ scaling demands it.
+Two Cloud Run services, one project, separate URLs. The dashboard server-renders the initial orders feed by hitting the API's `/orders` endpoint, then subscribes to Firestore directly via the web SDK for live updates — so the API stays focused on telephony + writes, and the dashboard scales independently. Cloud Run's scale-to-zero keeps idle cost near $0 for both.
 
 ### Known quirks to watch
 
 - **Cloud Run WebSocket** — 60min request timeout (fine for phone calls); long-lived connections count against concurrency. Fly.io is the escape hatch if audio streaming strains Cloud Run.
 - **Cloud Run cold starts** (~1–2s) when scaled to zero — unnoticeable for dashboard, potentially felt on first call of the day. Min-instances=1 costs ~$5/mo when we want to eliminate it.
 - **Telephony cost** — not free; budget ~$20–50 for POC testing.
-- **Vercel free tier** is not used — Next.js is built inside the Docker image and served by FastAPI, which keeps the monolith model clean and sidesteps Vercel's commercial-use restriction on Hobby.
+- **Vercel free tier** is not used — the dashboard runs on its own Cloud Run service, which sidesteps Vercel's commercial-use restriction on Hobby and keeps everything in one GCP project.

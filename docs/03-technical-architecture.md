@@ -308,71 +308,75 @@ ngrok http 8000
 
 ## 9. Deployment Model
 
-**One monolith, one Dockerfile, one Cloud Run service, auto-deployed from `master`.**
+**Two Cloud Run services in one GCP project, each auto-deployed from `master` on a paths filter.**
 
 ```
 Push to master
       │
-      ▼
-GitHub Actions (.github/workflows/deploy.yml)
+      ├── app/** changes
+      │     │
+      │     ▼
+      │   .github/workflows/deploy.yml
+      │     │
+      │     ├── Build python image from /Dockerfile
+      │     ├── Push to Artifact Registry
+      │     └── gcloud run deploy niko (region us-central1)
       │
-      ├── 1. Build Docker image (multi-stage: node builds web/, python serves)
-      ├── 2. Push to GCP Artifact Registry
-      ├── 3. gcloud run deploy (rolling, zero-downtime)
-      │
-      ▼
-Live on Cloud Run (~2-3 min after push)
+      └── dashboard/** changes
+            │
+            ▼
+          .github/workflows/deploy-dashboard.yml
+            │
+            ├── Build Next.js standalone image from /dashboard/Dockerfile
+            ├── Inject NEXT_PUBLIC_FIREBASE_* as build args (baked into client bundle)
+            ├── Push to Artifact Registry
+            └── gcloud run deploy niko-dashboard with NIKO_API_BASE_URL env
 ```
 
-**Why one service (not two):**
-- Team of 4, POC stage — one deploy target, one log stream, one URL to remember
-- FastAPI serves Twilio webhooks, WebSocket audio streams, dashboard REST, and the built Next.js static bundle from the same process
-- Splitting into separate services (voice worker + dashboard API) is a Phase 3+ concern when independent scaling matters
+**Why two services (not one):**
+- Daniel's dashboard is a real server-runtime Next.js app (RSC, Server Actions, `onSnapshot`) — it can't be statically exported, so it needs a Node runtime separate from FastAPI's Python runtime.
+- Independent rollback and scaling: a bad dashboard deploy can't take the voice pipeline offline, and the API can scale on call volume while the dashboard scales on browser sessions.
+- Separate logs and metrics per surface — easier to triage.
+- Idle cost stays near $0 because Cloud Run scales both to zero.
 
-**Dockerfile shape:**
+**API Dockerfile shape (`/Dockerfile`):**
 ```dockerfile
-# Stage 1: build Next.js static export
-FROM node:20-alpine AS web-builder
-WORKDIR /web
-COPY web/package*.json ./
-RUN npm ci
-COPY web/ ./
-RUN npm run build    # outputs to /web/out
-
-# Stage 2: python runtime
 FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
-COPY --from=web-builder /web/out ./app/static/
 ENV PORT=8080
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
 ```
 
-**GitHub Actions workflow (outline):**
-```yaml
-name: Deploy to Cloud Run
-on:
-  push:
-    branches: [master]
+**Dashboard Dockerfile shape (`/dashboard/Dockerfile`):**
+```dockerfile
+# Multi-stage: deps → build (with NEXT_PUBLIC_* args) → runtime
+FROM node:20-alpine AS deps
+RUN corepack enable
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write          # Workload Identity Federation (no long-lived keys)
-    steps:
-      - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOY_SA }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - run: gcloud builds submit --tag $REGION-docker.pkg.dev/$PROJECT/niko/app:${{ github.sha }}
-      - run: gcloud run deploy niko --image $REGION-docker.pkg.dev/$PROJECT/niko/app:${{ github.sha }} --region $REGION
+FROM node:20-alpine AS build
+ARG NEXT_PUBLIC_FIREBASE_API_KEY
+# ... other NEXT_PUBLIC_FIREBASE_* args
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN pnpm run build  # output: "standalone" → /app/.next/standalone
+
+FROM node:20-alpine AS runtime
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
+COPY --from=build /app/public ./public
+EXPOSE 8080
+CMD ["node", "server.js"]
 ```
+
+**GitHub Actions workflows:**
+- `.github/workflows/deploy.yml` — API. Trigger: any push to `master`.
+- `.github/workflows/deploy-dashboard.yml` — UI. Trigger: push to `master` with paths in `dashboard/**` (skips deploys on backend-only changes).
+- Both use Workload Identity Federation — no long-lived service-account JSON anywhere.
 
 **Secrets / env vars:**
 - Store API keys (Twilio, Deepgram, Anthropic, ElevenLabs, Square) in **Secret Manager**

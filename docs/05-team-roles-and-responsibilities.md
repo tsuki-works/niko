@@ -68,7 +68,7 @@ Some responsibilities are **shared across the whole team** rather than assigned 
 
 | Responsibility | Details |
 |---------------|---------|
-| Dashboard | Next.js 15 (static export), served by FastAPI monolith; menu editor, call/order history, analytics UI |
+| Dashboard | Next.js 16 (server runtime, RSC) on its own Cloud Run service (`niko-dashboard`); reads orders via FastAPI, lives via Firestore `onSnapshot`. Menu editor, call/order history, analytics UI |
 | UX/UI design | Wireframes, user flows, design system, component library |
 | Branding | Logos, visual identity (already shipped Tsuki Works brand to `assets/`) |
 | Landing / marketing site | Public marketing pages, SEO |
