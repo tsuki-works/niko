@@ -138,6 +138,26 @@ def _async_client() -> AsyncAnthropic:
     return AsyncAnthropic(api_key=key)
 
 
+def _serialize_block(block: Any) -> dict[str, Any]:
+    """Convert an SDK content block to the dict shape the Messages API accepts.
+
+    The Anthropic SDK's streaming blocks carry extra attributes like
+    ``parsed_output`` that ``model_dump()`` faithfully serializes — but the
+    Messages API rejects unknown fields, so any subsequent turn that threads
+    that history 400s. We rebuild the API-valid shape by hand instead.
+    """
+    if block.type == "text":
+        return {"type": "text", "text": block.text}
+    if block.type == "tool_use":
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input,
+        }
+    raise ValueError(f"Unsupported content block type: {block.type!r}")
+
+
 def _apply_update(order: Order, patch: dict[str, Any]) -> Order:
     """Merge a tool-call payload into the current Order.
 
@@ -198,7 +218,7 @@ def generate_reply(
     for tu in tool_uses:
         updated_order = _apply_update(updated_order, tu["input"])
 
-    assistant_content = [block.model_dump() for block in response.content]
+    assistant_content = [_serialize_block(block) for block in response.content]
     new_history = [
         *new_history,
         {"role": "assistant", "content": assistant_content},
@@ -227,7 +247,7 @@ def generate_reply(
         for block in followup.content:
             if block.type == "text":
                 reply_text_parts.append(block.text)
-        followup_content = [block.model_dump() for block in followup.content]
+        followup_content = [_serialize_block(block) for block in followup.content]
         new_history = [
             *new_history,
             {"role": "assistant", "content": followup_content},
@@ -289,7 +309,7 @@ async def stream_reply(
     for tu in tool_uses:
         updated_order = _apply_update(updated_order, tu["input"])
 
-    assistant_content = [block.model_dump() for block in first_message.content]
+    assistant_content = [_serialize_block(block) for block in first_message.content]
     new_history = [
         *new_history,
         {"role": "assistant", "content": assistant_content},
@@ -320,7 +340,7 @@ async def stream_reply(
                 text_parts.append(delta)
                 yield StreamEvent(text_delta=delta)
             followup_message = await followup_stream.get_final_message()
-        followup_content = [b.model_dump() for b in followup_message.content]
+        followup_content = [_serialize_block(b) for b in followup_message.content]
         new_history = [
             *new_history,
             {"role": "assistant", "content": followup_content},
