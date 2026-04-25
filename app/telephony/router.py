@@ -2,8 +2,9 @@
 
 POST /voice        — TwiML webhook: answers the inbound call, opens a
                      Twilio Media Stream so the STT→LLM→TTS pipeline can
-                     take over.  The AI greeting is delivered via ElevenLabs
-                     on the 'start' event rather than a static TwiML <Say>.
+                     take over.  The AI greeting is delivered via Deepgram
+                     Aura on the 'start' event rather than a static TwiML
+                     <Say>.
 
 WS   /media-stream — Receives the Twilio Media Stream over WebSocket and
                      runs the full call loop:
@@ -179,7 +180,7 @@ async def voice(request: Request) -> Response:
     """Respond to Twilio's inbound call webhook with TwiML.
 
     Opens a bidirectional Media Stream back to /media-stream.  The AI
-    greeting is delivered via ElevenLabs on the 'start' WebSocket event
+    greeting is delivered via Deepgram Aura on the 'start' WebSocket event
     rather than a static TwiML <Say>, so the caller hears the same voice
     for the entire call.
 
@@ -196,7 +197,7 @@ async def voice(request: Request) -> Response:
 
 @router.websocket("/media-stream")
 async def media_stream(websocket: WebSocket) -> None:
-    """Full call loop: Twilio Media Stream → Deepgram STT → LLM → ElevenLabs TTS.
+    """Full call loop: Twilio Media Stream → Deepgram STT → LLM → Deepgram Aura TTS.
 
     Twilio event types:
       connected  — protocol handshake

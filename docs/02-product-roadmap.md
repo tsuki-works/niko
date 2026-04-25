@@ -237,7 +237,7 @@ Guiding principle: **free-tier-first**. We have no outside funding, so every pic
 | Company name | **Tsuki Works** | — | — |
 | Telephony | **Twilio Voice** | $15 trial credit; ~$0.0085/min inbound US after | Telnyx (~40% cheaper/min at scale) |
 | STT | **Deepgram (Nova-2 streaming)** | $200 free credit — weeks of POC testing | Stay on Deepgram |
-| TTS | **ElevenLabs** | 10k chars/mo free tier | ElevenLabs Pro ($22/mo) or Cartesia for lower latency |
+| TTS | **Deepgram Aura** | $200 signup credit (shared with STT) | ElevenLabs (richer voices) or Cartesia (lower latency) if Aura quality becomes a blocker |
 | LLM | **Anthropic Claude Haiku 4.5** | Pay-as-you-go via Console (Claude for Startups requires VC backing — revisit post-raise); Haiku is cheap + fast, strong instruction-following for constrained menu flows | Claude Sonnet for harder conversations |
 | Primary POS (MVP) | **Square** | Developer sandbox + API free | — (Toast/Clover added Phase 3) |
 | Hosting | **GCP — Cloud Run + Firestore** | $300 credit (90d) + always-free Cloud Run (2M req/mo) + Firestore free tier. Scales to zero = $0 when idle. | Stay on GCP; raise tier + min-instances when funded |
@@ -253,7 +253,7 @@ niko/
 ├── app/                            # FastAPI: voice, dashboard REST API
 │   ├── telephony/                  # Twilio webhooks + Media Streams ingress
 │   ├── llm/                        # Claude Haiku conversation engine
-│   ├── tts/                        # ElevenLabs streaming
+│   ├── tts/                        # Deepgram Aura streaming
 │   ├── orders/                     # Pydantic models (shared schema)
 │   ├── storage/                    # Firestore reads/writes
 │   └── main.py                     # /voice, /orders, /health, /dev/seed-order

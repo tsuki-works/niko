@@ -38,7 +38,7 @@
                              │  └────────┬────────┘  │
                              │           ▼           │
                              │  ┌─────────────────┐  │
-                             │  │  TTS Engine      │  │  ElevenLabs / PlayHT
+                             │  │  TTS Engine      │  │  Deepgram Aura
                              │  │  (Text→Speech)   │  │
                              │  └─────────────────┘  │
                              └──────────┬─────────────┘
@@ -78,7 +78,7 @@
 | **Telephony** | Twilio Voice | Telnyx / Vonage | Most mature API, best docs, programmable voice. $15 trial credit for POC; migrate to Telnyx once volume makes per-minute margin matter |
 | **STT (Speech-to-Text)** | Deepgram Nova-2 (streaming) | OpenAI Whisper API | Real-time streaming, low latency, high accuracy. $200 free credit covers POC |
 | **LLM (Conversation)** | Anthropic Claude Haiku 4.5 (POC/MVP) → Sonnet (production) | OpenAI GPT-4o | Haiku is cheap + fast with strong instruction following for constrained menu flows. Upgrade to Sonnet for harder conversations once funded. Pay-as-you-go via Console during bootstrap; Claude for Startups is VC-gated, revisit after raising |
-| **TTS (Text-to-Speech)** | ElevenLabs | OpenAI TTS / PlayHT / Cartesia | Most natural voices, low latency streaming. 10k chars/mo free tier |
+| **TTS (Text-to-Speech)** | Deepgram Aura | ElevenLabs / Cartesia / OpenAI TTS | Native mulaw 8 kHz output (drop-in for Twilio); reuses the Deepgram key already used for STT; server-to-server design (no abuse-detector blocks on Cloud Run) |
 
 ### Infrastructure
 
@@ -122,7 +122,7 @@ Inbound Call (Twilio)
 │                                                   │
 │  1. Audio In → STT (Deepgram streaming)           │
 │  2. Text → LLM (Claude/GPT with restaurant context)│
-│  3. LLM Response → TTS (ElevenLabs streaming)     │
+│  3. LLM Response → TTS (Deepgram Aura streaming)  │
 │  4. Audio Out → Caller                            │
 │                                                   │
 │  State: conversation history, order-in-progress,  │
@@ -298,9 +298,8 @@ ngrok http 8000
 
 ### Required API Keys for Development
 - Twilio (Account SID, Auth Token, Phone Number)
-- Deepgram (API Key)
+- Deepgram (API Key — used for both STT and TTS)
 - Anthropic (API Key)
-- ElevenLabs (API Key)
 - Square (Sandbox Application ID, Access Token)
 - GCP service account JSON (for Firestore + Secret Manager)
 
@@ -379,7 +378,7 @@ CMD ["node", "server.js"]
 - Both use Workload Identity Federation — no long-lived service-account JSON anywhere.
 
 **Secrets / env vars:**
-- Store API keys (Twilio, Deepgram, Anthropic, ElevenLabs, Square) in **Secret Manager**
+- Store API keys (Twilio, Deepgram, Anthropic, Square) in **Secret Manager**
 - Reference them from Cloud Run via `--set-secrets` at deploy time — never bake secrets into the image
 
 **Escape hatches:**

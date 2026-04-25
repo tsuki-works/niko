@@ -1,13 +1,13 @@
-"""Live ElevenLabs integration test for speak().
+"""Live Deepgram Aura integration test for speak().
 
-Skipped when ELEVENLABS_API_KEY is absent so CI never calls the real API.
+Skipped when DEEPGRAM_API_KEY is absent so CI never calls the real API.
 Run locally with your key in .env to verify the full round-trip.
 
 Usage:
     pytest tests/test_tts_integration.py -v -s
     pytest tests/test_tts_integration.py -v -s --phrase "Hi, welcome to Niko's Pizza!"
 
-Audio is saved to tts_test_output.wav (mulaw) or tts_test_output.mp3 (free tier).
+Audio is saved to tts_test_output.wav (mulaw 8 kHz, decoded to PCM16).
 """
 import base64
 import struct
@@ -20,8 +20,8 @@ from app.config import settings
 from app.tts.client import speak
 
 pytestmark = pytest.mark.skipif(
-    not settings.elevenlabs_api_key,
-    reason="ELEVENLABS_API_KEY not set — skipping live ElevenLabs test",
+    not settings.deepgram_api_key,
+    reason="DEEPGRAM_API_KEY not set — skipping live Deepgram TTS test",
 )
 
 # G.711 mu-law decode table (ITU-T, matches CPython audioop implementation).
@@ -43,13 +43,7 @@ def _mulaw_to_pcm16(mulaw_data: bytes) -> bytes:
 
 
 def _save_audio(audio_bytes: bytes) -> Path:
-    """Save audio to the right format based on what ElevenLabs actually returned."""
-    if audio_bytes[:3] == b"ID3" or audio_bytes[:2] == b"\xff\xfb":
-        # Free tier returns MP3 regardless of requested ulaw_8000 format
-        path = Path("tts_test_output.mp3")
-        path.write_bytes(audio_bytes)
-        return path
-
+    """Save audio as a WAV by decoding the raw mulaw stream to PCM16."""
     import wave
     path = Path("tts_test_output.wav")
     pcm = _mulaw_to_pcm16(audio_bytes)
@@ -62,7 +56,7 @@ def _save_audio(audio_bytes: bytes) -> Path:
 
 
 async def test_speak_returns_audio_chunks(tts_phrase):
-    """Real ElevenLabs call — audio saved to tts_test_output.wav or .mp3."""
+    """Real Deepgram Aura call — audio saved to tts_test_output.wav."""
     received: list[dict] = []
 
     ws = AsyncMock()
@@ -72,7 +66,7 @@ async def test_speak_returns_audio_chunks(tts_phrase):
 
     await speak(tts_phrase, ws, stream_sid="TEST-STREAM-SID")
 
-    assert len(received) > 0, "Expected at least one media event from ElevenLabs"
+    assert len(received) > 0, "Expected at least one media event from Deepgram"
 
     for event in received:
         assert event["event"] == "media"

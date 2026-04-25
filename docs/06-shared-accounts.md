@@ -10,12 +10,12 @@ Phase 0 exit requires shared accounts for every service in the niko stack. Each 
 |---|---|---|---|---|
 | GCP | Cloud Run hosting + Firestore | Meet | ✅ Done | Live; Cloud Run auto-deploys from `master` via `.github/workflows/deploy.yml` |
 | Twilio | Voice telephony | Meet | ✅ Done | Trial account, $15 credit. Toronto (647) number — swap to US before pilot. Upgrade to paid before Phase 1 demo day to drop trial watermark. Creds in `#shared-creds` |
-| Deepgram | STT (Nova-2 streaming) | Meet | ✅ Done | $200 signup credit. Key `niko-poc` (member scope). Creds in `#shared-creds` |
+| Deepgram | STT (Nova-2 streaming) + TTS (Aura) | Meet | ✅ Done | $200 signup credit covers both STT and TTS. Single key `niko-poc` (member scope) used for both. Creds in `#shared-creds` |
 | Anthropic | Claude Haiku 4.5 LLM | Meet | ✅ Done | Pay-as-you-go on Console; Claude for Startups is VC-gated (revisit post-raise). Key posted to `#shared-creds` |
-| ElevenLabs | TTS streaming | Meet | ✅ Done | Free tier (10k chars/mo). Key `niko-poc`, scoped to TTS + Models + Voices-read. Upgrade to Creator ($22/mo) needed around Phase 1 demo day — team-agreement gate |
+| ~~ElevenLabs~~ | ~~TTS streaming~~ | — | Retired (#62) | Replaced by Deepgram Aura on 2026-04-25. Free tier blocked Cloud Run egress IPs (`detected_unusual_activity` 401). Account/key archived |
 | Square Developer | POS sandbox + production API | Meet | ✅ Done | Sandbox app `niko-poc` on a CA seller account (Phase 2.3 dev only — real US restaurants use their own Square US account via OAuth). Creds in `#shared-creds` |
 
-> **Owner note:** Meet is doing all Phase 0 signups in one pass to avoid parallel-coordination overhead. Domain owners (per `05-team-roles`) take over admin once the account is live and the service is used in code — e.g., Kailash inherits Twilio/Deepgram/Square admin when the telephony + STT + POS work lands; Sandeep inherits ElevenLabs admin with the TTS pipeline.
+> **Owner note:** Meet is doing all Phase 0 signups in one pass to avoid parallel-coordination overhead. Domain owners (per `05-team-roles`) take over admin once the account is live and the service is used in code — e.g., Kailash inherits Twilio/Deepgram/Square admin when the telephony + STT + POS work lands. With ElevenLabs retired, Deepgram now covers both STT (Kailash's lane) and TTS (Sandeep's lane); the two pair on the single Deepgram key.
 
 ## How to complete a signup
 

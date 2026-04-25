@@ -1,11 +1,12 @@
-"""ElevenLabs TTS client for the niko voice agent.
+"""Deepgram Aura TTS client for the niko voice agent.
 
-Streams LLM reply text through ElevenLabs and pipes mulaw 8 kHz audio
+Streams LLM reply text through Deepgram Aura and pipes mulaw 8 kHz audio
 back to the caller via the active Twilio Media Streams WebSocket.
 
-Upgrade path: this module uses the ElevenLabs HTTP streaming API (Option A).
-When #40 adds LLM token streaming, upgrade to the ElevenLabs WebSocket API
-(Option B) for lower first-audio latency — the speak() signature stays the same.
+Why Deepgram Aura (over ElevenLabs):
+  - Server-to-server design — no abuse detector that blocks Cloud Run egress.
+  - Native ``mulaw`` 8 kHz output — drop-in for Twilio Media Streams.
+  - Reuses the Deepgram API key already in use for STT.
 """
 
 from __future__ import annotations
@@ -22,14 +23,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_ELEVENLABS_BASE = "https://api.elevenlabs.io/v1"
+_DEEPGRAM_BASE = "https://api.deepgram.com/v1"
 
 
 def _api_key() -> str:
-    key = settings.elevenlabs_api_key
+    key = settings.deepgram_api_key
     if not key:
         raise RuntimeError(
-            "ELEVENLABS_API_KEY not set — cannot call TTS. "
+            "DEEPGRAM_API_KEY not set — cannot call TTS. "
             "Fetch credentials via /shared-creds."
         )
     return key
@@ -42,11 +43,12 @@ async def speak(
     *,
     client: Optional[httpx.AsyncClient] = None,
 ) -> None:
-    """Stream ElevenLabs TTS audio back into the Twilio call.
+    """Stream Deepgram Aura TTS audio back into the Twilio call.
 
-    Requests ulaw_8000 output from ElevenLabs (native mulaw 8 kHz — no
-    transcoding needed). Each binary chunk is base64-encoded and sent as
-    a Twilio ``media`` WebSocket event immediately, keeping latency low.
+    Requests ``encoding=mulaw`` at 8 kHz with no container — raw mulaw
+    bytes that Twilio's Media Streams accepts directly. Each binary chunk
+    is base64-encoded and sent as a Twilio ``media`` WebSocket event
+    immediately, keeping latency low.
 
     Args:
         text:       LLM reply text to synthesize.
@@ -58,19 +60,20 @@ async def speak(
         return
 
     key = _api_key()
-    voice_id = settings.elevenlabs_voice_id
-    model_id = settings.elevenlabs_model_id
-    url = f"{_ELEVENLABS_BASE}/text-to-speech/{voice_id}/stream"
+    model = settings.deepgram_tts_model
+    url = f"{_DEEPGRAM_BASE}/speak"
+    params = {
+        "model": model,
+        "encoding": "mulaw",
+        "sample_rate": "8000",
+        "container": "none",
+    }
 
     headers = {
-        "xi-api-key": key,
+        "Authorization": f"Token {key}",
         "Content-Type": "application/json",
     }
-    body = {
-        "text": text,
-        "model_id": model_id,
-        "output_format": "ulaw_8000",
-    }
+    body = {"text": text}
 
     created_client = client is None
     _client = client or httpx.AsyncClient(
@@ -78,17 +81,19 @@ async def speak(
     )
 
     try:
-        async with _client.stream("POST", url, headers=headers, json=body) as response:
+        async with _client.stream(
+            "POST", url, headers=headers, params=params, json=body
+        ) as response:
             if response.status_code != 200:
                 error_body = await response.aread()
                 logger.error(
-                    "tts: ElevenLabs returned %d stream_sid=%s body=%s",
+                    "tts: Deepgram returned %d stream_sid=%s body=%s",
                     response.status_code,
                     stream_sid,
                     error_body.decode(errors="replace")[:200],
                 )
                 raise RuntimeError(
-                    f"ElevenLabs returned {response.status_code}: "
+                    f"Deepgram returned {response.status_code}: "
                     f"{error_body.decode(errors='replace')}"
                 )
 
