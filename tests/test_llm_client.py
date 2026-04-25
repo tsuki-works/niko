@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.llm import client as client_module
-from app.llm.client import _apply_update, generate_reply
+from app.llm.client import _apply_update, generate_reply, stream_reply
 from app.orders.models import Order, OrderStatus, OrderType
 
 
@@ -315,6 +315,212 @@ def test_caller_changes_mind_replaces_items():
     assert result.order.items[0].name == "Veggie Supreme"
     assert result.order.items[0].unit_price == 18.99
     assert result.order.order_type is OrderType.PICKUP
+
+
+class _FakeAsyncStream:
+    """Mimics ``AsyncMessageStream`` just enough for ``stream_reply``.
+
+    Yields the configured text deltas through ``text_stream``, then
+    returns a fake final message via ``get_final_message`` whose
+    ``content`` blocks the consumer can iterate. ``model_dump`` is
+    required because ``stream_reply`` serializes the assistant turn
+    into history.
+    """
+
+    def __init__(self, *, deltas: list[str], blocks: list[FakeBlock]):
+        self._deltas = deltas
+        self._blocks = blocks
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+    @property
+    def text_stream(self):
+        deltas = self._deltas
+
+        async def _gen():
+            for d in deltas:
+                yield d
+
+        return _gen()
+
+    async def get_final_message(self):
+        return MagicMock(content=self._blocks)
+
+
+def _stream_manager_factory(streams: list[_FakeAsyncStream]):
+    """Returns a callable that pops one stream per ``messages.stream`` call."""
+
+    iterator = iter(streams)
+
+    def _next_stream(**_kwargs):
+        return next(iterator)
+
+    return _next_stream
+
+
+async def _collect(stream_iter):
+    deltas: list[str] = []
+    final = None
+    async for event in stream_iter:
+        if event.text_delta is not None:
+            deltas.append(event.text_delta)
+        if event.final is not None:
+            final = event.final
+    return deltas, final
+
+
+async def test_stream_reply_emits_text_deltas_then_final():
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(
+                deltas=["Hi, ", "what would you ", "like to order?"],
+                blocks=[
+                    FakeBlock(
+                        type="text", text="Hi, what would you like to order?"
+                    )
+                ],
+            )
+        ]
+    )
+
+    deltas, final = await _collect(
+        stream_reply(
+            transcript="hello",
+            history=[],
+            order=order,
+            client=fake_client,
+        )
+    )
+
+    assert deltas == ["Hi, ", "what would you ", "like to order?"]
+    assert final is not None
+    assert final.reply_text == "Hi, what would you like to order?"
+    assert final.order is order
+    assert final.history[0] == {"role": "user", "content": "hello"}
+    assert final.history[1]["role"] == "assistant"
+
+
+async def test_stream_reply_applies_tool_use_to_order_state():
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(
+                deltas=["One medium pepperoni for pickup."],
+                blocks=[
+                    FakeBlock(
+                        type="tool_use",
+                        id="toolu_1",
+                        name="update_order",
+                        input={
+                            "items": [
+                                {
+                                    "name": "Pepperoni",
+                                    "category": "pizza",
+                                    "size": "medium",
+                                    "quantity": 1,
+                                    "unit_price": 17.99,
+                                    "modifications": [],
+                                }
+                            ],
+                            "order_type": "pickup",
+                            "status": "in_progress",
+                        },
+                    ),
+                    FakeBlock(
+                        type="text", text="One medium pepperoni for pickup."
+                    ),
+                ],
+            )
+        ]
+    )
+
+    _, final = await _collect(
+        stream_reply(
+            transcript="one medium pepperoni for pickup",
+            history=[],
+            order=order,
+            client=fake_client,
+        )
+    )
+
+    assert final.order.items[0].name == "Pepperoni"
+    assert final.order.order_type is OrderType.PICKUP
+    assert final.order.call_sid == "CAtest"
+
+
+async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(
+                deltas=[],  # tool-use only, no text
+                blocks=[
+                    FakeBlock(
+                        type="tool_use",
+                        id="toolu_1",
+                        name="update_order",
+                        input={"items": [], "status": "cancelled"},
+                    )
+                ],
+            ),
+            _FakeAsyncStream(
+                deltas=["Okay, ", "order cancelled."],
+                blocks=[
+                    FakeBlock(
+                        type="text", text="Okay, order cancelled."
+                    )
+                ],
+            ),
+        ]
+    )
+
+    deltas, final = await _collect(
+        stream_reply(
+            transcript="never mind cancel",
+            history=[],
+            order=order,
+            client=fake_client,
+        )
+    )
+
+    assert deltas == ["Okay, ", "order cancelled."]
+    assert final.reply_text == "Okay, order cancelled."
+    assert final.order.status is OrderStatus.CANCELLED
+
+
+async def test_stream_reply_text_deltas_arrive_before_final():
+    """Order matters — TTS must start on the first delta, not after
+    the terminal event. This guards against accidental buffering."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(
+                deltas=["A", "B", "C"],
+                blocks=[FakeBlock(type="text", text="ABC")],
+            )
+        ]
+    )
+
+    seen: list[str] = []
+    async for event in stream_reply(
+        transcript="x", history=[], order=order, client=fake_client
+    ):
+        if event.text_delta is not None:
+            seen.append(f"delta:{event.text_delta}")
+        if event.final is not None:
+            seen.append("final")
+
+    assert seen == ["delta:A", "delta:B", "delta:C", "final"]
 
 
 def test_modifications_round_trip_into_line_item():

@@ -9,16 +9,23 @@ partial order state incrementally. The model can both speak to the
 caller and call ``update_order`` in the same turn — we process both
 and advance the conversation.
 
-Not streamed yet. #40 adds streaming to hit the <1s first-audio
-latency budget; today we just prove the synchronous round-trip works.
+Two entry points:
+
+- ``generate_reply`` — synchronous round-trip. Used by tests and any
+  offline / batch path. Waits for Haiku to finish before returning.
+- ``stream_reply`` — async generator that yields text deltas as Haiku
+  produces them, then yields a terminal event with the final order
+  and threaded history. Used by the call-flow orchestrator (#40) to
+  start TTS before the full reply is ready and hit the <1s first-audio
+  latency budget.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 
-from anthropic import Anthropic
+from anthropic import Anthropic, AsyncAnthropic
 
 from app.config import settings
 from app.llm.prompts import SYSTEM_PROMPT
@@ -95,14 +102,40 @@ class LLMResponse:
     history: list[dict[str, Any]]
 
 
+@dataclass
+class StreamEvent:
+    """One event yielded by ``stream_reply``.
+
+    Exactly one of ``text_delta`` or ``final`` is set on any given
+    event. Text-delta events arrive incrementally as Haiku produces
+    output; the terminal ``final`` event carries the assembled
+    ``LLMResponse`` (full reply text, updated order, threaded history)
+    so the caller can persist state and prepare for the next turn.
+    """
+
+    text_delta: Optional[str] = None
+    final: Optional[LLMResponse] = None
+
+
+def _missing_key_error() -> RuntimeError:
+    return RuntimeError(
+        "ANTHROPIC_API_KEY not set — cannot call the LLM. "
+        "Populate it in your .env (fetch via /shared-creds)."
+    )
+
+
 def _client() -> Anthropic:
     key = settings.anthropic_api_key
     if not key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY not set — cannot call the LLM. "
-            "Populate it in your .env (fetch via /shared-creds)."
-        )
+        raise _missing_key_error()
     return Anthropic(api_key=key)
+
+
+def _async_client() -> AsyncAnthropic:
+    key = settings.anthropic_api_key
+    if not key:
+        raise _missing_key_error()
+    return AsyncAnthropic(api_key=key)
 
 
 def _apply_update(order: Order, patch: dict[str, Any]) -> Order:
@@ -204,4 +237,99 @@ def generate_reply(
         reply_text="".join(reply_text_parts).strip(),
         order=updated_order,
         history=new_history,
+    )
+
+
+async def stream_reply(
+    *,
+    transcript: str,
+    history: list[dict[str, Any]],
+    order: Order,
+    client: Optional[AsyncAnthropic] = None,
+) -> AsyncIterator[StreamEvent]:
+    """Stream Haiku's reply token-by-token for low-latency TTS handoff.
+
+    Yields ``StreamEvent(text_delta=str)`` for each incremental chunk
+    of the assistant's spoken reply, then a single terminal
+    ``StreamEvent(final=LLMResponse)`` with the full reply text,
+    updated order, and threaded history.
+
+    The contract matches ``generate_reply`` for tool-use semantics:
+    if the first turn emits only ``update_order`` blocks (no text),
+    we send a ``tool_result`` and stream a follow-up call so the
+    caller still gets a spoken reply. In practice this is the
+    "I cancelled the order" path — the model often wants to confirm
+    the side effect before talking back.
+    """
+
+    api = client or _async_client()
+
+    new_history = [*history, {"role": "user", "content": transcript}]
+
+    text_parts: list[str] = []
+    tool_uses: list[dict[str, Any]] = []
+
+    async with api.messages.stream(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        system=SYSTEM_PROMPT,
+        tools=[UPDATE_ORDER_TOOL],
+        messages=new_history,
+    ) as stream:
+        async for delta in stream.text_stream:
+            text_parts.append(delta)
+            yield StreamEvent(text_delta=delta)
+        first_message = await stream.get_final_message()
+
+    for block in first_message.content:
+        if block.type == "tool_use" and block.name == "update_order":
+            tool_uses.append({"id": block.id, "input": block.input})
+
+    updated_order = order
+    for tu in tool_uses:
+        updated_order = _apply_update(updated_order, tu["input"])
+
+    assistant_content = [block.model_dump() for block in first_message.content]
+    new_history = [
+        *new_history,
+        {"role": "assistant", "content": assistant_content},
+    ]
+
+    text_emitted = bool(text_parts)
+    if not text_emitted and tool_uses:
+        tool_results = [
+            {
+                "type": "tool_result",
+                "tool_use_id": tu["id"],
+                "content": "Order updated.",
+            }
+            for tu in tool_uses
+        ]
+        new_history = [
+            *new_history,
+            {"role": "user", "content": tool_results},
+        ]
+        async with api.messages.stream(
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            system=SYSTEM_PROMPT,
+            tools=[UPDATE_ORDER_TOOL],
+            messages=new_history,
+        ) as followup_stream:
+            async for delta in followup_stream.text_stream:
+                text_parts.append(delta)
+                yield StreamEvent(text_delta=delta)
+            followup_message = await followup_stream.get_final_message()
+        followup_content = [b.model_dump() for b in followup_message.content]
+        new_history = [
+            *new_history,
+            {"role": "assistant", "content": followup_content},
+        ]
+
+    yield StreamEvent(
+        final=LLMResponse(
+            reply_text="".join(text_parts).strip(),
+            order=updated_order,
+            history=new_history,
+        )
     )
