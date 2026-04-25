@@ -17,7 +17,7 @@ reply transcript and the structured Order state.
 import pytest
 
 from app.config import settings
-from app.llm.client import generate_reply
+from app.llm.client import generate_reply, stream_reply
 from app.orders.models import Order
 
 pytestmark = pytest.mark.skipif(
@@ -113,3 +113,30 @@ def test_caller_changes_mind_replaces_pizza():
     assert not any("pepperoni" in name for name in pizza_names), (
         "Turn 2 should have replaced the pepperoni, not kept both"
     )
+
+
+async def test_stream_reply_yields_deltas_before_final():
+    """Real Haiku call: prove text deltas actually arrive incrementally
+    and the terminal event carries the assembled reply + order."""
+
+    order = Order(call_sid="CAintegration-stream")
+    transcript = "Hi, can I get a large pepperoni for pickup?"
+
+    delta_count = 0
+    seen_final_after_deltas = False
+    final = None
+
+    async for event in stream_reply(transcript=transcript, history=[], order=order):
+        if event.text_delta is not None:
+            delta_count += 1
+        if event.final is not None:
+            seen_final_after_deltas = True
+            final = event.final
+            break
+
+    assert delta_count >= 1, "Expected at least one text delta from Haiku"
+    assert seen_final_after_deltas, "Stream must end with a final event"
+    assert final is not None
+    assert len(final.reply_text) > 5
+    print(f"\n--- Reply ({delta_count} deltas) ---\n{final.reply_text}")
+    print(f"\n--- Order ---\n{final.order.model_dump_json(indent=2)}")
