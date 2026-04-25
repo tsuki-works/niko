@@ -162,6 +162,39 @@ def test_history_threads_user_and_assistant_turns():
     ]
 
 
+def test_history_strips_sdk_only_fields_from_assistant_blocks():
+    """Regression for #64: the real Anthropic SDK's streaming TextBlock
+    carries a ``parsed_output`` attribute (and others). If we ``model_dump``
+    those into history, the next turn 400s with
+    ``messages.N.content.0.text.parsed_output: Extra inputs are not permitted``.
+    The serializer must emit only the API-valid shape regardless of what
+    extra attributes the block carries."""
+
+    class SdkLikeBlock:
+        type = "text"
+        text = "Sure, what size?"
+        parsed_output = {"some": "sdk-internal-thing"}
+        citations = None
+        index = 0
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = MagicMock(content=[SdkLikeBlock()])
+
+    result = generate_reply(
+        transcript="one pepperoni please",
+        history=[],
+        order=order,
+        client=fake_client,
+    )
+
+    assistant_block = result.history[1]["content"][0]
+    assert assistant_block == {"type": "text", "text": "Sure, what size?"}
+    assert "parsed_output" not in assistant_block
+    assert "citations" not in assistant_block
+    assert "index" not in assistant_block
+
+
 def test_apply_update_preserves_call_sid_and_created_at():
     original = Order(call_sid="CAoriginal")
     original_created_at = original.created_at
