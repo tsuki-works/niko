@@ -162,6 +162,119 @@ def test_history_threads_user_and_assistant_turns():
     ]
 
 
+def test_text_plus_tool_use_appends_tool_result_to_history():
+    """Regression for #66: when Haiku emits BOTH text and tool_use in a
+    single turn, the assistant message ends with a dangling tool_use.
+    Anthropic requires every tool_use to be followed by a tool_result,
+    so we must append a synthetic ``user: [tool_result]`` message —
+    otherwise the next turn 400s with ``tool_use ids were found without
+    tool_result blocks``. Confirmed in production logs for
+    call_sid=CA8e3be2e91a7471221f87ba1aab63d1cd."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(
+                type="text",
+                text="Got it, one large margarita for pickup. Anything else?",
+            ),
+            FakeBlock(
+                type="tool_use",
+                id="toolu_committed",
+                name="update_order",
+                input={
+                    "items": [
+                        {
+                            "name": "Margarita",
+                            "category": "pizza",
+                            "size": "large",
+                            "quantity": 1,
+                            "unit_price": 19.99,
+                        }
+                    ],
+                    "order_type": "pickup",
+                    "status": "in_progress",
+                },
+            ),
+        ]
+    )
+
+    result = generate_reply(
+        transcript="i'll take a large margarita for pickup",
+        history=[],
+        order=order,
+        client=fake_client,
+    )
+
+    # No follow-up call — text was emitted.
+    assert fake_client.messages.create.call_count == 1
+    # History ends with a synthetic tool_result so the next turn is valid.
+    assert result.history[-1] == {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_committed",
+                "content": "Order updated.",
+            }
+        ],
+    }
+
+
+def test_next_transcript_merges_into_pending_tool_result():
+    """When the prior turn ended with ``user: [tool_result]`` (text+tool_use
+    case), the *next* turn must merge the new transcript into that user
+    message rather than appending a second consecutive user message —
+    Anthropic requires strict role alternation."""
+
+    order = Order(call_sid="CAtest")
+    history_with_pending_tool_result = [
+        {"role": "user", "content": "i'll take a large margarita for pickup"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Got it, anything else?"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_committed",
+                    "name": "update_order",
+                    "input": {"items": [], "status": "in_progress"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_committed",
+                    "content": "Order updated.",
+                }
+            ],
+        },
+    ]
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [FakeBlock(type="text", text="Sure thing.")]
+    )
+
+    result = generate_reply(
+        transcript="extra olives please",
+        history=history_with_pending_tool_result,
+        order=order,
+        client=fake_client,
+    )
+
+    # Find the last user message; assert the new transcript was merged
+    # into the pending tool_result message rather than appended separately.
+    user_messages = [m for m in result.history if m["role"] == "user"]
+    last_user = user_messages[-1]
+    assert isinstance(last_user["content"], list)
+    assert last_user["content"][0]["type"] == "tool_result"
+    assert last_user["content"][1] == {"type": "text", "text": "extra olives please"}
+
+
 def test_history_strips_sdk_only_fields_from_assistant_blocks():
     """Regression for #64: the real Anthropic SDK's streaming TextBlock
     carries a ``parsed_output`` attribute (and others). If we ``model_dump``
