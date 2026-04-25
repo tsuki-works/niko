@@ -4,6 +4,10 @@
 .mcp.json
 node_modules/
 
+# TTS test output files
+tts_test_output.*
+bash.exe.stackdump
+
 # Python
 __pycache__/
 *.pyc
