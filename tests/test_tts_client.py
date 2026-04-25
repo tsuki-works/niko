@@ -38,7 +38,7 @@ def make_mock_client(chunks: list[bytes], status_code: int = 200) -> MagicMock:
     mock_response = MagicMock()
     mock_response.status_code = status_code
     mock_response.aiter_bytes = lambda: _chunk_gen(chunks)
-    mock_response.aread = AsyncMock(return_value=b"bad request from elevenlabs")
+    mock_response.aread = AsyncMock(return_value=b"bad request from deepgram")
 
     mock_client = MagicMock()
     mock_client.stream.return_value = _AsyncStreamCtx(mock_response)
@@ -49,6 +49,15 @@ def make_mock_websocket() -> AsyncMock:
     ws = AsyncMock()
     ws.send_json = AsyncMock()
     return ws
+
+
+@pytest.fixture(autouse=True)
+def _patch_settings():
+    """Default settings for every test — keeps the suite independent of local .env."""
+    with patch("app.tts.client.settings") as mock_settings:
+        mock_settings.deepgram_api_key = "test-key"
+        mock_settings.deepgram_tts_model = "aura-2-thalia-en"
+        yield mock_settings
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +84,7 @@ async def test_speak_sends_media_events():
 
 @pytest.mark.asyncio
 async def test_speak_empty_text_sends_nothing():
-    """Empty text returns immediately without hitting ElevenLabs."""
+    """Empty text returns immediately without hitting Deepgram."""
     client = make_mock_client([b"\x00"])
     ws = make_mock_websocket()
 
@@ -87,7 +96,7 @@ async def test_speak_empty_text_sends_nothing():
 
 @pytest.mark.asyncio
 async def test_speak_whitespace_only_sends_nothing():
-    """Whitespace-only text is treated as empty — ElevenLabs not called."""
+    """Whitespace-only text is treated as empty — Deepgram not called."""
     client = make_mock_client([b"\x00"])
     ws = make_mock_websocket()
 
@@ -98,19 +107,18 @@ async def test_speak_whitespace_only_sends_nothing():
 
 
 @pytest.mark.asyncio
-async def test_speak_missing_api_key_raises():
-    """RuntimeError raised when ELEVENLABS_API_KEY is not set."""
+async def test_speak_missing_api_key_raises(_patch_settings):
+    """RuntimeError raised when DEEPGRAM_API_KEY is not set."""
     ws = make_mock_websocket()
+    _patch_settings.deepgram_api_key = None
 
-    with patch("app.tts.client.settings") as mock_settings:
-        mock_settings.elevenlabs_api_key = None
-        with pytest.raises(RuntimeError, match="ELEVENLABS_API_KEY"):
-            await speak("Hello", ws, stream_sid="MZ123")
+    with pytest.raises(RuntimeError, match="DEEPGRAM_API_KEY"):
+        await speak("Hello", ws, stream_sid="MZ123")
 
 
 @pytest.mark.asyncio
 async def test_speak_non_200_raises():
-    """RuntimeError raised when ElevenLabs returns a non-200 status."""
+    """RuntimeError raised when Deepgram returns a non-200 status."""
     client = make_mock_client([], status_code=401)
     ws = make_mock_websocket()
 
@@ -133,21 +141,20 @@ async def test_speak_websocket_disconnect_is_handled():
 
 
 @pytest.mark.asyncio
-async def test_speak_uses_configured_voice_and_model():
-    """ElevenLabs is called with the voice_id and model_id from settings."""
+async def test_speak_uses_configured_model_and_mulaw_format():
+    """Deepgram is called with the configured model, mulaw 8 kHz, no container."""
     client = make_mock_client([b"\x00"])
     ws = make_mock_websocket()
 
-    with patch("app.tts.client.settings") as mock_settings:
-        mock_settings.elevenlabs_api_key = "test-key"
-        mock_settings.elevenlabs_voice_id = "test-voice-id"
-        mock_settings.elevenlabs_model_id = "eleven_turbo_v2_5"
-
-        await speak("Hello", ws, stream_sid="MZ123", client=client)
+    await speak("Hello", ws, stream_sid="MZ123", client=client)
 
     assert client.stream.call_args.args[0] == "POST"
-    assert "test-voice-id" in client.stream.call_args.args[1]
+    assert client.stream.call_args.args[1].endswith("/speak")
+
     kwargs = client.stream.call_args.kwargs
-    body = kwargs["json"]
-    assert body["model_id"] == "eleven_turbo_v2_5"
-    assert body["output_format"] == "ulaw_8000"
+    assert kwargs["params"]["model"] == "aura-2-thalia-en"
+    assert kwargs["params"]["encoding"] == "mulaw"
+    assert kwargs["params"]["sample_rate"] == "8000"
+    assert kwargs["params"]["container"] == "none"
+    assert kwargs["headers"]["Authorization"] == "Token test-key"
+    assert kwargs["json"] == {"text": "Hello"}

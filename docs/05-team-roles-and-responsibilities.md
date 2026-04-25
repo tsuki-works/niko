@@ -42,7 +42,7 @@ Some responsibilities are **shared across the whole team** rather than assigned 
 
 | Responsibility | Details |
 |---------------|---------|
-| TTS pipeline | ElevenLabs streaming back to Twilio |
+| TTS pipeline | Deepgram Aura streaming back to Twilio |
 | Audio engineering | Barge-in detection, audio quality, interruption handling |
 | Performance | Ensure < 1 second end-to-end voice response latency |
 | Call state management | Session state, timeout/silence detection |

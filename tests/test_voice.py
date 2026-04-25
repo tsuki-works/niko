@@ -37,4 +37,4 @@ def test_voice_returns_twiml():
     assert response.headers["content-type"].startswith("application/xml")
     body = response.text
     assert "<Response>" in body
-    assert "<Say" not in body  # greeting is delivered via ElevenLabs on start event
+    assert "<Say" not in body  # greeting is delivered via Deepgram Aura on start event
