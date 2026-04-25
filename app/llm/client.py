@@ -158,6 +158,40 @@ def _serialize_block(block: Any) -> dict[str, Any]:
     raise ValueError(f"Unsupported content block type: {block.type!r}")
 
 
+def _tool_result_block(tool_use_id: str, content: str = "Order updated.") -> dict[str, Any]:
+    return {
+        "type": "tool_result",
+        "tool_use_id": tool_use_id,
+        "content": content,
+    }
+
+
+def _append_user_transcript(
+    history: list[dict[str, Any]], transcript: str
+) -> list[dict[str, Any]]:
+    """Append the caller's transcript to history with valid alternation.
+
+    Anthropic requires strict user/assistant alternation. After a turn
+    that produced both text and a ``tool_use``, history ends in a synthetic
+    ``user: [tool_result]`` message. Appending another ``user`` message
+    would error, so we merge the new transcript into that pending
+    ``tool_result`` message instead.
+    """
+    if (
+        history
+        and history[-1]["role"] == "user"
+        and isinstance(history[-1]["content"], list)
+        and history[-1]["content"]
+        and history[-1]["content"][0].get("type") == "tool_result"
+    ):
+        merged = [
+            *history[-1]["content"],
+            {"type": "text", "text": transcript},
+        ]
+        return [*history[:-1], {"role": "user", "content": merged}]
+    return [*history, {"role": "user", "content": transcript}]
+
+
 def _apply_update(order: Order, patch: dict[str, Any]) -> Order:
     """Merge a tool-call payload into the current Order.
 
@@ -196,7 +230,7 @@ def generate_reply(
 
     api = client or _client()
 
-    new_history = [*history, {"role": "user", "content": transcript}]
+    new_history = _append_user_transcript(history, transcript)
 
     response = api.messages.create(
         model=MODEL,
@@ -224,19 +258,16 @@ def generate_reply(
         {"role": "assistant", "content": assistant_content},
     ]
 
-    if not reply_text_parts and tool_uses:
-        tool_results = [
-            {
-                "type": "tool_result",
-                "tool_use_id": tu["id"],
-                "content": "Order updated.",
-            }
-            for tu in tool_uses
-        ]
+    if tool_uses:
         new_history = [
             *new_history,
-            {"role": "user", "content": tool_results},
+            {
+                "role": "user",
+                "content": [_tool_result_block(tu["id"]) for tu in tool_uses],
+            },
         ]
+
+    if not reply_text_parts and tool_uses:
         followup = api.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -284,7 +315,7 @@ async def stream_reply(
 
     api = client or _async_client()
 
-    new_history = [*history, {"role": "user", "content": transcript}]
+    new_history = _append_user_transcript(history, transcript)
 
     text_parts: list[str] = []
     tool_uses: list[dict[str, Any]] = []
@@ -315,20 +346,17 @@ async def stream_reply(
         {"role": "assistant", "content": assistant_content},
     ]
 
-    text_emitted = bool(text_parts)
-    if not text_emitted and tool_uses:
-        tool_results = [
-            {
-                "type": "tool_result",
-                "tool_use_id": tu["id"],
-                "content": "Order updated.",
-            }
-            for tu in tool_uses
-        ]
+    if tool_uses:
         new_history = [
             *new_history,
-            {"role": "user", "content": tool_results},
+            {
+                "role": "user",
+                "content": [_tool_result_block(tu["id"]) for tu in tool_uses],
+            },
         ]
+
+    text_emitted = bool(text_parts)
+    if not text_emitted and tool_uses:
         async with api.messages.stream(
             model=MODEL,
             max_tokens=MAX_TOKENS,
