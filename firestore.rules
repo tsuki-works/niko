@@ -1,0 +1,108 @@
+rules_version = '2';
+
+// Niko — Firestore security rules (PR E of #79/#81 Sprint 2.1).
+//
+// Defense-in-depth complement to the FastAPI ``current_tenant``
+// dependency: even if a dashboard build accidentally crosses tenants
+// in an ``onSnapshot`` query, these rules reject the read at the
+// database level. Backend reads/writes go through the Admin SDK and
+// bypass these rules entirely — they're an "Admin SDK only" gate
+// that the dashboard's web SDK has to satisfy.
+//
+// Custom claims set by ``scripts/grant_tenant_claim.py``:
+//   - request.auth.token.restaurant_id  → string, the tenant id
+//   - request.auth.token.role           → "owner" | "manager" | "staff" | "tsuki_admin"
+//
+// Tsuki admins (role == "tsuki_admin") can read across tenants.
+// Everyone else is scoped to their restaurant_id.
+//
+// Writes are denied across the board. The dashboard's only mutation
+// (cancel order) flows through FastAPI's authenticated route, which
+// uses the Admin SDK. If we add direct-write client features, scope
+// them narrowly here and require ``request.auth.token.role`` checks.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ───── helpers ─────
+
+    function isAuthed() {
+      return request.auth != null && request.auth.token != null;
+    }
+
+    function authRid() {
+      return request.auth.token.restaurant_id;
+    }
+
+    function authRole() {
+      return request.auth.token.role;
+    }
+
+    function isAdmin() {
+      return isAuthed() && authRole() == 'tsuki_admin';
+    }
+
+    function ownsRestaurant(rid) {
+      return isAuthed() && (authRid() == rid || isAdmin());
+    }
+
+    // ───── canonical nested paths (PR C) ─────
+
+    match /restaurants/{rid} {
+      // Read the restaurant config (name, hours, menu, etc.) only
+      // if the authed user belongs to this tenant.
+      allow read: if ownsRestaurant(rid);
+      // Restaurant config is provisioned via scripts/provision_restaurant.py
+      // (Admin SDK). No client-driven writes.
+      allow write: if false;
+
+      match /orders/{callSid} {
+        allow read: if ownsRestaurant(rid);
+        // Backend FastAPI persists orders via Admin SDK. If we ever
+        // want a client-driven write (e.g. dashboard cancel staying
+        // in the dashboard), gate it on a role check here.
+        allow write: if false;
+      }
+
+      match /call_sessions/{callSid} {
+        allow read: if ownsRestaurant(rid);
+        allow write: if false;
+
+        match /events/{eventId} {
+          allow read: if ownsRestaurant(rid);
+          allow write: if false;
+        }
+      }
+    }
+
+    // ───── legacy flat collections (deprecated by PR C/D) ─────
+    //
+    // Backend's call_sessions module dual-writes here so the
+    // pre-PR-D dashboard subscriptions kept working through the
+    // migration. PR D moved the dashboard to nested paths, so
+    // clients should never read these anymore. Lock them down.
+    // Backend Admin SDK still works (bypasses rules); these will be
+    // physically deleted in PR F.
+
+    match /orders/{callSid} {
+      allow read, write: if false;
+    }
+
+    match /call_sessions/{callSid} {
+      allow read, write: if false;
+
+      match /events/{eventId} {
+        allow read, write: if false;
+      }
+    }
+
+    // ───── default deny for any path not matched above ─────
+    //
+    // Firestore rules default to deny when no rule matches, but we
+    // restate it for explicitness so a future ``match`` block doesn't
+    // accidentally widen access.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

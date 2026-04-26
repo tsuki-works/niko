@@ -1,0 +1,14 @@
+{
+  "name": "niko-firestore-rules-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Emulator-based unit tests for firestore.rules. Run via `npm test` or in CI (.github/workflows/firestore-rules-test.yml). Separate package so the test deps don't bloat the dashboard.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.0.0",
+    "vitest": "^3.2.4"
+  }
+}
