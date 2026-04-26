@@ -18,11 +18,14 @@ import type { CallSession } from '@/lib/schemas/call';
 type Props = {
   initial: CallSession[];
   restaurantId: string;
+  // Empty when the tenant doesn't have a Twilio number — empty state
+  // renders awaiting-number copy.
+  twilioPhone: string;
 };
 
 const ANNOUNCE_THROTTLE_MS = 2000;
 
-export function CallsFeed({ initial, restaurantId }: Props) {
+export function CallsFeed({ initial, restaurantId, twilioPhone }: Props) {
   const [calls, setCalls] = useState<CallSession[]>(initial);
   const [announcement, setAnnouncement] = useState('');
 
@@ -75,7 +78,7 @@ export function CallsFeed({ initial, restaurantId }: Props) {
         </div>
         <LiveIndicator />
       </header>
-      <CallsTable calls={calls.map(toRow)} />
+      <CallsTable calls={calls.map(toRow)} twilioPhone={twilioPhone} />
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
       </div>

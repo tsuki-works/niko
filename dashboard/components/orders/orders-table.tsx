@@ -10,8 +10,14 @@ import { cn } from '@/lib/utils';
 
 const MAX_ITEMS_LINE = 48;
 
-export function OrdersTable({ orders }: { orders: Order[] }) {
-  if (orders.length === 0) return <EmptyState />;
+export function OrdersTable({
+  orders,
+  twilioPhone,
+}: {
+  orders: Order[];
+  twilioPhone: string;
+}) {
+  if (orders.length === 0) return <EmptyState twilioPhone={twilioPhone} />;
 
   return (
     <div className="overflow-hidden rounded-xl border">
@@ -137,13 +143,16 @@ function Td({
   return <td className={cn('px-4 py-3 align-top', className)}>{children}</td>;
 }
 
-function EmptyState() {
+function EmptyState({ twilioPhone }: { twilioPhone: string }) {
+  const display = formatPhone(twilioPhone);
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-16 text-center">
       <PhoneIncoming className="mb-4 h-8 w-8 text-muted-foreground" />
       <p className="text-base font-medium">Waiting for first order</p>
       <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        Calls to +1 647-905-8093 will appear here in real time.
+        {display
+          ? `Calls to ${display} will appear here in real time.`
+          : 'No Twilio number is assigned to this restaurant yet — assign one to start receiving calls.'}
       </p>
     </div>
   );

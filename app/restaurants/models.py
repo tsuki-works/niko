@@ -13,7 +13,12 @@ Two phone fields, intentionally split:
   signage. Never used for routing.
 - ``twilio_phone`` — the number we provisioned for this restaurant.
   Twilio's ``To`` field on inbound calls equals this. PR B keys the
-  routing lookup off it.
+  routing lookup off it. **Empty string is the explicit "awaiting
+  Twilio number" state** — used between tenant creation and number
+  provisioning (e.g. paid-account upgrade pending, manual carrier
+  port). The routing lookup short-circuits on empty, the dashboard
+  renders an "Awaiting Twilio number" pill, and the kitchen empty
+  states fall back to "no number assigned yet" copy.
 
 The customer's existing line is configured (carrier-side) to forward
 inbound calls to ``twilio_phone``. Restaurant keeps their published
