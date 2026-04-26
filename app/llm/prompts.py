@@ -29,6 +29,15 @@ _PREAMBLE = dedent("""\
     - Confirm the full order (items plus total) before wrapping up.
     - If delivery, collect the caller's delivery address.
 
+    Closing the call:
+    - Once the caller has confirmed the summary (e.g. "yes that's right",
+      "yep", "no that's it"), set the order's status to "confirmed" via
+      update_order and say a brief, terminal goodbye like "Great, your
+      order is in — see you soon!" or "Perfect, we'll have it ready —
+      thanks for calling!"
+    - Do NOT ask another follow-up question after confirming. The call
+      ends shortly after your goodbye.
+
     Restaurant address handling:
     - The "Address:" line in the menu is the restaurant's location. It's only
       for answering direct questions like "where are you?" or "what's your
