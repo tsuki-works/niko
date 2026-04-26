@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 
-import { CallTimelineView } from '@/components/calls/call-timeline';
+import { CallTimelineLive } from '@/components/calls/call-timeline-live';
 import { ComingSoon } from '@/components/shared/coming-soon';
 import { getCallTimeline } from '@/lib/api/calls';
 
@@ -25,5 +25,5 @@ export default async function CallDetailPage({
 
   if ('notFound' in result) notFound();
 
-  return <CallTimelineView timeline={result.timeline} />;
+  return <CallTimelineLive callSid={call_sid} initial={result.timeline} />;
 }

@@ -58,7 +58,7 @@ def _make_fake_stream_reply(reply="Hi, welcome to Niko's Pizza Kitchen!"):
 
 @pytest.fixture()
 def mock_pipeline(monkeypatch):
-    """Patch all three network-bound callables for offline testing."""
+    """Patch all four network-bound callables for offline testing."""
     fake_dg = AsyncMock()
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
@@ -69,11 +69,18 @@ def mock_pipeline(monkeypatch):
     async def fake_speak(text, websocket, stream_sid, **kw):
         pass
 
+    # Stub out Firestore writes for the live call_sessions stream so the
+    # router never tries to auth to GCP from a unit test (#70).
+    from app.storage import call_sessions
+
     monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
     monkeypatch.setattr("app.telephony.router.speak", fake_speak)
     monkeypatch.setattr(
         "app.telephony.router.stream_reply", _make_fake_stream_reply()
     )
+    monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
     return fake_dg
 
 

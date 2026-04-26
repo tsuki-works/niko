@@ -20,6 +20,7 @@ export type CallEventKind =
   | 'transcript_final'
   | 'transcript_interim'
   | 'llm_turn_start'
+  | 'agent_reply'
   | 'first_audio'
   | 'barge_in'
   | 'silence_timeout'

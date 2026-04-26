@@ -1,0 +1,55 @@
+/**
+ * Call session schemas — mirror the Firestore documents written by
+ * `app/storage/call_sessions.py` (collection: `call_sessions`,
+ * subcollection: `call_sessions/{call_sid}/events`).
+ *
+ * Field names are snake_case to match the backend writes — do not
+ * rename to camelCase on read.
+ */
+import { z } from 'zod';
+
+export const CallStatusSchema = z.enum([
+  'in_progress',
+  'ended',
+  'confirmed',
+]);
+export type CallStatus = z.infer<typeof CallStatusSchema>;
+
+export const CallEventKindSchema = z.enum([
+  'start',
+  'transcript_final',
+  'transcript_interim',
+  'llm_turn_start',
+  'agent_reply',
+  'first_audio',
+  'barge_in',
+  'silence_timeout',
+  'stop',
+  'order_confirmed',
+  'error',
+  'log',
+]);
+export type CallEventKind = z.infer<typeof CallEventKindSchema>;
+
+export const CallSessionSchema = z.object({
+  call_sid: z.string().min(1),
+  started_at: z.coerce.date(),
+  ended_at: z.coerce.date().nullable(),
+  status: CallStatusSchema,
+  transcript_count: z.number().int().min(0).default(0),
+  has_error: z.boolean().default(false),
+  last_event_at: z.coerce.date().nullish(),
+});
+export type CallSession = z.infer<typeof CallSessionSchema>;
+
+export const CallEventSchema = z.object({
+  timestamp: z.coerce.date(),
+  kind: CallEventKindSchema.catch('log'),
+  text: z.string().default(''),
+  detail: z.record(z.string(), z.unknown()).default({}),
+});
+export type CallEvent = z.infer<typeof CallEventSchema>;
+
+export function callShortId(session: { call_sid: string }): string {
+  return session.call_sid.slice(0, 8) + '…';
+}

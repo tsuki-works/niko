@@ -1,6 +1,8 @@
+import { CallsFeed } from '@/components/calls/calls-feed';
 import { ComingSoon } from '@/components/shared/coming-soon';
-import { CallsTable } from '@/components/calls/calls-table';
 import { listRecentCalls } from '@/lib/api/calls';
+import { parseCallSessionFromJson } from '@/lib/firebase/call-converters';
+import type { CallSession } from '@/lib/schemas/call';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,22 +18,16 @@ export default async function CallsPage() {
     );
   }
 
-  return (
-    <section className="flex flex-1 flex-col gap-4 p-6">
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1 className="text-lg font-medium">Calls (dev)</h1>
-          <p className="text-sm text-muted-foreground">
-            Last 24h · {result.calls.length} session
-            {result.calls.length === 1 ? '' : 's'}
-          </p>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Backed by Cloud Logging · gated on{' '}
-          <code className="font-mono">NIKO_DEV_ENDPOINTS</code>
-        </p>
-      </header>
-      <CallsTable calls={result.calls} />
-    </section>
+  const initial: CallSession[] = result.calls.map((c) =>
+    parseCallSessionFromJson({
+      call_sid: c.call_sid,
+      started_at: c.started_at,
+      ended_at: c.ended_at,
+      status: c.status,
+      transcript_count: c.transcript_count,
+      has_error: c.has_error,
+    }),
   );
+
+  return <CallsFeed initial={initial} />;
 }
