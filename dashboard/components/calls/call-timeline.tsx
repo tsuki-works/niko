@@ -128,6 +128,15 @@ function renderEvent(event: CallEvent): RenderedEvent {
         body: transcript ? `→ "${transcript}"` : 'turn opened',
       };
     }
+    case 'agent_reply': {
+      const reply = (event.detail.text as string) || event.text || '';
+      return {
+        Icon: Sparkles,
+        accent: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+        label: 'agent',
+        body: <span className="italic">“{reply}”</span>,
+      };
+    }
     case 'first_audio': {
       const latency = event.detail.latency_seconds as number | undefined;
       const overBudget = typeof latency === 'number' && latency >= 1;

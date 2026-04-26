@@ -31,6 +31,7 @@ from app.config import settings
 from app.llm.client import stream_reply
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
 from app.orders.models import Order
+from app.storage import call_sessions
 from app.tts.client import speak
 
 router = APIRouter()
@@ -39,6 +40,21 @@ logger = logging.getLogger(__name__)
 SILENCE_TIMEOUT_SECONDS = 10.0
 SILENCE_PROMPT = "Are you still there?"
 GREETING_TRANSCRIPT = "[call started — greet the caller]"
+
+
+def _bg_call_event(call_sid: str | None, **kwargs) -> None:
+    """Fire-and-forget Firestore write so the audio loop never blocks on it.
+
+    The storage module catches its own exceptions, so failures here just
+    drop the event from the live dashboard — the call continues normally.
+    """
+    if not call_sid:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(asyncio.to_thread(call_sessions.record_event, call_sid, **kwargs))
 
 
 @dataclass
@@ -65,6 +81,9 @@ async def _open_deepgram_connection(call_sid: str | None, on_final: Callable):
         label = "final" if result.is_final else "interim"
         logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
         if result.is_final:
+            _bg_call_event(
+                call_sid, kind="transcript_final", text=text, detail={"text": text}
+            )
             asyncio.get_event_loop().create_task(on_final(text))
 
     async def on_error(self, error, **kwargs):
@@ -91,6 +110,7 @@ async def _silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
     try:
         await asyncio.sleep(SILENCE_TIMEOUT_SECONDS)
         logger.info("silence timeout call_sid=%s", state.call_sid)
+        _bg_call_event(state.call_sid, kind="silence_timeout")
         if state.stream_sid:
             await speak(SILENCE_PROMPT, websocket, state.stream_sid)
     except asyncio.CancelledError:
@@ -117,8 +137,28 @@ async def _run_llm_tts_turn(
 ) -> None:
     turn_start = time.monotonic()
     logger.info("llm_turn start call_sid=%s transcript=%r", state.call_sid, transcript)
+    _bg_call_event(
+        state.call_sid,
+        kind="llm_turn_start",
+        text=transcript,
+        detail={"transcript": transcript},
+    )
     text_buffer: list[str] = []
     first_speak = True
+    full_reply_parts: list[str] = []
+
+    def _record_first_audio() -> None:
+        latency = time.monotonic() - turn_start
+        logger.info(
+            "llm_turn first_audio latency=%.3fs call_sid=%s",
+            latency,
+            state.call_sid,
+        )
+        _bg_call_event(
+            state.call_sid,
+            kind="first_audio",
+            detail={"latency_seconds": round(latency, 3)},
+        )
 
     try:
         async for event in stream_reply(
@@ -129,16 +169,13 @@ async def _run_llm_tts_turn(
 
             if event.text_delta is not None:
                 text_buffer.append(event.text_delta)
+                full_reply_parts.append(event.text_delta)
                 if event.text_delta.endswith((".", "?", "!")):
                     chunk = "".join(text_buffer).strip()
                     text_buffer.clear()
                     if chunk and state.stream_sid:
                         if first_speak:
-                            logger.info(
-                                "llm_turn first_audio latency=%.3fs call_sid=%s",
-                                time.monotonic() - turn_start,
-                                state.call_sid,
-                            )
+                            _record_first_audio()
                             first_speak = False
                         await speak(chunk, websocket, state.stream_sid)
 
@@ -147,17 +184,31 @@ async def _run_llm_tts_turn(
                 text_buffer.clear()
                 if remainder and state.stream_sid:
                     if first_speak:
-                        logger.info(
-                            "llm_turn first_audio latency=%.3fs call_sid=%s",
-                            time.monotonic() - turn_start,
-                            state.call_sid,
-                        )
+                        _record_first_audio()
                     await speak(remainder, websocket, state.stream_sid)
                 state.history = event.final.history
                 state.order = event.final.order
+                full_reply = "".join(full_reply_parts).strip()
+                if full_reply:
+                    _bg_call_event(
+                        state.call_sid,
+                        kind="agent_reply",
+                        text=full_reply,
+                        detail={"text": full_reply},
+                    )
 
     except asyncio.CancelledError:
         logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)
+        _bg_call_event(state.call_sid, kind="barge_in")
+        raise
+    except Exception as exc:
+        logger.exception("llm_turn errored call_sid=%s", state.call_sid)
+        _bg_call_event(
+            state.call_sid,
+            kind="error",
+            text=str(exc)[:500],
+            detail={"exception": type(exc).__name__},
+        )
         raise
 
 
@@ -231,6 +282,17 @@ async def media_stream(websocket: WebSocket) -> None:
                     state.call_sid,
                     state.stream_sid,
                 )
+                if state.call_sid:
+                    asyncio.get_running_loop().create_task(
+                        asyncio.to_thread(
+                            call_sessions.init_call_session, state.call_sid
+                        )
+                    )
+                    _bg_call_event(
+                        state.call_sid,
+                        kind="start",
+                        detail={"stream_sid": state.stream_sid or ""},
+                    )
                 dg_conn = await _open_deepgram_connection(state.call_sid, on_final)
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)
@@ -246,6 +308,7 @@ async def media_stream(websocket: WebSocket) -> None:
 
             elif event == "stop":
                 logger.info("media-stream stop call_sid=%s", state.call_sid)
+                _bg_call_event(state.call_sid, kind="stop")
                 # Let the in-flight LLM turn finish so we capture the final order state
                 if state.llm_task and not state.llm_task.done():
                     try:
@@ -264,13 +327,28 @@ async def media_stream(websocket: WebSocket) -> None:
                 await state.llm_task
             except (asyncio.CancelledError, Exception):
                 pass
+        order_confirmed = False
         if state.order and state.order.is_ready_to_confirm():
             try:
                 persist_on_confirm(state.order)
                 logger.info("order confirmed call_sid=%s", state.call_sid)
+                _bg_call_event(state.call_sid, kind="order_confirmed")
+                order_confirmed = True
             except (OrderNotReadyError, Exception) as exc:
                 logger.error(
                     "order persist failed call_sid=%s: %s", state.call_sid, exc
+                )
+        if state.call_sid:
+            try:
+                await asyncio.to_thread(
+                    call_sessions.mark_call_ended,
+                    state.call_sid,
+                    confirmed=order_confirmed,
+                )
+            except Exception:
+                logger.exception(
+                    "call_sessions: mark_call_ended scheduling failed call_sid=%s",
+                    state.call_sid,
                 )
         if dg_conn is not None:
             await dg_conn.finish()

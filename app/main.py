@@ -5,10 +5,12 @@ from fastapi import FastAPI, HTTPException
 
 logging.basicConfig(level=logging.INFO)
 
+from datetime import datetime
+from typing import Any
+
 from app.config import settings
-from app.dev import calls as dev_calls
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
-from app.storage import firestore as order_storage
+from app.storage import call_sessions, firestore as order_storage
 from app.telephony.router import router as telephony_router
 
 app = FastAPI(title="niko")
@@ -45,51 +47,65 @@ def _require_dev_endpoints() -> None:
         raise HTTPException(status_code=404, detail="Not Found")
 
 
-@app.get("/dev/calls")
-def dev_list_calls(hours: int = 24):
-    """List recent call sessions extracted from Cloud Logging.
+def _iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
 
-    Gated on ``NIKO_DEV_ENDPOINTS=true``. Returns one entry per call_sid
-    seen in the last ``hours`` window, newest-first. Used by the
-    dashboard's dev-only Calls page (#68).
+
+@app.get("/dev/calls")
+def dev_list_calls(limit: int = 50):
+    """List recent call sessions from Firestore, newest-first.
+
+    Gated on ``NIKO_DEV_ENDPOINTS=true``. Used by the dashboard's
+    dev-only Calls page for the initial server-side render; live
+    updates come from a direct ``onSnapshot`` subscription against
+    the same ``call_sessions`` collection (#70).
     """
     _require_dev_endpoints()
-    if hours < 1 or hours > 24 * 7:
-        raise HTTPException(status_code=400, detail="hours must be 1..168")
-    summaries = dev_calls.list_recent_calls(hours=hours)
+    if limit < 1 or limit > 200:
+        raise HTTPException(status_code=400, detail="limit must be 1..200")
+    sessions = call_sessions.list_recent_sessions(limit=limit)
     return {
         "calls": [
             {
-                "call_sid": s.call_sid,
-                "started_at": s.started_at.isoformat(),
-                "ended_at": s.ended_at.isoformat(),
-                "transcript_count": s.transcript_count,
-                "has_error": s.has_error,
-                "status": s.status,
+                "call_sid": s.get("call_sid"),
+                "started_at": _iso(s.get("started_at")),
+                "ended_at": _iso(s.get("ended_at"))
+                or _iso(s.get("last_event_at")),
+                "transcript_count": s.get("transcript_count", 0),
+                "has_error": s.get("has_error", False),
+                "status": s.get("status", "in_progress"),
             }
-            for s in summaries
+            for s in sessions
         ]
     }
 
 
 @app.get("/dev/calls/{call_sid}")
-def dev_call_timeline(call_sid: str, hours: int = 168):
-    """Full event timeline for one call_sid (transcripts, LLM turns,
-    barge-ins, silence timeouts, errors). Gated on dev endpoints (#68)."""
+def dev_call_timeline(call_sid: str):
+    """Full event timeline for one call_sid (#70).
+
+    Reads from the ``call_sessions/{call_sid}/events`` subcollection.
+    The dashboard uses this for the initial server render; live updates
+    arrive via direct Firestore ``onSnapshot``.
+    """
     _require_dev_endpoints()
-    if hours < 1 or hours > 24 * 7:
-        raise HTTPException(status_code=400, detail="hours must be 1..168")
-    events = dev_calls.get_call_timeline(call_sid, hours=hours)
+    events = call_sessions.get_session_events(call_sid)
     if events is None:
-        raise HTTPException(status_code=404, detail="call_sid not found in logs")
+        raise HTTPException(status_code=404, detail="call_sid not found")
     return {
         "call_sid": call_sid,
         "events": [
             {
-                "timestamp": e.timestamp.isoformat(),
-                "kind": e.kind,
-                "text": e.text,
-                "detail": e.detail,
+                "timestamp": _iso(e.get("timestamp")),
+                "kind": e.get("kind", "log"),
+                "text": e.get("text", ""),
+                "detail": e.get("detail", {}),
             }
             for e in events
         ],
