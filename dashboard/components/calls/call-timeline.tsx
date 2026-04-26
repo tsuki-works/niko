@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 
+import { TimelineExport } from '@/components/calls/timeline-export';
 import { LocalTime } from '@/components/shared/local-time';
 import type { CallEvent, CallTimeline } from '@/lib/api/calls';
 import { cn } from '@/lib/utils';
@@ -28,11 +29,14 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
         </Link>
       </header>
 
-      <div className="flex flex-col gap-1">
-        <h1 className="text-lg font-medium">Call timeline</h1>
-        <p className="font-mono text-xs text-muted-foreground">
-          {timeline.call_sid}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-lg font-medium">Call timeline</h1>
+          <p className="font-mono text-xs text-muted-foreground">
+            {timeline.call_sid}
+          </p>
+        </div>
+        <TimelineExport timeline={timeline} />
       </div>
 
       <ol className="flex flex-col gap-2 rounded-xl border bg-card p-4">
