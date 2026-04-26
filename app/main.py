@@ -11,6 +11,7 @@ from typing import Any
 from app.config import settings
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import call_sessions, firestore as order_storage
+from app.storage.restaurants import DEMO_RID
 from app.telephony.router import router as telephony_router
 
 app = FastAPI(title="niko")
@@ -28,17 +29,26 @@ def health():
 
 
 @app.get("/orders")
-def list_orders(limit: int = 50):
+def list_orders(limit: int = 50, restaurant_id: str = DEMO_RID):
     """Return recent orders for the dashboard, most-recent-first.
 
-    Read-only view over the Firestore ``orders`` collection (#41). Hard
-    cap on ``limit`` so a misconfigured client can't exhaust the Cloud
-    Run instance.
+    Read-only view over the Firestore
+    ``restaurants/{restaurant_id}/orders`` subcollection (#79).
+
+    The ``restaurant_id`` query param defaults to the demo tenant for
+    now; PR D adds Firebase Auth and derives the tenant from the
+    requester's custom claims so the param can drop to the
+    authenticated user's restaurant only.
+
+    Hard cap on ``limit`` so a misconfigured client can't exhaust the
+    Cloud Run instance.
     """
 
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=400, detail="limit must be 1..200")
-    orders = order_storage.list_recent_orders(limit=limit)
+    orders = order_storage.list_recent_orders(
+        restaurant_id=restaurant_id, limit=limit
+    )
     return {"orders": [o.model_dump(mode="json") for o in orders]}
 
 
@@ -58,18 +68,22 @@ def _iso(value: Any) -> str | None:
 
 
 @app.get("/dev/calls")
-def dev_list_calls(limit: int = 50):
+def dev_list_calls(limit: int = 50, restaurant_id: str = DEMO_RID):
     """List recent call sessions from Firestore, newest-first.
 
-    Gated on ``NIKO_DEV_ENDPOINTS=true``. Used by the dashboard's
-    dev-only Calls page for the initial server-side render; live
-    updates come from a direct ``onSnapshot`` subscription against
-    the same ``call_sessions`` collection (#70).
+    Gated on ``NIKO_DEV_ENDPOINTS=true``. Reads from the nested
+    ``restaurants/{restaurant_id}/call_sessions`` subcollection (#79
+    PR C). The dashboard's live ``onSnapshot`` subscription still
+    points at the legacy flat ``call_sessions`` collection until PR D
+    moves it; both paths receive every write via the dual-write
+    pattern in ``app/storage/call_sessions.py``.
     """
     _require_dev_endpoints()
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=400, detail="limit must be 1..200")
-    sessions = call_sessions.list_recent_sessions(limit=limit)
+    sessions = call_sessions.list_recent_sessions(
+        restaurant_id=restaurant_id, limit=limit
+    )
     return {
         "calls": [
             {
@@ -87,15 +101,18 @@ def dev_list_calls(limit: int = 50):
 
 
 @app.get("/dev/calls/{call_sid}")
-def dev_call_timeline(call_sid: str):
-    """Full event timeline for one call_sid (#70).
+def dev_call_timeline(call_sid: str, restaurant_id: str = DEMO_RID):
+    """Full event timeline for one call_sid (#70 + #79 PR C).
 
-    Reads from the ``call_sessions/{call_sid}/events`` subcollection.
-    The dashboard uses this for the initial server render; live updates
-    arrive via direct Firestore ``onSnapshot``.
+    Reads from the
+    ``restaurants/{restaurant_id}/call_sessions/{call_sid}/events``
+    subcollection. The dashboard uses this for the initial server
+    render; live updates still arrive via direct Firestore
+    ``onSnapshot`` against the legacy flat path until PR D switches
+    the subscription.
     """
     _require_dev_endpoints()
-    events = call_sessions.get_session_events(call_sid)
+    events = call_sessions.get_session_events(call_sid, restaurant_id)
     if events is None:
         raise HTTPException(status_code=404, detail="call_sid not found")
     return {

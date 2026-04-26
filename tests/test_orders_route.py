@@ -3,6 +3,10 @@
 Uses the Firestore storage module's ``set_client`` injection hook with
 a ``MagicMock`` so the HTTP layer is exercised end-to-end without any
 GCP dependency.
+
+After PR C of #79, orders live under
+``restaurants/{restaurant_id}/orders/{call_sid}`` — the MagicMock chain
+mirrors that nesting.
 """
 
 from unittest.mock import MagicMock
@@ -15,6 +19,8 @@ from app.main import app
 from app.storage import firestore as storage
 
 client = TestClient(app)
+
+_DEMO_RID = "niko-pizza-kitchen"
 
 
 @pytest.fixture(autouse=True)
@@ -35,8 +41,12 @@ def _fake_firestore_with_orders(docs: list[dict]) -> MagicMock:
         snap = MagicMock()
         snap.to_dict.return_value = doc
         snapshots.append(snap)
+
+    # Path: restaurants/{rid}/orders → order_by → limit → stream
     (
         fake_client.collection.return_value
+        .document.return_value
+        .collection.return_value
         .order_by.return_value
         .limit.return_value
         .stream.return_value
@@ -75,13 +85,43 @@ def test_list_orders_returns_recent_orders():
     assert body["orders"][0]["items"][0]["line_total"] == 17.99
 
 
+def test_list_orders_addresses_demo_restaurant_by_default():
+    """Without an explicit ``restaurant_id`` query param, /orders reads
+    under ``restaurants/niko-pizza-kitchen/orders``."""
+    fake = _fake_firestore_with_orders([])
+
+    client.get("/orders")
+
+    fake.collection.assert_called_with("restaurants")
+    fake.collection.return_value.document.assert_called_with(_DEMO_RID)
+    (
+        fake.collection.return_value
+        .document.return_value
+        .collection.assert_called_with("orders")
+    )
+
+
+def test_list_orders_scopes_to_restaurant_query_param():
+    fake = _fake_firestore_with_orders([])
+
+    client.get("/orders?restaurant_id=pizza-palace")
+
+    fake.collection.return_value.document.assert_called_with("pizza-palace")
+
+
 def test_list_orders_respects_limit_query_param():
     fake = _fake_firestore_with_orders([])
 
     response = client.get("/orders?limit=10")
 
     assert response.status_code == 200
-    fake.collection.return_value.order_by.return_value.limit.assert_called_with(10)
+    (
+        fake.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .order_by.return_value
+        .limit.assert_called_with(10)
+    )
 
 
 def test_list_orders_rejects_out_of_range_limit():
@@ -111,5 +151,19 @@ def test_seed_order_persists_when_dev_flag_on(dev_endpoints_enabled):
     assert body["order"]["order_type"] == "pickup"
     assert len(body["order"]["items"]) == 2
 
-    fake.collection.assert_called_with("orders")
-    fake.collection.return_value.document.return_value.set.assert_called_once()
+    # Seed orders land under the demo tenant's nested path.
+    fake.collection.assert_called_with("restaurants")
+    fake.collection.return_value.document.assert_called_with(_DEMO_RID)
+    (
+        fake.collection.return_value
+        .document.return_value
+        .collection.assert_called_with("orders")
+    )
+    set_call = (
+        fake.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .document.return_value
+        .set
+    )
+    set_call.assert_called_once()

@@ -1,8 +1,11 @@
-"""Firestore persistence for orders.
+"""Firestore persistence for orders (PR C of #79).
 
-One collection: ``orders``. Documents are keyed by ``call_sid`` so
-writes during a single call are idempotent — the same Twilio call
-always maps to the same document.
+Path: ``restaurants/{restaurant_id}/orders/{call_sid}``. Nested under
+the restaurant doc so security rules can grant ``request.auth.token
+.restaurant_id == rid`` access in one place (PR E owns those rules).
+
+Documents are keyed by ``call_sid`` so writes during a single call are
+idempotent — the same Twilio call always maps to the same document.
 
 Auth resolution:
 
@@ -14,10 +17,16 @@ Auth resolution:
 Project is auto-detected in Cloud Run. Locally set
 ``GOOGLE_CLOUD_PROJECT=niko-tsuki``.
 
-Computed fields on ``Order`` / ``LineItem`` (``subtotal``, ``line_total``)
-are written to Firestore as plain numbers for easy reads by the
-dashboard. On the way back through ``model_validate`` they are dropped
-and recomputed from the source fields, so stored values can't drift.
+Computed fields on ``Order`` / ``LineItem`` (``subtotal``,
+``line_total``) are written to Firestore as plain numbers for easy
+reads by the dashboard. On the way back through ``model_validate``
+they are dropped and recomputed from the source fields, so stored
+values can't drift.
+
+Migration note: pre-#79, orders lived in a flat ``orders`` collection.
+``scripts/migrate_to_nested_subcollections.py`` copies historical docs
+into the new path. The flat collection becomes read-only legacy data
+until PR F deletes it.
 """
 
 from __future__ import annotations
@@ -28,7 +37,8 @@ from google.cloud import firestore
 
 from app.orders.models import Order
 
-_COLLECTION = "orders"
+_RESTAURANTS_COLLECTION = "restaurants"
+_ORDERS_SUBCOLLECTION = "orders"
 
 _client: Optional[firestore.Client] = None
 
@@ -51,37 +61,53 @@ def set_client(client: Optional[firestore.Client]) -> None:
     _client = client
 
 
-def save_order(order: Order) -> str:
-    """Upsert an Order into Firestore, keyed by ``call_sid``.
+def _orders_collection(client: firestore.Client, restaurant_id: str):
+    return (
+        client.collection(_RESTAURANTS_COLLECTION)
+        .document(restaurant_id)
+        .collection(_ORDERS_SUBCOLLECTION)
+    )
 
-    Returns the document ID (== ``call_sid``). Idempotent across
-    retries within the same call.
+
+def save_order(order: Order) -> str:
+    """Upsert an Order under its restaurant, keyed by ``call_sid``.
+
+    Path: ``restaurants/{order.restaurant_id}/orders/{order.call_sid}``.
+    Idempotent across retries within the same call.
     """
 
     client = _get_client()
     payload = order.model_dump(mode="python")
-    client.collection(_COLLECTION).document(order.call_sid).set(payload)
+    _orders_collection(client, order.restaurant_id).document(order.call_sid).set(
+        payload
+    )
     return order.call_sid
 
 
-def get_order(call_sid: str) -> Optional[Order]:
-    """Fetch a single Order by its ``call_sid``. Returns ``None`` if
-    the document doesn't exist."""
+def get_order(call_sid: str, restaurant_id: str) -> Optional[Order]:
+    """Fetch a single Order by ``call_sid`` under a restaurant.
+
+    Returns ``None`` if the document doesn't exist. ``restaurant_id``
+    is required — multi-tenant reads must always be scoped.
+    """
 
     client = _get_client()
-    snapshot = client.collection(_COLLECTION).document(call_sid).get()
+    snapshot = (
+        _orders_collection(client, restaurant_id).document(call_sid).get()
+    )
     if not snapshot.exists:
         return None
     return Order.model_validate(snapshot.to_dict())
 
 
-def list_recent_orders(limit: int = 50) -> list[Order]:
-    """Return orders most-recent-first, up to ``limit``. Used by the
-    dashboard read route (#41)."""
+def list_recent_orders(
+    restaurant_id: str, limit: int = 50
+) -> list[Order]:
+    """Return one restaurant's recent orders, newest-first, up to ``limit``."""
 
     client = _get_client()
     query = (
-        client.collection(_COLLECTION)
+        _orders_collection(client, restaurant_id)
         .order_by("created_at", direction=firestore.Query.DESCENDING)
         .limit(limit)
     )

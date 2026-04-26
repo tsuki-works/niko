@@ -1,7 +1,9 @@
 """Unit tests for ``app.orders.lifecycle.persist_on_confirm``.
 
 Uses the same ``MagicMock`` pattern as ``test_firestore_storage.py`` —
-no real Firestore, no GCP auth.
+no real Firestore, no GCP auth. After PR C of #79 the storage module
+addresses the nested ``restaurants/{rid}/orders/{call_sid}`` path, so
+the helpers below traverse one extra ``.collection().document()``.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -30,6 +32,17 @@ def _fake_client() -> MagicMock:
     client = MagicMock()
     storage.set_client(client)
     return client
+
+
+def _order_doc(client: MagicMock):
+    """Address the same ``restaurants/{rid}/orders/{call_sid}`` doc the
+    storage module addresses."""
+    return (
+        client.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .document.return_value
+    )
 
 
 def _pepperoni() -> LineItem:
@@ -76,7 +89,7 @@ def test_persist_on_confirm_stamps_status_and_timestamp():
     # timestamp is recent (within last few seconds — generous to avoid flakes)
     age = datetime.now(timezone.utc) - confirmed.confirmed_at
     assert timedelta(seconds=0) <= age < timedelta(seconds=5)
-    client.collection.return_value.document.return_value.set.assert_called_once()
+    _order_doc(client).set.assert_called_once()
 
 
 def test_persist_on_confirm_does_not_mutate_input_order():
@@ -100,7 +113,7 @@ def test_persist_on_confirm_writes_payload_with_confirmed_status():
 
     persist_on_confirm(order)
 
-    set_call = client.collection.return_value.document.return_value.set
+    set_call = _order_doc(client).set
     payload = set_call.call_args[0][0]
     assert payload["status"] == "confirmed"
     assert payload["confirmed_at"] is not None
@@ -131,7 +144,7 @@ def test_persist_on_confirm_is_idempotent_on_already_confirmed_order():
     confirmed = persist_on_confirm(order)
 
     assert confirmed.confirmed_at == original_ts
-    client.collection.return_value.document.return_value.set.assert_called_once()
+    _order_doc(client).set.assert_called_once()
 
 
 def test_persist_on_confirm_refuses_empty_order():
@@ -180,4 +193,4 @@ def test_persist_on_confirm_does_not_save_when_refusing():
     with pytest.raises(OrderNotReadyError):
         persist_on_confirm(order)
 
-    client.collection.return_value.document.return_value.set.assert_not_called()
+    _order_doc(client).set.assert_not_called()
