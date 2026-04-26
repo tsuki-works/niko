@@ -73,7 +73,11 @@ def _cache_get(key: str) -> Optional[Restaurant]:
 def _cache_put(restaurant: Restaurant) -> None:
     expires_at = time.monotonic() + CACHE_TTL_SECONDS
     _cache[f"id:{restaurant.id}"] = (expires_at, restaurant)
-    _cache[f"twilio:{restaurant.twilio_phone}"] = (expires_at, restaurant)
+    # Skip the twilio-keyed cache entry when the tenant is unassigned —
+    # otherwise every awaiting-number tenant collides on key
+    # ``twilio:`` and shadows whichever was cached last.
+    if restaurant.twilio_phone:
+        _cache[f"twilio:{restaurant.twilio_phone}"] = (expires_at, restaurant)
 
 
 def get_restaurant(rid: str) -> Optional[Restaurant]:
@@ -103,7 +107,15 @@ def get_restaurant_by_twilio_phone(e164: str) -> Optional[Restaurant]:
     Used by the inbound-call routing path in PR B — Twilio passes the
     dialed number as ``To`` on every webhook. ``e164`` is the E.164
     string (e.g. ``+16479058093``).
+
+    Empty ``e164`` short-circuits to ``None``: the "awaiting Twilio
+    number" state is represented by ``twilio_phone == ""`` on the
+    Restaurant doc, and any number of tenants can be in that state at
+    once. Querying ``where("twilio_phone", "==", "")`` would arbitrarily
+    pick one of them — never the right answer for inbound routing.
     """
+    if not e164:
+        return None
     cached = _cache_get(f"twilio:{e164}")
     if cached is not None:
         return cached

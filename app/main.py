@@ -11,7 +11,11 @@ from typing import Any
 from app.auth import Tenant, current_tenant
 from app.config import settings
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
-from app.storage import call_sessions, firestore as order_storage
+from app.storage import (
+    call_sessions,
+    firestore as order_storage,
+    restaurants as restaurants_storage,
+)
 from app.storage.restaurants import DEMO_RID
 from app.telephony.router import router as telephony_router
 
@@ -44,6 +48,26 @@ def whoami(tenant: Tenant = Depends(current_tenant)):
         "restaurant_id": tenant.restaurant_id,
         "role": tenant.role,
     }
+
+
+@app.get("/restaurants/me")
+def restaurants_me(tenant: Tenant = Depends(current_tenant)):
+    """Return the calling tenant's full Restaurant doc.
+
+    Used by the dashboard header / empty states to surface the live
+    ``twilio_phone`` (or its absence). An empty ``twilio_phone`` is the
+    explicit "awaiting Twilio number" state — the dashboard renders a
+    badge in that case rather than a dead phone number.
+
+    Returns 404 only if the tenant id resolved from the session has no
+    matching Firestore doc, which is a genuine misconfiguration —
+    don't fall back to ``demo_restaurant_from_menu`` here, that would
+    paper over the missing tenant.
+    """
+    restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="restaurant not found")
+    return restaurant.model_dump(mode="json")
 
 
 @app.get("/orders")

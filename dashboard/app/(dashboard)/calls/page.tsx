@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { CallsFeed } from '@/components/calls/calls-feed';
 import { ComingSoon } from '@/components/shared/coming-soon';
 import { listRecentCalls } from '@/lib/api/calls';
+import { getMyRestaurant } from '@/lib/api/restaurant';
 import { parseCallSessionFromJson } from '@/lib/firebase/call-converters';
 import { getServerSession } from '@/lib/auth/session';
 import type { CallSession } from '@/lib/schemas/call';
@@ -35,5 +36,18 @@ export default async function CallsPage() {
     }),
   );
 
-  return <CallsFeed initial={initial} restaurantId={session.restaurantId} />;
+  let twilioPhone = '';
+  try {
+    twilioPhone = (await getMyRestaurant()).twilio_phone;
+  } catch (err) {
+    console.error('[calls page] /restaurants/me fetch failed', err);
+  }
+
+  return (
+    <CallsFeed
+      initial={initial}
+      restaurantId={session.restaurantId}
+      twilioPhone={twilioPhone}
+    />
+  );
 }

@@ -3,10 +3,17 @@ import { AlertTriangle, CheckCircle2, PhoneIncoming, Radio } from 'lucide-react'
 
 import { LocalTime } from '@/components/shared/local-time';
 import type { CallStatus, CallSummary } from '@/lib/api/calls';
+import { formatPhone } from '@/lib/formatters/phone';
 import { cn } from '@/lib/utils';
 
-export function CallsTable({ calls }: { calls: CallSummary[] }) {
-  if (calls.length === 0) return <EmptyState />;
+export function CallsTable({
+  calls,
+  twilioPhone,
+}: {
+  calls: CallSummary[];
+  twilioPhone: string;
+}) {
+  if (calls.length === 0) return <EmptyState twilioPhone={twilioPhone} />;
 
   return (
     <div className="overflow-hidden rounded-xl border">
@@ -105,13 +112,16 @@ function formatDuration(seconds: number): string {
   return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 
-function EmptyState() {
+function EmptyState({ twilioPhone }: { twilioPhone: string }) {
+  const display = formatPhone(twilioPhone);
   return (
     <div className="flex flex-col items-center gap-2 rounded-xl border bg-card p-10 text-center">
       <PhoneIncoming className="h-6 w-6 text-muted-foreground" aria-hidden />
       <p className="text-sm font-medium">No calls in the selected window</p>
       <p className="text-xs text-muted-foreground">
-        Dial +1 647-905-8093 — the call will appear here once it ends.
+        {display
+          ? `Dial ${display} — the call will appear here once it ends.`
+          : 'No Twilio number is assigned to this restaurant yet.'}
       </p>
     </div>
   );

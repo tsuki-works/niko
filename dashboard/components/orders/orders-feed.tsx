@@ -28,6 +28,9 @@ type Props = {
   statusFilter?: OrderStatus;
   restaurantId: string;
   restaurantName: string;
+  // Empty string means the tenant doesn't yet have a Twilio number
+  // assigned — empty state renders awaiting-number copy instead.
+  twilioPhone: string;
 };
 
 const ANNOUNCE_THROTTLE_MS = 2000;
@@ -38,6 +41,7 @@ export function OrdersFeed({
   statusFilter,
   restaurantId,
   restaurantName,
+  twilioPhone,
 }: Props) {
   const [orders, setOrders] = useState<Order[]>(initial);
   const [announcement, setAnnouncement] = useState('');
@@ -112,7 +116,7 @@ export function OrdersFeed({
 
       <FilterTabs active={statusFilter} counts={initialCounts} />
 
-      <OrdersTable orders={orders} />
+      <OrdersTable orders={orders} twilioPhone={twilioPhone} />
 
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
