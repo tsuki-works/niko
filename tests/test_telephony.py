@@ -287,6 +287,41 @@ async def test_clear_twilio_audio_skips_when_stream_sid_missing():
     ws.send_json.assert_not_called()
 
 
+def test_looks_like_goodbye_matches_terminal_phrases():
+    from app.telephony.router import _looks_like_goodbye
+
+    assert _looks_like_goodbye(
+        "Great, your order is in — we'll have it ready for you soon!"
+    )
+    assert _looks_like_goodbye("Perfect, see you soon!")
+    assert _looks_like_goodbye("Thanks for calling!")
+    assert _looks_like_goodbye("Have a great day.")
+
+
+def test_looks_like_goodbye_rejects_questions():
+    """A reply that ends with '?' is still asking the caller something."""
+    from app.telephony.router import _looks_like_goodbye
+
+    assert not _looks_like_goodbye(
+        "Got that. Anything else, or are you all set?"
+    )
+    # Even with goodbye-shaped phrasing earlier, trailing '?' = still asking.
+    assert not _looks_like_goodbye(
+        "Your order is in — does that all sound right?"
+    )
+
+
+def test_looks_like_goodbye_rejects_simple_acknowledgements():
+    """Bot acknowledging an item mid-conversation must NOT trigger the
+    auto-hangup fallback."""
+    from app.telephony.router import _looks_like_goodbye
+
+    assert not _looks_like_goodbye("One large margarita, got it.")
+    assert not _looks_like_goodbye("Sure, what size would you like?")
+    assert not _looks_like_goodbye("")
+    assert not _looks_like_goodbye("   ")
+
+
 @pytest.mark.asyncio
 async def test_send_end_of_call_mark_emits_mark_payload():
     from app.telephony.router import END_OF_CALL_MARK, send_end_of_call_mark

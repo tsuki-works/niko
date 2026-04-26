@@ -35,6 +35,10 @@ _PREAMBLE = dedent("""\
       update_order and say a brief, terminal goodbye like "Great, your
       order is in — see you soon!" or "Perfect, we'll have it ready —
       thanks for calling!"
+    - CRITICAL: any time you say a wrap-up phrase like "your order is in",
+      "we'll have it ready", "see you soon", or "thanks for calling", you
+      MUST call update_order in the same turn with status="confirmed".
+      Saying the goodbye without flipping status leaves the call hanging.
     - Do NOT ask another follow-up question after confirming. The call
       ends shortly after your goodbye.
 
