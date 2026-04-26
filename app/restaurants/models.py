@@ -24,10 +24,29 @@ The customer's existing line is configured (carrier-side) to forward
 inbound calls to ``twilio_phone``. Restaurant keeps their published
 number; we sit behind it.
 
-``menu`` stays a free-form dict to match the existing
-``app.menu.MENU`` shape during the migration. A stricter
-``MenuItem`` / ``Menu`` schema is a follow-up — Sprint 2.4 owns the
-menu CRUD UI and is the right time to tighten validation.
+``menu`` is a free-form dict so each tenant can pick their own
+category keys. A pizza place uses ``pizzas`` / ``sides`` / ``drinks``;
+a Caribbean place uses ``appetizers`` / ``soups`` / ``fried_rice`` /
+``chow_mein`` / ``drinks``. The prompt builder
+(``app.llm.prompts._format_menu``) renders whatever keys are present
+in insertion order, so ordering the JSON controls the order categories
+appear in the system prompt.
+
+Per-item shape is also flexible:
+
+- ``{"name": ..., "price": 12.99}`` — single-priced items.
+- ``{"name": ..., "sizes": {"small": 12.99, "large": 18.99}}`` —
+  multi-size items where the caller has to pick a size.
+- ``description`` is optional on either shape.
+
+An optional ``_category_order`` list (e.g. ``["appetizers", "soups",
+"mains", "drinks"]``) controls prompt rendering order — Firestore
+doesn't preserve dict insertion order on round-trip, so a tenant who
+cares about order must spell it out. Without ``_category_order``,
+categories render in whatever order the deserialized dict yields.
+
+A stricter ``MenuItem`` / ``Menu`` schema is a follow-up — Sprint 2.4
+owns the menu CRUD UI and is the right time to tighten validation.
 """
 
 from __future__ import annotations
