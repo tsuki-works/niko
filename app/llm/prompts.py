@@ -1,13 +1,21 @@
-"""Haiku 4.5 system prompt for the POC voice agent.
+"""Haiku 4.5 system prompt builder for the voice agent.
 
-Built at import time from ``app.menu.MENU``. The prompt is tuned for
-voice output: short replies, natural phrasing, no markdown or lists
-(all of which sound wrong through TTS).
+Built per call from a ``Restaurant`` object (loaded by the call-flow
+orchestrator in ``app/telephony/router.py``). Pre-#79 this module was
+a singleton — ``SYSTEM_PROMPT`` baked from ``app.menu.MENU`` at import
+time. Multi-tenancy means the prompt has to vary per call, so the
+singleton is gone; build fresh on each ``media-stream start``.
+
+The prompt is tuned for voice output: short replies, natural phrasing,
+no markdown or lists (all of which sound wrong through TTS).
 """
 
-from textwrap import dedent
+from __future__ import annotations
 
-from app.menu import MENU
+from textwrap import dedent
+from typing import Any
+
+from app.restaurants.models import Restaurant
 
 _PREAMBLE = dedent("""\
     You are niko, a friendly voice ordering agent answering the phone for {restaurant}.
@@ -61,39 +69,56 @@ _PREAMBLE = dedent("""\
 """)
 
 
-def _format_menu() -> str:
-    lines = [MENU["restaurant"], ""]
+def _format_menu(restaurant: Restaurant) -> str:
+    menu = restaurant.menu
+    lines: list[str] = [restaurant.name, ""]
 
-    lines.append("Pizzas:")
-    for item in MENU["pizzas"]:
-        sizes = ", ".join(
-            f"{size} ${price:.2f}" for size, price in item["sizes"].items()
-        )
-        lines.append(f"  - {item['name']} — {item['description']} ({sizes})")
-    lines.append("")
+    pizzas: list[dict[str, Any]] = menu.get("pizzas", []) or []
+    if pizzas:
+        lines.append("Pizzas:")
+        for item in pizzas:
+            sizes = ", ".join(
+                f"{size} ${price:.2f}"
+                for size, price in (item.get("sizes") or {}).items()
+            )
+            desc = item.get("description", "")
+            lines.append(f"  - {item['name']} — {desc} ({sizes})")
+        lines.append("")
 
-    lines.append("Sides:")
-    for item in MENU["sides"]:
-        lines.append(f"  - {item['name']} — ${item['price']:.2f}")
-    lines.append("")
+    sides: list[dict[str, Any]] = menu.get("sides", []) or []
+    if sides:
+        lines.append("Sides:")
+        for item in sides:
+            lines.append(f"  - {item['name']} — ${item['price']:.2f}")
+        lines.append("")
 
-    lines.append("Drinks:")
-    for item in MENU["drinks"]:
-        lines.append(f"  - {item['name']} — ${item['price']:.2f}")
-    lines.append("")
+    drinks: list[dict[str, Any]] = menu.get("drinks", []) or []
+    if drinks:
+        lines.append("Drinks:")
+        for item in drinks:
+            lines.append(f"  - {item['name']} — ${item['price']:.2f}")
+        lines.append("")
 
-    lines.append(f"Hours: {MENU['hours']}")
-    lines.append(f"Address: {MENU['address']}")
+    lines.append(f"Hours: {restaurant.hours}")
+    lines.append(f"Address: {restaurant.address}")
 
     return "\n".join(lines)
 
 
-def build_system_prompt() -> str:
-    return (
-        _PREAMBLE.format(restaurant=MENU["restaurant"])
+def build_system_prompt(restaurant: Restaurant) -> str:
+    """Render the system prompt for one tenant.
+
+    A ``greeting_addendum`` entry in ``restaurant.prompt_overrides`` is
+    appended after the menu — used to inject restaurant-specific tone
+    or quirks ("we're family-run since 1972", "ask about today's
+    special") without forking the whole prompt.
+    """
+    body = (
+        _PREAMBLE.format(restaurant=restaurant.name)
         + "\nMenu:\n"
-        + _format_menu()
+        + _format_menu(restaurant)
     )
-
-
-SYSTEM_PROMPT = build_system_prompt()
+    addendum = restaurant.prompt_overrides.get("greeting_addendum")
+    if addendum:
+        body = f"{body}\n\n{addendum.strip()}"
+    return body

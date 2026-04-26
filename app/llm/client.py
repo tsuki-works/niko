@@ -28,7 +28,6 @@ from typing import Any, AsyncIterator, Optional
 from anthropic import Anthropic, AsyncAnthropic
 
 from app.config import settings
-from app.llm.prompts import SYSTEM_PROMPT
 from app.orders.models import Order
 
 MODEL = "claude-haiku-4-5-20251001"
@@ -216,9 +215,13 @@ def generate_reply(
     transcript: str,
     history: list[dict[str, Any]],
     order: Order,
+    system_prompt: str,
     client: Optional[Anthropic] = None,
 ) -> LLMResponse:
     """Send the caller's latest transcript to Haiku and return a reply.
+
+    ``system_prompt`` is rendered per call from the inbound restaurant's
+    config (#79); the previously-cached module-level prompt is gone.
 
     ``history`` is Anthropic's Messages format: a list of
     ``{"role": "user"|"assistant", "content": ...}`` dicts. The updated
@@ -235,7 +238,7 @@ def generate_reply(
     response = api.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         tools=[UPDATE_ORDER_TOOL],
         messages=new_history,
     )
@@ -271,7 +274,7 @@ def generate_reply(
         followup = api.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             tools=[UPDATE_ORDER_TOOL],
             messages=new_history,
         )
@@ -296,6 +299,7 @@ async def stream_reply(
     transcript: str,
     history: list[dict[str, Any]],
     order: Order,
+    system_prompt: str,
     client: Optional[AsyncAnthropic] = None,
 ) -> AsyncIterator[StreamEvent]:
     """Stream Haiku's reply token-by-token for low-latency TTS handoff.
@@ -323,7 +327,7 @@ async def stream_reply(
     async with api.messages.stream(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         tools=[UPDATE_ORDER_TOOL],
         messages=new_history,
     ) as stream:
@@ -360,7 +364,7 @@ async def stream_reply(
         async with api.messages.stream(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=system_prompt,
             tools=[UPDATE_ORDER_TOOL],
             messages=new_history,
         ) as followup_stream:
