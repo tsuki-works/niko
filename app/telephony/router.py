@@ -57,6 +57,28 @@ def _bg_call_event(call_sid: str | None, **kwargs) -> None:
     loop.create_task(asyncio.to_thread(call_sessions.record_event, call_sid, **kwargs))
 
 
+async def clear_twilio_audio(websocket: WebSocket, stream_sid: str | None) -> None:
+    """Tell Twilio to flush its audio buffer and stop playback.
+
+    Cancelling the LLM task only stops *generation* of new audio — bytes
+    already in Twilio's buffer keep playing for another 1–3 seconds, which
+    is exactly what callers experience as "the bot doesn't pause when I
+    interrupt." Twilio's Media Streams API has a dedicated ``clear`` event
+    that drops the buffer in ~80ms; we fire it whenever we cancel an
+    in-flight reply (#74).
+    """
+    if not stream_sid:
+        return
+    try:
+        await websocket.send_json({"event": "clear", "streamSid": stream_sid})
+    except WebSocketDisconnect:
+        # Caller already hung up — nothing to clear.
+        return
+    except Exception:
+        # Don't let a transient send failure break the call loop.
+        logger.exception("clear: failed to send Twilio clear event stream_sid=%s", stream_sid)
+
+
 @dataclass
 class _CallState:
     call_sid:     str | None       = None
@@ -215,9 +237,17 @@ async def _run_llm_tts_turn(
 async def _handle_final_transcript(
     text: str, state: _CallState, websocket: WebSocket
 ) -> None:
+    interrupted = bool(state.llm_task and not state.llm_task.done())
     if state.llm_task and not state.llm_task.done():
         state.llm_task.cancel()
+    silence_was_active = bool(
+        state.silence_task and not state.silence_task.done()
+    )
     _cancel_silence_task(state)
+    if interrupted or silence_was_active:
+        # Drop Twilio's pending audio buffer so the caller actually hears
+        # us pause instead of getting talked over (#74).
+        await clear_twilio_audio(websocket, state.stream_sid)
     state.llm_task = asyncio.create_task(
         _run_llm_tts_turn(text, state, websocket)
     )

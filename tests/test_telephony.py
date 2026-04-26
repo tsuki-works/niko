@@ -252,3 +252,51 @@ def test_stop_event_skips_persist_if_order_not_ready(monkeypatch):
         ws.send_text(json.dumps(_STOP_MSG))
 
     assert persisted == []
+
+
+# ---------------------------------------------------------------------------
+# Barge-in: clear Twilio's audio buffer (#74)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clear_twilio_audio_sends_clear_event_with_stream_sid():
+    """The helper emits the documented Twilio clear payload."""
+    from app.telephony.router import clear_twilio_audio
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+
+    await clear_twilio_audio(ws, "MZtest456")
+
+    ws.send_json.assert_awaited_once_with(
+        {"event": "clear", "streamSid": "MZtest456"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_clear_twilio_audio_skips_when_stream_sid_missing():
+    """No stream means we never opened the start frame — nothing to clear."""
+    from app.telephony.router import clear_twilio_audio
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+
+    await clear_twilio_audio(ws, None)
+
+    ws.send_json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_clear_twilio_audio_swallows_websocket_disconnect():
+    """If the caller already hung up, the clear send raises — but we
+    must not let that exception escape into the call loop."""
+    from starlette.websockets import WebSocketDisconnect
+
+    from app.telephony.router import clear_twilio_audio
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+    # No exception escaping is the assertion.
+    await clear_twilio_audio(ws, "MZtest456")
