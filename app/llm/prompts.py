@@ -69,34 +69,105 @@ _PREAMBLE = dedent("""\
 """)
 
 
+def _humanize_category(key: str) -> str:
+    """``caribbean_appetizers`` → ``Caribbean Appetizers``. Tenants pick
+    their own category keys (``mains``/``soups``/``chow_mein``/...);
+    the renderer just title-cases whatever they wrote."""
+    return key.replace("_", " ").replace("-", " ").strip().title()
+
+
+def _format_item_price(item: dict[str, Any]) -> str:
+    """Render the price portion of a menu item line.
+
+    Two shapes are supported, mirroring how restaurants actually price:
+
+    - ``sizes: {"small": 12.99, "large": 20.99}`` — multi-size item.
+      Renders as ``small $12.99, large $20.99``. Use this when the
+      caller has to pick a size as part of the order.
+    - ``price: 8.99`` — single-price item. Renders as ``$8.99``.
+
+    If both are present, ``sizes`` wins (it carries more information).
+    Returns an empty string when neither is set, so menu items without
+    a price (e.g. seasonal "market price") still render cleanly.
+    """
+    sizes = item.get("sizes") or {}
+    if sizes:
+        return ", ".join(f"{name} ${price:.2f}" for name, price in sizes.items())
+    price = item.get("price")
+    if price is not None:
+        return f"${price:.2f}"
+    return ""
+
+
+def _ordered_category_keys(menu: dict[str, Any]) -> list[str]:
+    """Decide what order to render menu categories in.
+
+    Firestore doesn't preserve dict insertion order on round-trip
+    (maps are stored unordered server-side; the SDK returns them in
+    protobuf order, which is essentially random). So a tenant's menu
+    JSON ordered "appetizers, soups, mains, drinks" can come back as
+    "mains, drinks, soups, appetizers" — the AI still understands it,
+    but the prompt log reads weird and any "first item I'll mention"
+    heuristic gets coin-flipped.
+
+    A tenant can pin the order with an ``_category_order`` list in the
+    menu dict (a list IS preserved by Firestore). Categories listed
+    there render first, in that order; any remaining categories follow
+    in whatever order the dict yields. Categories named in
+    ``_category_order`` that don't actually exist in the menu are
+    silently skipped.
+    """
+    explicit = menu.get("_category_order")
+    if not isinstance(explicit, list) or not explicit:
+        return [k for k in menu.keys() if k != "_category_order"]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for key in explicit:
+        if isinstance(key, str) and key in menu and key not in seen and key != "_category_order":
+            ordered.append(key)
+            seen.add(key)
+    for key in menu.keys():
+        if key == "_category_order" or key in seen:
+            continue
+        ordered.append(key)
+    return ordered
+
+
 def _format_menu(restaurant: Restaurant) -> str:
+    """Render every populated category in ``restaurant.menu`` as a
+    section in the system prompt.
+
+    The shape is intentionally tenant-agnostic: a pizza place writes
+    ``pizzas``/``sides``/``drinks``, a Caribbean place writes
+    ``appetizers``/``soups``/``fried_rice``/``chow_mein``/....
+
+    Order is controlled by the optional ``_category_order`` key (see
+    ``_ordered_category_keys``). Empty categories are skipped so
+    unfinished menus don't bloat the prompt with empty headers.
+    Non-list values are skipped defensively — Firestore can return
+    scalars under unexpected keys, and we'd rather drop them than
+    crash the call.
+    """
     menu = restaurant.menu
     lines: list[str] = [restaurant.name, ""]
 
-    pizzas: list[dict[str, Any]] = menu.get("pizzas", []) or []
-    if pizzas:
-        lines.append("Pizzas:")
-        for item in pizzas:
-            sizes = ", ".join(
-                f"{size} ${price:.2f}"
-                for size, price in (item.get("sizes") or {}).items()
-            )
-            desc = item.get("description", "")
-            lines.append(f"  - {item['name']} — {desc} ({sizes})")
-        lines.append("")
-
-    sides: list[dict[str, Any]] = menu.get("sides", []) or []
-    if sides:
-        lines.append("Sides:")
-        for item in sides:
-            lines.append(f"  - {item['name']} — ${item['price']:.2f}")
-        lines.append("")
-
-    drinks: list[dict[str, Any]] = menu.get("drinks", []) or []
-    if drinks:
-        lines.append("Drinks:")
-        for item in drinks:
-            lines.append(f"  - {item['name']} — ${item['price']:.2f}")
+    for category in _ordered_category_keys(menu):
+        items = menu.get(category)
+        if not isinstance(items, list) or not items:
+            continue
+        lines.append(f"{_humanize_category(category)}:")
+        for item in items:
+            name = item.get("name", "")
+            if not name:
+                continue
+            description = (item.get("description") or "").strip()
+            price = _format_item_price(item)
+            parts = [f"  - {name}"]
+            if description:
+                parts.append(f" — {description}")
+            if price:
+                parts.append(f" ({price})")
+            lines.append("".join(parts))
         lines.append("")
 
     lines.append(f"Hours: {restaurant.hours}")
