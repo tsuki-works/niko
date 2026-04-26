@@ -24,7 +24,7 @@ Optional hints — accept if offered:
 
 ## What "done" looks like
 
-1. A menu file at `restaurants/<rid>.json` in the shape `{"pizzas": [...], "sides": [...], "drinks": [...]}`.
+1. A menu file at `restaurants/<rid>.json`, top-level keyed by category names that match the source menu (e.g. `appetizers`, `soups`, `mains`, `drinks` — see step 3).
 2. A Firestore doc `restaurants/<rid>` with name, phones, address, hours, menu, `forwarding_mode`.
 3. A Twilio number purchased and pointed at `${BACKEND_URL}/voice`.
 4. The team knows what number to forward the restaurant's existing line to.
@@ -73,29 +73,41 @@ Build a draft `Restaurant`:
 
 `twilio_phone` is filled by the provision script — do not set it yourself.
 
-### 3. Menu shape — important constraint
+### 3. Menu shape
 
-The LLM prompt builder (`app/llm/prompts.py::_format_menu`) currently renders **only three keys**: `pizzas`, `sides`, `drinks`. Any other top-level keys are silently dropped from what the AI sees on calls.
+The LLM prompt builder (`app/llm/prompts.py::_format_menu`) renders any keys the menu dict happens to have, title-casing snake_case keys for the section headers (`caribbean_appetizers` → "Caribbean Appetizers"). Pick categories that match the source menu's natural structure rather than collapsing into pizza-shop terms.
 
-For a non-pizza restaurant, map the categories pragmatically:
+**Pick category keys that read naturally when title-cased.** Good: `appetizers`, `caribbean_appetizers`, `soups`, `fried_rice`, `chow_mein`, `lo_mein`, `specialty_dishes`, `drinks`. Bad: `cat1`, `mainsAndStuff`, `Items` — those land in the system prompt verbatim and the AI has to figure out what they mean.
 
-- **`pizzas`** → mains / entrees / specialties (whatever the restaurant's headline category is)
-- **`sides`** → appetizers, sides, desserts
-- **`drinks`** → drinks, beverages
-
-Per-item shape:
+Per-item shape — pick the one that matches how the restaurant actually prices the item:
 
 ```json
-// pizzas (must have sizes dict)
-{"name": "Butter Chicken", "description": "...", "sizes": {"regular": 14.99, "large": 18.99}}
+// Single-priced item
+{"name": "Garlic Naan", "description": "Optional.", "price": 3.99}
 
-// sides / drinks (single price)
-{"name": "Garlic Naan", "price": 3.99}
+// Multi-size item — caller has to pick a size
+{"name": "Margherita", "description": "Tomato, fresh mozzarella, basil.", "sizes": {"small": 12.99, "medium": 16.99, "large": 20.99}}
+
+// Half/whole, regular/large, etc. all use sizes
+{"name": "Deep Fried Chicken", "sizes": {"half": 14.00, "whole": 24.50}}
 ```
 
-If the source menu has only a single price for a "pizza"-bucket item, still use the `sizes` shape: `"sizes": {"regular": <price>}`. The prompt formatter expects it.
+`description` is optional on either shape. If both `sizes` and `price` are set, `sizes` wins.
 
-When you flatten a multi-category menu into these three buckets, **tell the user** what you collapsed and offer to revise. Also flag it as a follow-up: `app/llm/prompts.py` should support dynamic categories before we onboard >2-3 non-pizza restaurants — open an issue if one isn't tracked.
+**Pin the rendering order with `_category_order`.** Firestore doesn't preserve dict insertion order on round-trip, so a tenant who cares about which category gets named first writes:
+
+```json
+{
+  "_category_order": ["appetizers", "soups", "mains", "drinks"],
+  "appetizers": [...],
+  "soups": [...],
+  ...
+}
+```
+
+Categories listed there render first in that order; anything else follows in whatever order the dict yields. Skip `_category_order` entirely if you don't care.
+
+Empty categories (`"soups": []`) are silently skipped, so leaving placeholders for future expansion is fine.
 
 ### 4. Identify gaps and ask
 
@@ -119,7 +131,7 @@ Never invent a missing field. If menu items can't be obtained, the skill stops a
 
 ### 5. Write the menu file
 
-Save to `restaurants/<rid>.json` (create the dir if missing — it's not gitignored, this file lands in the PR). Pretty-print with 2-space indent. Schema: top-level `{"pizzas": [...], "sides": [...], "drinks": [...]}`.
+Save to `restaurants/<rid>.json` (create the dir if missing — it's not gitignored, this file lands in the PR). Pretty-print with 2-space indent. Schema described in step 3 — top-level keys are categories chosen to match the source menu, plus the optional `_category_order` list.
 
 ### 6. Dry-run the provision script first
 
@@ -231,7 +243,7 @@ If we're on `master` when this finished, kick into `/pr-driven-dev` rescue flow 
 - **Third-party ordering widgets.** ChowNow, Toast, DoorDash often have the structured menu. Follow redirects once. If the widget is a JS iframe, ask for the direct ordering URL.
 - **Multi-location chains.** The skill onboards **one tenant** at a time — one phone number, one address. If the site lists 5 locations, ask which one.
 - **Non-NANP phone numbers.** The provision script searches Twilio's CA inventory first, then falls back to US. If the restaurant is outside CA/US, this skill doesn't currently work — surface that and stop.
-- **`pizzas`-only prompt rendering** — see step 3. Onboarding many non-pizza restaurants will eventually require generalizing `app/llm/prompts.py`.
+- **Category ordering on read.** Firestore doesn't preserve dict insertion order. If the order categories appear in matters (it usually does for the demo prompt log), set `_category_order` in the menu JSON.
 
 ## Output template (what to show the user when starting)
 
