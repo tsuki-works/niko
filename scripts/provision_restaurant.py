@@ -22,6 +22,11 @@ Usage:
         --area-code 416 \\
         --menu-file restaurants/pizza-palace.json
 
+Pass ``--phone-number <E.164>`` instead of ``--area-code`` to buy a
+specific number you already picked (e.g. via
+``scripts/list_twilio_numbers.py``). The two flags are mutually
+exclusive in practice — supply exactly one.
+
 ``--menu-file`` is a JSON file in the shape ``{"pizzas":[...],
 "sides":[...], "drinks":[...]}`` — same as ``app.menu.MENU`` minus
 the top-level metadata fields.
@@ -60,7 +65,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--display-phone", required=True, help="E.164 customer-facing number")
     parser.add_argument("--address", required=True)
     parser.add_argument("--hours", required=True)
-    parser.add_argument("--area-code", required=True, help="3-digit area code for Twilio search")
+    parser.add_argument(
+        "--area-code",
+        help="3-digit area code for Twilio search. Required unless --phone-number is given.",
+    )
+    parser.add_argument(
+        "--phone-number",
+        help=(
+            "Specific E.164 number to purchase (e.g. +14165551234). When set, skip "
+            "the area-code search and buy this exact number — pair with "
+            "scripts/list_twilio_numbers.py to let a human pick from candidates."
+        ),
+    )
     parser.add_argument("--menu-file", required=True, help="Path to JSON menu file")
     parser.add_argument(
         "--forwarding-mode",
@@ -72,7 +88,10 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip Twilio purchase + Firestore write; just log what would happen",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.phone_number and not args.area_code:
+        parser.error("either --phone-number or --area-code is required")
+    return args
 
 
 def _twilio_client() -> TwilioClient:
@@ -108,6 +127,14 @@ def _purchase_number(twilio: TwilioClient, area_code: str) -> str:
     return purchased.phone_number
 
 
+def _purchase_specific_number(twilio: TwilioClient, e164: str) -> str:
+    """Buy ``e164`` directly. Used when the operator has already picked
+    a number from ``scripts/list_twilio_numbers.py``."""
+    logger.info("twilio: purchasing %s (specific)", e164)
+    purchased = twilio.incoming_phone_numbers.create(phone_number=e164)
+    return purchased.phone_number
+
+
 def _configure_voice_webhook(twilio: TwilioClient, e164: str, backend_url: str) -> None:
     voice_url = f"{backend_url}/voice"
     numbers = twilio.incoming_phone_numbers.list(phone_number=e164, limit=1)
@@ -126,12 +153,18 @@ def main() -> int:
         menu = json.load(fh)
 
     if args.dry_run:
-        twilio_phone = "+10000000000"
-        logger.info("[dry-run] would purchase a number in area code %s", args.area_code)
+        twilio_phone = args.phone_number or "+10000000000"
+        if args.phone_number:
+            logger.info("[dry-run] would purchase %s", args.phone_number)
+        else:
+            logger.info("[dry-run] would purchase a number in area code %s", args.area_code)
     else:
         twilio = _twilio_client()
         backend_url = _backend_url()
-        twilio_phone = _purchase_number(twilio, args.area_code)
+        if args.phone_number:
+            twilio_phone = _purchase_specific_number(twilio, args.phone_number)
+        else:
+            twilio_phone = _purchase_number(twilio, args.area_code)
         _configure_voice_webhook(twilio, twilio_phone, backend_url)
 
     restaurant = Restaurant(
