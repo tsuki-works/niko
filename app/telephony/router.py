@@ -48,6 +48,36 @@ GREETING_TRANSCRIPT = "[call started — greet the caller]"
 END_OF_CALL_MARK = "end_of_call"
 HANGUP_GRACE_SECONDS = 3.0
 
+# Phrases the model uses when wrapping up. Used as a fallback signal
+# for auto-hangup when Haiku says a goodbye but forgets to mark the
+# order status as confirmed via update_order (#79). Matched
+# case-insensitive against the full assembled reply.
+_GOODBYE_PATTERNS = (
+    "your order is in",
+    "have it ready",
+    "see you soon",
+    "see you in a",
+    "thanks for calling",
+    "thanks for ordering",
+    "have a great day",
+    "have a good day",
+    "enjoy your",
+    "coming right up",
+)
+
+
+def _looks_like_goodbye(reply: str) -> bool:
+    """True if ``reply`` reads as a terminal wrap-up rather than another
+    follow-up question. Combined with ``Order.is_ready_to_confirm`` this
+    is the fallback trigger for auto-hangup."""
+    if not reply:
+        return False
+    stripped = reply.strip()
+    if stripped.endswith("?"):
+        return False
+    lower = stripped.lower()
+    return any(pat in lower for pat in _GOODBYE_PATTERNS)
+
 
 def _bg_call_event(call_sid: str | None, **kwargs) -> None:
     """Fire-and-forget Firestore write so the audio loop never blocks on it.
@@ -304,16 +334,40 @@ async def _run_llm_tts_turn(
                         text=full_reply,
                         detail={"text": full_reply},
                     )
-                # Order just got confirmed — queue a Twilio mark behind the
-                # goodbye audio so we know precisely when to hang up (#78).
-                if (
-                    state.order is not None
-                    and state.order.status == OrderStatus.CONFIRMED
-                    and state.stream_sid
-                ):
-                    sent = await send_end_of_call_mark(websocket, state.stream_sid)
-                    if sent:
-                        state.pending_hangup = True
+                # Decide whether this turn is the wrap-up. Two signals:
+                #  1. Haiku set status=confirmed via update_order (the
+                #     primary path the prompt asks for).
+                #  2. Fallback (#79) — Haiku emitted a goodbye-shaped
+                #     reply ("your order is in", "see you soon", etc.)
+                #     AND the order has the data to actually confirm.
+                #     The model sometimes says the right closing line
+                #     without remembering to flip status.
+                if state.order is not None and state.stream_sid:
+                    explicitly_confirmed = (
+                        state.order.status == OrderStatus.CONFIRMED
+                    )
+                    fallback_confirmed = (
+                        state.order.is_ready_to_confirm()
+                        and state.order.status != OrderStatus.CANCELLED
+                        and _looks_like_goodbye(full_reply)
+                    )
+                    if explicitly_confirmed or fallback_confirmed:
+                        if fallback_confirmed and not explicitly_confirmed:
+                            logger.info(
+                                "auto-hangup: heuristic wrap-up detected "
+                                "(LLM didn't set status=confirmed) call_sid=%s",
+                                state.call_sid,
+                            )
+                            # Mirror the explicit-confirmation path locally
+                            # so the finally-block persist sees it too.
+                            state.order = state.order.model_copy(
+                                update={"status": OrderStatus.CONFIRMED}
+                            )
+                        sent = await send_end_of_call_mark(
+                            websocket, state.stream_sid
+                        )
+                        if sent:
+                            state.pending_hangup = True
 
     except asyncio.CancelledError:
         logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)

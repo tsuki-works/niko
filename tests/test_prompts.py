@@ -54,6 +54,17 @@ def test_prompt_makes_confirmation_goodbyes_terminal():
     assert 'set the order\'s status to "confirmed"' in lower or "status to confirmed" in lower
 
 
+def test_prompt_couples_goodbye_phrases_with_status_flip():
+    """Regression for #79 — Haiku was saying 'your order is in' without
+    calling update_order(status='confirmed'), which left the auto-hangup
+    inert. The prompt now insists on the status flip in the same turn."""
+    prompt = build_system_prompt()
+    lower = prompt.lower()
+    assert "critical" in lower
+    assert "your order is in" in lower
+    assert 'status="confirmed"' in lower
+
+
 def test_module_level_system_prompt_matches_builder():
     """The cached SYSTEM_PROMPT must equal a fresh build — catches the
     case where someone edits build_system_prompt() but forgets that
