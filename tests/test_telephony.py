@@ -19,8 +19,25 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.llm.client import LLMResponse, StreamEvent
 from app.orders.models import Order
+from app.storage import restaurants as restaurants_storage
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _reset_restaurants_cache():
+    """Each /voice request hits the restaurants storage; clear between
+    tests so cache state doesn't leak."""
+    yield
+    restaurants_storage.clear_cache()
+
+
+# Inbound test number — matches ``demo_restaurant_from_menu().twilio_phone``
+# so /voice resolves to the demo via the MENU fallback (Firestore returns
+# None under TestClient because GCP isn't reachable).
+_DEMO_TO = "+16479058093"
+
+_VOICE_FORM = {"CallSid": "CAtest", "From": "+10000000000", "To": _DEMO_TO}
 
 _START_MSG = {
     "event": "start",
@@ -30,6 +47,7 @@ _START_MSG = {
         "accountSid": "ACtest",
         "tracks": ["inbound"],
         "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1},
+        "customParameters": {"restaurant_id": "niko-pizza-kitchen"},
     },
 }
 
@@ -89,14 +107,20 @@ def mock_pipeline(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_voice_returns_xml():
-    response = client.post("/voice", data={"CallSid": "CAtest", "From": "+10000000000"})
+def test_voice_returns_xml(monkeypatch):
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    response = client.post("/voice", data=_VOICE_FORM)
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/xml")
 
 
-def test_voice_twiml_contains_media_stream_no_say():
-    response = client.post("/voice", data={"CallSid": "CAtest", "From": "+10000000000"})
+def test_voice_twiml_contains_media_stream_no_say(monkeypatch):
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    response = client.post("/voice", data=_VOICE_FORM)
     body = response.text
     assert "<Response>" in body
     assert "<Say" not in body          # greeting is now via ElevenLabs on start event
@@ -104,6 +128,66 @@ def test_voice_twiml_contains_media_stream_no_say():
     assert "<Stream" in body
     # TestClient sets Host: testserver
     assert "wss://testserver/media-stream" in body
+
+
+def test_voice_passes_restaurant_id_as_stream_parameter(monkeypatch):
+    """PR B (#79): /voice resolves the tenant by ``To`` and forwards the
+    id to /media-stream via a Stream <Parameter>. Twilio echoes it back
+    on the start event under ``customParameters.restaurant_id``."""
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    response = client.post("/voice", data=_VOICE_FORM)
+    body = response.text
+    assert "<Parameter" in body
+    assert 'name="restaurant_id"' in body
+    assert 'value="niko-pizza-kitchen"' in body
+
+
+def test_voice_uses_firestore_lookup_when_present(monkeypatch):
+    """When Firestore has a doc for the dialed number, ``/voice`` uses
+    it directly without touching the MENU fallback."""
+    from app.restaurants.models import Restaurant
+
+    seeded = Restaurant(
+        id="pizza-palace",
+        name="Pizza Palace",
+        display_phone="+14165550100",
+        twilio_phone="+14165550101",
+        address="456 Queen St W",
+        hours="11am-11pm",
+        menu={"pizzas": [], "sides": [], "drinks": []},
+    )
+    monkeypatch.setattr(
+        restaurants_storage,
+        "get_restaurant_by_twilio_phone",
+        lambda e164: seeded if e164 == "+14165550101" else None,
+    )
+    response = client.post(
+        "/voice",
+        data={"CallSid": "CAtest", "From": "+10000000000", "To": "+14165550101"},
+    )
+    body = response.text
+    assert 'value="pizza-palace"' in body
+
+
+def test_voice_rejects_unmapped_number(monkeypatch):
+    """Inbound to a number with no tenant mapping plays a brief hangup
+    message instead of dead air."""
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    response = client.post(
+        "/voice",
+        data={"CallSid": "CAtest", "From": "+10000000000", "To": "+19999999999"},
+    )
+    assert response.status_code == 200
+    body = response.text
+    assert "<Say" in body
+    assert "not currently configured" in body
+    assert "<Hangup" in body
+    # Crucially: no Connect/Stream — we never opened the media pipeline.
+    assert "<Connect" not in body
 
 
 # ---------------------------------------------------------------------------

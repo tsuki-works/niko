@@ -417,22 +417,69 @@ async def _handle_final_transcript(
     )
 
 
+_UNCONFIGURED_TWIML_MESSAGE = (
+    "Sorry, this number is not currently configured. Goodbye."
+)
+
+
+def _resolve_restaurant_for_voice(
+    to_e164: str,
+) -> Restaurant | None:
+    """Find the tenant for an inbound Twilio call (PR B of #79).
+
+    Looks up by the ``To`` field — Twilio's name for the dialed number,
+    which equals the per-restaurant ``twilio_phone`` we provisioned. If
+    Firestore returns nothing AND the dialed number matches the
+    demo's hardcoded ``twilio_phone``, falls back to building the demo
+    restaurant from ``app.menu.MENU``. The fallback is removed in PR F
+    once the seed is canonical.
+    """
+    restaurant = restaurants_storage.get_restaurant_by_twilio_phone(to_e164)
+    if restaurant is not None:
+        return restaurant
+    demo = restaurants_storage.demo_restaurant_from_menu()
+    if to_e164 == demo.twilio_phone:
+        logger.warning(
+            "voice: demo Twilio number %s not in Firestore — falling back to MENU",
+            to_e164,
+        )
+        return demo
+    return None
+
+
 @router.post("/voice")
 async def voice(request: Request) -> Response:
     """Respond to Twilio's inbound call webhook with TwiML.
 
-    Opens a bidirectional Media Stream back to /media-stream.  The AI
-    greeting is delivered via Deepgram Aura on the 'start' WebSocket event
-    rather than a static TwiML <Say>, so the caller hears the same voice
-    for the entire call.
+    Looks up the tenant by Twilio's ``To`` field, opens a bidirectional
+    Media Stream back to /media-stream, and forwards the resolved
+    restaurant id to the WebSocket handler via a ``<Parameter>`` on the
+    stream — Twilio echoes it back on the ``start`` event so the WS
+    can load the right restaurant without re-querying.
 
-    The WebSocket URL is derived from the ``Host`` header so the same code
-    works under ngrok locally and on Cloud Run in production.
+    If the dialed number isn't mapped to any tenant, returns a brief
+    TwiML hangup so callers don't sit through dead air.
+
+    The WebSocket URL is derived from the ``Host`` header so the same
+    code works under ngrok locally and on Cloud Run in production.
     """
-    host = request.headers.get("host", "localhost:8000")
+    form = await request.form()
+    to_e164 = (form.get("To") or "").strip()
+    restaurant = _resolve_restaurant_for_voice(to_e164)
+
     twiml = VoiceResponse()
+    if restaurant is None:
+        logger.warning(
+            "voice: no restaurant for To=%s — rejecting call", to_e164 or "(missing)"
+        )
+        twiml.say(_UNCONFIGURED_TWIML_MESSAGE)
+        twiml.hangup()
+        return Response(content=str(twiml), media_type="application/xml")
+
+    host = request.headers.get("host", "localhost:8000")
     connect = Connect()
-    connect.stream(url=f"wss://{host}/media-stream")
+    stream = connect.stream(url=f"wss://{host}/media-stream")
+    stream.parameter(name="restaurant_id", value=restaurant.id)
     twiml.append(connect)
     return Response(content=str(twiml), media_type="application/xml")
 
@@ -467,10 +514,19 @@ async def media_stream(websocket: WebSocket) -> None:
                 start = msg.get("start", {})
                 state.call_sid = start.get("callSid")
                 state.stream_sid = start.get("streamSid")
-                # PR A: every call uses the demo tenant. PR B reads
-                # Twilio's ``To`` field and routes to the matching
-                # restaurant doc.
-                state.restaurant = restaurants_storage.load_or_fallback_demo()
+                # PR B: /voice looks up the restaurant by ``To`` and
+                # forwards the id via Stream <Parameter>; Twilio echoes
+                # it back on the start event under customParameters.
+                # When the parameter is missing (older clients, manual
+                # WS connects in tests), fall back to the demo path.
+                custom_params = start.get("customParameters", {}) or {}
+                rid = custom_params.get("restaurant_id")
+                if rid:
+                    state.restaurant = restaurants_storage.get_restaurant(rid)
+                if state.restaurant is None:
+                    state.restaurant = restaurants_storage.load_or_fallback_demo(
+                        rid or restaurants_storage.DEMO_RID
+                    )
                 state.system_prompt = build_system_prompt(state.restaurant)
                 state.order = Order(
                     call_sid=state.call_sid or "unknown",
