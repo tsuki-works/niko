@@ -1,7 +1,11 @@
 /**
  * Call session schemas — mirror the Firestore documents written by
- * `app/storage/call_sessions.py` (collection: `call_sessions`,
- * subcollection: `call_sessions/{call_sid}/events`).
+ * `app/storage/call_sessions.py`.
+ *
+ * After PR C of #79, the canonical path is
+ * `restaurants/{restaurant_id}/call_sessions/{call_sid}` (with an
+ * `events` subcollection). The legacy flat `call_sessions` writes
+ * are still mirrored until PR F.
  *
  * Field names are snake_case to match the backend writes — do not
  * rename to camelCase on read.
@@ -33,6 +37,10 @@ export type CallEventKind = z.infer<typeof CallEventKindSchema>;
 
 export const CallSessionSchema = z.object({
   call_sid: z.string().min(1),
+  // Optional during the migration window: legacy flat docs predate
+  // PR C and don't carry restaurant_id. Once PR F deletes the legacy
+  // path we tighten this to .min(1).
+  restaurant_id: z.string().optional(),
   started_at: z.coerce.date(),
   ended_at: z.coerce.date().nullable(),
   status: CallStatusSchema,

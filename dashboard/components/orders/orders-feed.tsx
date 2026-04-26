@@ -26,7 +26,8 @@ type Props = {
   initial: Order[];
   initialCounts: CountsByStatus;
   statusFilter?: OrderStatus;
-  restaurantPhone: string;
+  restaurantId: string;
+  restaurantName: string;
 };
 
 const ANNOUNCE_THROTTLE_MS = 2000;
@@ -35,7 +36,8 @@ export function OrdersFeed({
   initial,
   initialCounts,
   statusFilter,
-  restaurantPhone,
+  restaurantId,
+  restaurantName,
 }: Props) {
   const [orders, setOrders] = useState<Order[]>(initial);
   const [announcement, setAnnouncement] = useState('');
@@ -51,7 +53,15 @@ export function OrdersFeed({
       return;
     }
 
-    const base = collection(db, 'orders').withConverter(orderConverter);
+    // Multi-tenant path: every order doc lives under the calling
+    // tenant's restaurant. Server Component resolves restaurantId
+    // from the session cookie and passes it down.
+    const base = collection(
+      db,
+      'restaurants',
+      restaurantId,
+      'orders',
+    ).withConverter(orderConverter);
     const q = statusFilter
       ? query(
           base,
@@ -88,16 +98,14 @@ export function OrdersFeed({
     );
 
     return unsub;
-  }, [statusFilter]);
+  }, [statusFilter, restaurantId]);
 
   return (
     <section className="flex flex-col gap-6 p-6">
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="text-2xl font-medium">Orders</h2>
-          <p className="text-sm text-muted-foreground">
-            Niko Pizza Kitchen · {restaurantPhone}
-          </p>
+          <p className="text-sm text-muted-foreground">{restaurantName}</p>
         </div>
         <LiveIndicator />
       </header>

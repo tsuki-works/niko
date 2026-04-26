@@ -1,4 +1,5 @@
 import { type FirebaseApp, getApp, getApps, initializeApp } from 'firebase/app';
+import { type Auth, getAuth } from 'firebase/auth';
 import { type Firestore, getFirestore } from 'firebase/firestore';
 
 const config = {
@@ -22,10 +23,12 @@ export const isFirebaseConfigured = Boolean(
 
 let app: FirebaseApp | null = null;
 let _db: Firestore | null = null;
+let _auth: Auth | null = null;
 
 if (isFirebaseConfigured) {
   app = getApps().length ? getApp() : initializeApp(config);
   _db = getFirestore(app);
+  _auth = getAuth(app);
 } else if (typeof window !== 'undefined') {
   // One-time dev warning. Keeps the console quiet after that.
   console.warn(
@@ -35,3 +38,4 @@ if (isFirebaseConfigured) {
 }
 
 export const db = _db;
+export const auth = _auth;

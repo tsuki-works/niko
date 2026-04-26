@@ -16,19 +16,25 @@ import type { CallEvent as ZodCallEvent } from '@/lib/schemas/call';
 
 type Props = {
   callSid: string;
+  restaurantId: string;
   initial: CallTimeline;
 };
 
-export function CallTimelineLive({ callSid, initial }: Props) {
+export function CallTimelineLive({ callSid, restaurantId, initial }: Props) {
   const [events, setEvents] = useState<CallEvent[]>(initial.events);
 
   useEffect(() => {
     if (!db) return;
 
     const q = query(
-      collection(db, 'call_sessions', callSid, 'events').withConverter(
-        callEventConverter,
-      ),
+      collection(
+        db,
+        'restaurants',
+        restaurantId,
+        'call_sessions',
+        callSid,
+        'events',
+      ).withConverter(callEventConverter),
       orderBy('timestamp'),
     );
 
@@ -41,7 +47,7 @@ export function CallTimelineLive({ callSid, initial }: Props) {
       (err) => console.error('Call timeline subscription error', err),
     );
     return unsub;
-  }, [callSid]);
+  }, [callSid, restaurantId]);
 
   return <CallTimelineView timeline={{ call_sid: callSid, events }} />;
 }
