@@ -81,7 +81,7 @@ def mock_pipeline(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -231,7 +231,7 @@ def test_ai_greeting_spawned_on_start(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -271,7 +271,7 @@ def test_stop_event_persists_ready_order(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -315,7 +315,7 @@ def test_stop_event_skips_persist_if_order_not_ready(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):

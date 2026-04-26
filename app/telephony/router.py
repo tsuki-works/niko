@@ -81,19 +81,28 @@ def _looks_like_goodbye(reply: str) -> bool:
     return any(pat in lower for pat in _GOODBYE_PATTERNS)
 
 
-def _bg_call_event(call_sid: str | None, **kwargs) -> None:
+def _bg_call_event(
+    call_sid: str | None, restaurant_id: str | None, **kwargs
+) -> None:
     """Fire-and-forget Firestore write so the audio loop never blocks on it.
 
     The storage module catches its own exceptions, so failures here just
     drop the event from the live dashboard — the call continues normally.
+    Both ``call_sid`` and ``restaurant_id`` must be set; if either is
+    missing (early-lifecycle event before ``start`` resolved the tenant),
+    we silently skip rather than guess at the path.
     """
-    if not call_sid:
+    if not call_sid or not restaurant_id:
         return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(asyncio.to_thread(call_sessions.record_event, call_sid, **kwargs))
+    loop.create_task(
+        asyncio.to_thread(
+            call_sessions.record_event, call_sid, restaurant_id, **kwargs
+        )
+    )
 
 
 def _twilio_end_call_sync(call_sid: str) -> None:
@@ -209,7 +218,9 @@ class _CallState:
     pending_hangup: bool           = False     # set when goodbye mark sent (#78)
 
 
-async def _open_deepgram_connection(call_sid: str | None, on_final: Callable):
+async def _open_deepgram_connection(
+    call_sid: str | None, restaurant_id: str | None, on_final: Callable
+):
     assert settings.deepgram_api_key, "DEEPGRAM_API_KEY is not set"
 
     dg = DeepgramClient(settings.deepgram_api_key)
@@ -224,7 +235,11 @@ async def _open_deepgram_connection(call_sid: str | None, on_final: Callable):
         logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
         if result.is_final:
             _bg_call_event(
-                call_sid, kind="transcript_final", text=text, detail={"text": text}
+                call_sid,
+                restaurant_id,
+                kind="transcript_final",
+                text=text,
+                detail={"text": text},
             )
             asyncio.get_event_loop().create_task(on_final(text))
 
@@ -248,11 +263,17 @@ async def _open_deepgram_connection(call_sid: str | None, on_final: Callable):
     return conn
 
 
+def _state_rid(state: _CallState) -> str | None:
+    """Restaurant id from state, or None if start hasn't resolved a tenant
+    yet (early-lifecycle defense)."""
+    return state.restaurant.id if state.restaurant else None
+
+
 async def _silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
     try:
         await asyncio.sleep(SILENCE_TIMEOUT_SECONDS)
         logger.info("silence timeout call_sid=%s", state.call_sid)
-        _bg_call_event(state.call_sid, kind="silence_timeout")
+        _bg_call_event(state.call_sid, _state_rid(state), kind="silence_timeout")
         if state.stream_sid:
             await speak(SILENCE_PROMPT, websocket, state.stream_sid)
     except asyncio.CancelledError:
@@ -281,6 +302,7 @@ async def _run_llm_tts_turn(
     logger.info("llm_turn start call_sid=%s transcript=%r", state.call_sid, transcript)
     _bg_call_event(
         state.call_sid,
+        _state_rid(state),
         kind="llm_turn_start",
         text=transcript,
         detail={"transcript": transcript},
@@ -298,6 +320,7 @@ async def _run_llm_tts_turn(
         )
         _bg_call_event(
             state.call_sid,
+            _state_rid(state),
             kind="first_audio",
             detail={"latency_seconds": round(latency, 3)},
         )
@@ -337,6 +360,7 @@ async def _run_llm_tts_turn(
                 if full_reply:
                     _bg_call_event(
                         state.call_sid,
+                        _state_rid(state),
                         kind="agent_reply",
                         text=full_reply,
                         detail={"text": full_reply},
@@ -378,12 +402,13 @@ async def _run_llm_tts_turn(
 
     except asyncio.CancelledError:
         logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)
-        _bg_call_event(state.call_sid, kind="barge_in")
+        _bg_call_event(state.call_sid, _state_rid(state), kind="barge_in")
         raise
     except Exception as exc:
         logger.exception("llm_turn errored call_sid=%s", state.call_sid)
         _bg_call_event(
             state.call_sid,
+            _state_rid(state),
             kind="error",
             text=str(exc)[:500],
             detail={"exception": type(exc).__name__},
@@ -541,15 +566,20 @@ async def media_stream(websocket: WebSocket) -> None:
                 if state.call_sid:
                     asyncio.get_running_loop().create_task(
                         asyncio.to_thread(
-                            call_sessions.init_call_session, state.call_sid
+                            call_sessions.init_call_session,
+                            state.call_sid,
+                            state.restaurant.id,
                         )
                     )
                     _bg_call_event(
                         state.call_sid,
+                        state.restaurant.id,
                         kind="start",
                         detail={"stream_sid": state.stream_sid or ""},
                     )
-                dg_conn = await _open_deepgram_connection(state.call_sid, on_final)
+                dg_conn = await _open_deepgram_connection(
+                    state.call_sid, state.restaurant.id, on_final
+                )
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)
                 )
@@ -580,7 +610,7 @@ async def media_stream(websocket: WebSocket) -> None:
 
             elif event == "stop":
                 logger.info("media-stream stop call_sid=%s", state.call_sid)
-                _bg_call_event(state.call_sid, kind="stop")
+                _bg_call_event(state.call_sid, _state_rid(state), kind="stop")
                 # Let the in-flight LLM turn finish so we capture the final order state
                 if state.llm_task and not state.llm_task.done():
                     try:
@@ -607,17 +637,21 @@ async def media_stream(websocket: WebSocket) -> None:
             try:
                 persist_on_confirm(state.order)
                 logger.info("order confirmed call_sid=%s", state.call_sid)
-                _bg_call_event(state.call_sid, kind="order_confirmed")
+                _bg_call_event(
+                    state.call_sid, _state_rid(state), kind="order_confirmed"
+                )
                 order_confirmed = True
             except (OrderNotReadyError, Exception) as exc:
                 logger.error(
                     "order persist failed call_sid=%s: %s", state.call_sid, exc
                 )
-        if state.call_sid:
+        rid_for_close = _state_rid(state)
+        if state.call_sid and rid_for_close:
             try:
                 await asyncio.to_thread(
                     call_sessions.mark_call_ended,
                     state.call_sid,
+                    rid_for_close,
                     confirmed=order_confirmed,
                 )
             except Exception:

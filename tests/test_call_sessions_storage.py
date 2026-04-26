@@ -2,6 +2,11 @@
 
 Uses a tiny in-memory Firestore fake — just enough surface to exercise
 the storage module's reads and writes. No emulator, no network.
+
+Post-#79 PR C, the storage module dual-writes: every parent and event
+write hits BOTH the legacy ``call_sessions/{sid}`` and the nested
+``restaurants/{rid}/call_sessions/{sid}`` paths. The fake here tracks
+arbitrary path segments so tests can assert both writes landed.
 """
 from __future__ import annotations
 
@@ -11,9 +16,11 @@ import pytest
 
 from app.storage import call_sessions
 
+_DEMO_RID = "niko-pizza-kitchen"
+
 
 # ---------------------------------------------------------------------------
-# Fake Firestore — just the surface we use
+# Fake Firestore — in-memory, path-tuple-keyed
 # ---------------------------------------------------------------------------
 
 
@@ -76,16 +83,18 @@ class _Query:
 
 
 class _DocRef:
-    def __init__(self, client: "FakeClient", call_sid: str):
+    def __init__(self, client: "FakeClient", path: tuple[str, ...]):
         self._client = client
-        self._call_sid = call_sid
+        self._path = path
 
     def set(self, payload: dict) -> None:
-        self._client.parents[self._call_sid] = dict(payload)
-        self._client.events.setdefault(self._call_sid, [])
+        self._client.docs[self._path] = dict(payload)
+        # Ensure subcollections (events) exist as buckets even if empty
+        # so iteration tests don't KeyError before any add().
+        self._client.events.setdefault(self._path, [])
 
     def update(self, patch: dict) -> None:
-        existing = self._client.parents.setdefault(self._call_sid, {})
+        existing = self._client.docs.setdefault(self._path, {})
         for key, val in patch.items():
             if isinstance(val, _IncrementSentinel):
                 existing[key] = existing.get(key, 0) + val.amount
@@ -93,49 +102,67 @@ class _DocRef:
                 existing[key] = val
 
     def get(self) -> _Snap:
-        return _Snap(self._client.parents.get(self._call_sid))
+        return _Snap(self._client.docs.get(self._path))
 
-    def collection(self, name: str) -> "_EventsCollectionRef":
-        assert name == "events"
-        return _EventsCollectionRef(self._client, self._call_sid)
+    def collection(self, name: str) -> "_CollectionRef":
+        return _CollectionRef(self._client, self._path + (name,))
 
 
-class _EventsCollectionRef:
-    def __init__(self, client: "FakeClient", call_sid: str):
+class _CollectionRef:
+    def __init__(self, client: "FakeClient", path: tuple[str, ...]):
         self._client = client
-        self._call_sid = call_sid
+        self._path = path
+
+    def document(self, doc_id: str) -> _DocRef:
+        return _DocRef(self._client, self._path + (doc_id,))
 
     def add(self, payload: dict):
-        self._client.events.setdefault(self._call_sid, []).append(dict(payload))
+        # Events live under their parent doc's path. We key the bucket
+        # by the parent doc path (everything except the trailing
+        # collection name).
+        bucket_key = self._path[:-1]
+        self._client.events.setdefault(bucket_key, []).append(dict(payload))
         return (0.0, None)
 
     def order_by(self, field, direction=None):
-        rows = list(self._client.events.get(self._call_sid, []))
-        return _Query(rows).order_by(field, direction)
-
-
-class _ParentCollectionRef:
-    def __init__(self, client: "FakeClient"):
-        self._client = client
-
-    def document(self, call_sid: str) -> _DocRef:
-        return _DocRef(self._client, call_sid)
-
-    def order_by(self, field, direction=None):
-        rows = [
-            {**doc, "_id": sid} for sid, doc in self._client.parents.items()
-        ]
+        # Two cases:
+        #  - ``call_sessions`` (top-level legacy) → list parent docs
+        #  - ``restaurants/{rid}/call_sessions`` → list parent docs
+        #  - ``.../events`` → list events for one parent doc
+        if self._path[-1] == "events":
+            bucket_key = self._path[:-1]
+            rows = list(self._client.events.get(bucket_key, []))
+        else:
+            # Walk all docs whose path is exactly self._path + (doc_id,).
+            depth = len(self._path) + 1
+            rows = [
+                doc
+                for path, doc in self._client.docs.items()
+                if len(path) == depth and path[: len(self._path)] == self._path
+            ]
         return _Query(rows).order_by(field, direction)
 
 
 class FakeClient:
     def __init__(self):
-        self.parents: dict[str, dict] = {}
-        self.events: dict[str, list[dict]] = {}
+        # Path tuple → doc dict
+        self.docs: dict[tuple[str, ...], dict] = {}
+        # Parent path tuple → list of event payload dicts (flat list)
+        self.events: dict[tuple[str, ...], list[dict]] = {}
 
-    def collection(self, name: str) -> _ParentCollectionRef:
-        assert name == "call_sessions"
-        return _ParentCollectionRef(self)
+    def collection(self, name: str) -> _CollectionRef:
+        return _CollectionRef(self, (name,))
+
+
+_LEGACY = ("call_sessions",)
+
+
+def _legacy_parent(call_sid: str) -> tuple[str, ...]:
+    return _LEGACY + (call_sid,)
+
+
+def _nested_parent(rid: str, call_sid: str) -> tuple[str, ...]:
+    return ("restaurants", rid, "call_sessions", call_sid)
 
 
 # ---------------------------------------------------------------------------
@@ -164,94 +191,126 @@ def fake_client():
 
 def test_init_creates_parent_doc_in_progress(fake_client):
     started = datetime(2026, 4, 25, 22, 0, tzinfo=timezone.utc)
-    call_sessions.init_call_session("CAtest", started_at=started)
+    call_sessions.init_call_session("CAtest", _DEMO_RID, started_at=started)
 
-    snap = fake_client.collection("call_sessions").document("CAtest").get()
-    assert snap.exists
-    doc = snap.to_dict()
-    assert doc["call_sid"] == "CAtest"
-    assert doc["status"] == "in_progress"
-    assert doc["started_at"] == started
-    assert doc["ended_at"] is None
-    assert doc["transcript_count"] == 0
-    assert doc["has_error"] is False
+    legacy = fake_client.docs[_legacy_parent("CAtest")]
+    nested = fake_client.docs[_nested_parent(_DEMO_RID, "CAtest")]
+
+    for doc in (legacy, nested):
+        assert doc["call_sid"] == "CAtest"
+        assert doc["status"] == "in_progress"
+        assert doc["started_at"] == started
+        assert doc["ended_at"] is None
+        assert doc["transcript_count"] == 0
+        assert doc["has_error"] is False
+
+    # Only the nested doc carries restaurant_id; legacy stays minimal so
+    # the dashboard's existing schema doesn't break before PR D.
+    assert nested["restaurant_id"] == _DEMO_RID
+    assert "restaurant_id" not in legacy
 
 
-def test_record_event_appends_to_subcollection_and_stamps_parent(fake_client):
-    call_sessions.init_call_session("CAtest")
+def test_record_event_appends_to_both_paths(fake_client):
+    """Every event lands in BOTH legacy and nested events buckets."""
+    call_sessions.init_call_session("CAtest", _DEMO_RID)
     call_sessions.record_event(
-        "CAtest", kind="transcript_final", text="hello", detail={"text": "hello"}
+        "CAtest",
+        _DEMO_RID,
+        kind="transcript_final",
+        text="hello",
+        detail={"text": "hello"},
     )
     call_sessions.record_event(
-        "CAtest", kind="transcript_final", text="goodbye", detail={"text": "goodbye"}
+        "CAtest",
+        _DEMO_RID,
+        kind="transcript_final",
+        text="goodbye",
+        detail={"text": "goodbye"},
     )
 
-    snap = fake_client.collection("call_sessions").document("CAtest").get()
-    assert snap.to_dict()["transcript_count"] == 2
+    legacy_events = fake_client.events[_legacy_parent("CAtest")]
+    nested_events = fake_client.events[_nested_parent(_DEMO_RID, "CAtest")]
+    assert [e["kind"] for e in legacy_events] == ["transcript_final", "transcript_final"]
+    assert [e["kind"] for e in nested_events] == ["transcript_final", "transcript_final"]
+    assert legacy_events[0]["text"] == "hello"
 
-    rows = list(
-        fake_client.collection("call_sessions")
-        .document("CAtest")
-        .collection("events")
-        .order_by("timestamp")
-        .stream()
-    )
-    events = [s.to_dict() for s in rows]
-    assert [e["kind"] for e in events] == ["transcript_final", "transcript_final"]
-    assert events[0]["text"] == "hello"
+    # transcript_count incremented on both parents.
+    assert fake_client.docs[_legacy_parent("CAtest")]["transcript_count"] == 2
+    assert fake_client.docs[_nested_parent(_DEMO_RID, "CAtest")]["transcript_count"] == 2
 
 
 def test_record_event_error_kind_flips_has_error(fake_client):
-    call_sessions.init_call_session("CAtest")
-    call_sessions.record_event("CAtest", kind="error", text="500 from anthropic")
+    call_sessions.init_call_session("CAtest", _DEMO_RID)
+    call_sessions.record_event(
+        "CAtest", _DEMO_RID, kind="error", text="500 from anthropic"
+    )
 
-    snap = fake_client.collection("call_sessions").document("CAtest").get()
-    assert snap.to_dict()["has_error"] is True
+    assert fake_client.docs[_legacy_parent("CAtest")]["has_error"] is True
+    assert fake_client.docs[_nested_parent(_DEMO_RID, "CAtest")]["has_error"] is True
 
 
 def test_mark_call_ended_confirmed_status(fake_client):
-    call_sessions.init_call_session("CAconfirmed")
+    call_sessions.init_call_session("CAconfirmed", _DEMO_RID)
     end = datetime(2026, 4, 25, 22, 5, tzinfo=timezone.utc)
-    call_sessions.mark_call_ended("CAconfirmed", confirmed=True, ended_at=end)
+    call_sessions.mark_call_ended(
+        "CAconfirmed", _DEMO_RID, confirmed=True, ended_at=end
+    )
 
-    doc = fake_client.collection("call_sessions").document("CAconfirmed").get().to_dict()
-    assert doc["status"] == "confirmed"
-    assert doc["ended_at"] == end
+    for path in (_legacy_parent("CAconfirmed"), _nested_parent(_DEMO_RID, "CAconfirmed")):
+        doc = fake_client.docs[path]
+        assert doc["status"] == "confirmed"
+        assert doc["ended_at"] == end
 
 
 def test_mark_call_ended_unconfirmed_becomes_ended(fake_client):
-    call_sessions.init_call_session("CAdrop")
-    call_sessions.mark_call_ended("CAdrop", confirmed=False)
+    call_sessions.init_call_session("CAdrop", _DEMO_RID)
+    call_sessions.mark_call_ended("CAdrop", _DEMO_RID, confirmed=False)
 
-    doc = fake_client.collection("call_sessions").document("CAdrop").get().to_dict()
-    assert doc["status"] == "ended"
+    for path in (_legacy_parent("CAdrop"), _nested_parent(_DEMO_RID, "CAdrop")):
+        assert fake_client.docs[path]["status"] == "ended"
 
 
-def test_list_recent_sessions_orders_by_started_at_desc(fake_client):
+def test_list_recent_sessions_reads_from_nested_path(fake_client):
     early = datetime(2026, 4, 25, 22, 0, tzinfo=timezone.utc)
     late = early + timedelta(minutes=15)
-    call_sessions.init_call_session("CAearly", started_at=early)
-    call_sessions.init_call_session("CAlate", started_at=late)
+    call_sessions.init_call_session("CAearly", _DEMO_RID, started_at=early)
+    call_sessions.init_call_session("CAlate", _DEMO_RID, started_at=late)
 
-    sessions = call_sessions.list_recent_sessions(limit=10)
+    sessions = call_sessions.list_recent_sessions(_DEMO_RID, limit=10)
     sids = [s["call_sid"] for s in sessions]
     assert sids == ["CAlate", "CAearly"]
 
 
+def test_list_recent_sessions_scopes_by_restaurant(fake_client):
+    """A different tenant's sessions don't leak into the result."""
+    call_sessions.init_call_session("CAfor-niko", _DEMO_RID)
+    call_sessions.init_call_session("CAfor-palace", "pizza-palace")
+
+    niko_sessions = call_sessions.list_recent_sessions(_DEMO_RID, limit=10)
+    assert [s["call_sid"] for s in niko_sessions] == ["CAfor-niko"]
+
+    palace_sessions = call_sessions.list_recent_sessions("pizza-palace", limit=10)
+    assert [s["call_sid"] for s in palace_sessions] == ["CAfor-palace"]
+
+
 def test_get_session_events_returns_events_for_known_call(fake_client):
-    call_sessions.init_call_session("CAknown")
-    call_sessions.record_event("CAknown", kind="start")
+    call_sessions.init_call_session("CAknown", _DEMO_RID)
+    call_sessions.record_event("CAknown", _DEMO_RID, kind="start")
     call_sessions.record_event(
-        "CAknown", kind="transcript_final", text="hi", detail={"text": "hi"}
+        "CAknown",
+        _DEMO_RID,
+        kind="transcript_final",
+        text="hi",
+        detail={"text": "hi"},
     )
 
-    events = call_sessions.get_session_events("CAknown")
+    events = call_sessions.get_session_events("CAknown", _DEMO_RID)
     assert events is not None
     assert [e["kind"] for e in events] == ["start", "transcript_final"]
 
 
 def test_get_session_events_returns_none_for_unknown_call(fake_client):
-    assert call_sessions.get_session_events("CAmissing") is None
+    assert call_sessions.get_session_events("CAmissing", _DEMO_RID) is None
 
 
 def test_record_event_swallows_firestore_exceptions(fake_client):
@@ -265,4 +324,6 @@ def test_record_event_swallows_firestore_exceptions(fake_client):
 
     call_sessions.set_client(BoomClient())
     # No exception escaping is the assertion.
-    call_sessions.record_event("CAtest", kind="transcript_final", text="hi")
+    call_sessions.record_event(
+        "CAtest", _DEMO_RID, kind="transcript_final", text="hi"
+    )
