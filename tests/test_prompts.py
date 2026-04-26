@@ -97,3 +97,124 @@ def test_prompt_appends_greeting_addendum_when_provided():
     }
     prompt = build_system_prompt(restaurant)
     assert "family-run since 1972" in prompt
+
+
+def test_prompt_renders_arbitrary_menu_categories():
+    """The menu renderer iterates whatever keys are present and title-
+    cases them — no hardcoded ``pizzas``/``sides``/``drinks`` triple.
+    A tenant with Caribbean-style categories should see them rendered
+    under their own names, not collapsed into pizza terminology."""
+    restaurant = Restaurant(
+        id="twilight",
+        name="Twilight Family Restaurant",
+        display_phone="+14160000000",
+        twilio_phone="+14160000001",
+        address="55 Nugget Ave",
+        hours="11am-10pm",
+        menu={
+            "appetizers": [{"name": "Vegetable Spring Roll", "price": 2.00}],
+            "caribbean_appetizers": [{"name": "Jerk Chicken", "price": 14.75}],
+            "fried_rice": [
+                {
+                    "name": "Twilight Fried Rice",
+                    "description": "Chicken, beef, shrimp.",
+                    "price": 15.75,
+                }
+            ],
+        },
+    )
+    prompt = build_system_prompt(restaurant)
+    # Category headers are title-cased, not literal snake_case
+    assert "Appetizers:" in prompt
+    assert "Caribbean Appetizers:" in prompt
+    assert "Fried Rice:" in prompt
+    # Items with single price render with parenthesized $ amount + description
+    assert "Twilight Fried Rice" in prompt
+    assert "$15.75" in prompt
+    assert "Chicken, beef, shrimp." in prompt
+    # No leakage from the hardcoded pizza-shop vocabulary
+    assert "Pizzas:" not in prompt
+    assert "Sides:" not in prompt
+
+
+def test_prompt_respects_explicit_category_order():
+    """``_category_order`` pins the prompt rendering order. Firestore
+    scrambles dict insertion order on round-trip, so a tenant that
+    cares about ordering uses this escape hatch. Categories listed in
+    ``_category_order`` render first, in that order; anything else
+    follows."""
+    restaurant = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+        menu={
+            # Dict order chosen to NOT match ``_category_order`` so the
+            # test would fail if order came from dict iteration.
+            "drinks": [{"name": "Coke", "price": 2.99}],
+            "soups": [{"name": "Wonton", "price": 5.00}],
+            "appetizers": [{"name": "Spring Roll", "price": 2.00}],
+            "_category_order": ["appetizers", "soups", "drinks"],
+        },
+    )
+    prompt = build_system_prompt(restaurant)
+    apps_idx = prompt.index("Appetizers:")
+    soups_idx = prompt.index("Soups:")
+    drinks_idx = prompt.index("Drinks:")
+    assert apps_idx < soups_idx < drinks_idx
+    # The order key itself never renders as a category
+    assert "Category Order:" not in prompt
+    assert "_category_order" not in prompt
+
+
+def test_prompt_category_order_lists_unknown_categories_are_ignored():
+    """``_category_order`` referencing a category that doesn't exist
+    in the menu shouldn't crash, and shouldn't fabricate a header for
+    the missing category."""
+    restaurant = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+        menu={
+            "appetizers": [{"name": "Spring Roll", "price": 2.00}],
+            "_category_order": ["mains", "appetizers", "desserts"],
+        },
+    )
+    prompt = build_system_prompt(restaurant)
+    assert "Appetizers:" in prompt
+    assert "Mains:" not in prompt
+    assert "Desserts:" not in prompt
+
+
+def test_prompt_skips_empty_and_non_list_categories():
+    """Empty categories shouldn't bloat the prompt with naked headers.
+    Non-list values (Firestore can return scalars under unexpected
+    keys) are silently dropped rather than crashing the call."""
+    restaurant = Restaurant(
+        id="x",
+        name="X",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+        menu={
+            "mains": [{"name": "Burger", "price": 10.00}],
+            "sides": [],  # empty: skip header
+            "promo_text": "Half off Tuesdays",  # scalar: skip silently
+            "specials": None,  # falsy: skip
+        },
+    )
+    prompt = build_system_prompt(restaurant)
+    assert "Mains:" in prompt
+    assert "Burger" in prompt
+    # No empty headers
+    assert "Sides:" not in prompt
+    assert "Specials:" not in prompt
+    # Scalar value not surfaced as if it were a category
+    assert "Promo Text:" not in prompt
+    assert "Half off Tuesdays" not in prompt
