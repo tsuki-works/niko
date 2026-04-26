@@ -100,6 +100,30 @@ def _claims_to_tenant(claims: dict[str, Any]) -> Tenant:
     )
 
 
+def _verify_credential(kind: str, value: str) -> dict:
+    """Verify a Firebase credential. Tries the kind-specific path
+    first; if Bearer fails an ID-token verify we retry as a session
+    cookie so callers that forward a session cookie via Bearer (some
+    server-to-server clients) still authenticate.
+
+    Raises the underlying firebase-admin exception on failure so
+    ``current_tenant`` can map it to a 401.
+    """
+    if kind == "cookie":
+        return firebase_auth.verify_session_cookie(value)
+    # Bearer path. Try ID token first — that's what
+    # ``signInWithEmailAndPassword`` produces. Fall back to session
+    # cookie verify when the issuer mismatches (the dashboard mints
+    # session cookies and forwards them; both should be accepted).
+    try:
+        return firebase_auth.verify_id_token(value)
+    except Exception as id_token_err:  # noqa: BLE001
+        try:
+            return firebase_auth.verify_session_cookie(value)
+        except Exception:  # noqa: BLE001
+            raise id_token_err
+
+
 def current_tenant(
     __session: Optional[str] = Cookie(default=None),
     authorization: Optional[str] = Header(default=None),
@@ -112,10 +136,7 @@ def current_tenant(
     """
     kind, value = _extract_token(__session, authorization)
     try:
-        if kind == "cookie":
-            claims = firebase_auth.verify_session_cookie(value)
-        else:
-            claims = firebase_auth.verify_id_token(value)
+        claims = _verify_credential(kind, value)
     except Exception as exc:  # noqa: BLE001 — firebase-admin raises a family of errors
         logger.warning("auth: %s rejected: %s", kind, exc)
         raise HTTPException(
