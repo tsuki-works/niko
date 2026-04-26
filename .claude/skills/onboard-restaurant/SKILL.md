@@ -39,11 +39,23 @@ Use `WebFetch` to pull these paths in parallel (skip 404s):
 - `/menu`, `/menu/`, `/our-menu`, `/food`
 - `/about`, `/about-us`
 - `/contact`, `/contact-us`, `/locations`
-- `/order`, `/order-online` — sometimes routes to a third party (ChowNow, Toast, DoorDash) where the menu is structured
+- `/order`, `/order-online` — often the highest-value page; usually routes to a third party (UberEats, SkipTheDishes, DoorDash, ChowNow, Toast) where the menu is fully structured
 
 Prompt template per fetch: *"Extract: restaurant name, phone, full address, hours of operation, and every menu item with name, description, and price. Group menu items by category. Return as JSON when possible, otherwise structured markdown. Note explicitly if the menu is image-only or behind a third-party widget."*
 
-If a page redirects to a third-party ordering site (ChowNow, Toast, DoorDash, UberEats), follow the redirect once and extract from there.
+If a page redirects to a third-party ordering site, follow the redirect and extract from there. **In practice UberEats has the highest hit rate for Canadian restaurants** — DoorDash and ChowNow frequently return 403 to `WebFetch`. SkipTheDishes is hit-or-miss. If WebFetch's response looks truncated (categories listed but empty `items: []`), re-fetch with a focused prompt asking for only those specific sections.
+
+### 1a. Image-based menus — OCR via Read
+
+If the menu page is image-only (common for independents — JPG/PNG menu boards in a gallery), don't give up — Claude can read images directly:
+
+1. Ask `WebFetch` for the raw image URLs on the menu page (prompt: *"List every img src URL on this page, one per line. Also list any PDF links."*).
+2. Filter to plausible menu images by filename (e.g. `menu`, `prices`, `card`) or by selecting the largest images. Skip obvious food-photo filenames (`IMG_*`, `Take-Out-*`, `chicken-wings.jpg`).
+3. Download to a temp path: `curl -sL --max-time 15 -o /tmp/menu_<n>.jpg <url>` (Windows: resolve with `cygpath -w /tmp/menu_<n>.jpg` before passing to `Read`).
+4. Use the `Read` tool on the file — Claude is multimodal and will see the image content. Extract items + prices from what's visible.
+5. If the image is illegible (low resolution, decorative font), say so and ask the user to paste.
+
+This is the fallback when the site has no third-party ordering link. **If both UberEats/DoorDash/Skip and on-page images fail, ask the user to paste the menu** rather than guessing.
 
 ### 2. Map to the data model
 
@@ -127,16 +139,55 @@ python -m scripts.provision_restaurant \
 
 Show the user the dumped JSON. Confirm the data is correct.
 
-### 7. Live run — confirm cost first
+### 7. List Twilio number candidates and let the user pick
 
-The live run **purchases a Twilio number** (~$1/month per number, real money charged to the shared Twilio account). Before running without `--dry-run`:
+Before buying anything, surface 3-5 candidate numbers from Twilio's inventory so the team can pick a memorable one (or one in the right city) instead of accepting the first hit.
+
+```bash
+python -m scripts.list_twilio_numbers --area-code <NXX> --limit 5
+```
+
+Required env: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (fetch via `/shared-creds` if not in `.env`). The script is read-only — no purchase happens.
+
+Present the output to the user as a numbered list and ask them to pick one. Example:
+
+> Found these in 416:
+>
+> 1. **+14165550101** — Toronto, ON
+> 2. **+14165550149** — Toronto, ON
+> 3. **+14165550412** — Toronto, ON
+> 4. **+14165550767** — Toronto, ON
+> 5. **+14165550889** — Toronto, ON
+>
+> Which one should I buy? (1–5, or paste a different E.164)
+
+If the user has a strong preference for digit patterns ("ends in 4321", "no 666"), respect it — the script can be re-run with a higher `--limit` to surface more options.
+
+### 8. Live run — confirm cost with the chosen number
+
+The live run **purchases the picked Twilio number** (~$1/month per number, real money charged to the shared Twilio account). Before running without `--dry-run`:
 
 > Ready to provision **<Name>**. This will:
-> - Buy a Twilio number in area code <NXX> (~$1/mo charged to the shared Twilio account)
+> - Buy **<chosen E.164>** (~$1/mo charged to the shared Twilio account)
 > - Configure its voice webhook → `${BACKEND_URL}/voice`
 > - Write `restaurants/<rid>` to Firestore
 >
 > Confirm to proceed (yes / no)?
+
+A "yes" earlier in the same session does **not** carry forward — re-confirm every time. Once confirmed:
+
+```bash
+python -m scripts.provision_restaurant \
+  --rid <rid> \
+  --name "<Name>" \
+  --display-phone <+1XXXXXXXXXX> \
+  --address "<Address>" \
+  --hours "<Hours>" \
+  --phone-number <chosen E.164> \
+  --menu-file restaurants/<rid>.json
+```
+
+Note `--phone-number` (not `--area-code`) — this buys the specific number the user picked rather than re-searching.
 
 Required env for the live run:
 
@@ -172,6 +223,7 @@ If we're on `master` when this finished, kick into `/pr-driven-dev` rescue flow 
 - **Never** commit `.env` files or Twilio credentials to the menu JSON or anywhere else. Use `/shared-creds` to fetch creds; they belong in `.env` only.
 - **Never** invent menu items, prices, hours, or addresses. If you can't find it, ask. A wrong price quoted on a real call is worse than a delayed onboarding.
 - **Never** reuse an existing `rid`. Before writing, check: `gh api -X GET "/repos/tsuki-works/niko/contents/restaurants" 2>/dev/null` or `ls restaurants/` and refuse if `<rid>.json` already exists. If the user wants to overwrite, they must say so explicitly.
+- **Never** skip the candidate-listing step (`list_twilio_numbers.py`) and let the provision script auto-pick the first available number. The whole point of the two-step flow is human choice over which digits we lock in.
 
 ## Common gotchas
 
