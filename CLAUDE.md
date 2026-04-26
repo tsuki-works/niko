@@ -22,6 +22,7 @@ Key locations:
 - **`/current-sprint`** — surfaces the active sprint from the project board. Prefers items with Status = "In progress"; falls back to the earliest incomplete Phase.
 - **`/pr-driven-dev`** — enforces feature-branch + PR workflow; never commit directly to `master`. Includes a rescue flow if edits start on `master` by accident.
 - **`/shared-creds`** — fetches shared third-party credentials (Twilio, Deepgram, Anthropic, ElevenLabs, Square, etc.) from the private Discord `#shared-creds` channel via the Discord MCP. Encodes the don't-commit / don't-memory-save rules.
+- **`/onboard-restaurant`** — admin-assisted onboarding from a restaurant website URL: scrapes name/phone/address/hours/menu, asks for any gaps (image-only menus, missing hours, etc.), writes `restaurants/<rid>.json`, and dry-runs/then-confirms `scripts/provision_restaurant.py`. The Sprint 2.1 path; pre-dates the Sprint 4.2 self-serve wizard.
 
 ## Discord integration
 
