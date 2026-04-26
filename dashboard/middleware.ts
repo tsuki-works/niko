@@ -14,7 +14,11 @@
  */
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { SESSION_COOKIE_NAME } from '@/lib/auth/session';
+// Edge-runtime safe: do NOT import from lib/auth/session here — that
+// file pulls in firebase-admin via lib/firebase/admin, which uses
+// Node's `process` module and crashes the Edge bundle. Keep
+// middleware imports limited to constants and Edge-compatible code.
+import { SESSION_COOKIE_NAME } from '@/lib/auth/constants';
 
 const PUBLIC_PREFIXES = ['/login', '/api/auth'];
 

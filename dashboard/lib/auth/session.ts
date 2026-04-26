@@ -17,12 +17,15 @@ import 'server-only';
 import { cookies } from 'next/headers';
 
 import { adminAuth } from '@/lib/firebase/admin';
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_MAX_AGE_SECONDS,
+} from '@/lib/auth/constants';
 
-export const SESSION_COOKIE_NAME = '__session';
-// Five days. Long enough that a casual user doesn't get logged out
-// during a shift, short enough that a stolen cookie has limited
-// utility. Refresh on every successful sign-in.
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 5;
+// Re-exports for backwards compatibility with existing imports —
+// middleware.ts must import from `@/lib/auth/constants` directly to
+// stay Edge-runtime safe.
+export { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS };
 
 export type Session = {
   uid: string;
