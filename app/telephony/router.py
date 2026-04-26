@@ -30,7 +30,7 @@ from twilio.twiml.voice_response import Connect, VoiceResponse
 from app.config import settings
 from app.llm.client import stream_reply
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
-from app.orders.models import Order
+from app.orders.models import Order, OrderStatus
 from app.storage import call_sessions
 from app.tts.client import speak
 
@@ -40,6 +40,13 @@ logger = logging.getLogger(__name__)
 SILENCE_TIMEOUT_SECONDS = 10.0
 SILENCE_PROMPT = "Are you still there?"
 GREETING_TRANSCRIPT = "[call started — greet the caller]"
+
+# Auto-hangup after order confirmation (#78). Twilio echoes back this
+# named mark when its audio buffer drains, signalling the caller has
+# heard the goodbye; we then hold for the grace window in case they
+# squeeze in a late question before terminating the call.
+END_OF_CALL_MARK = "end_of_call"
+HANGUP_GRACE_SECONDS = 3.0
 
 
 def _bg_call_event(call_sid: str | None, **kwargs) -> None:
@@ -55,6 +62,83 @@ def _bg_call_event(call_sid: str | None, **kwargs) -> None:
     except RuntimeError:
         return
     loop.create_task(asyncio.to_thread(call_sessions.record_event, call_sid, **kwargs))
+
+
+def _twilio_end_call_sync(call_sid: str) -> None:
+    """End a Twilio call via the REST API. Runs in a worker thread so the
+    audio loop never blocks on network I/O."""
+    sid = settings.twilio_account_sid
+    token = settings.twilio_auth_token
+    if not sid or not token:
+        logger.warning(
+            "twilio creds missing; cannot end call_sid=%s", call_sid
+        )
+        return
+    from twilio.rest import Client as TwilioRestClient
+
+    TwilioRestClient(sid, token).calls(call_sid).update(status="completed")
+
+
+async def send_end_of_call_mark(
+    websocket: WebSocket, stream_sid: str | None
+) -> bool:
+    """Append a named ``mark`` event to Twilio's outgoing media stream.
+
+    Twilio echoes the same mark back over the WebSocket once its audio
+    buffer drains past it — i.e. once the caller has heard everything
+    we sent. We use that as the precise trigger for auto-hangup (#78).
+    Returns True if the send succeeded.
+    """
+    if not stream_sid:
+        return False
+    try:
+        await websocket.send_json(
+            {
+                "event": "mark",
+                "streamSid": stream_sid,
+                "mark": {"name": END_OF_CALL_MARK},
+            }
+        )
+        return True
+    except WebSocketDisconnect:
+        return False
+    except Exception:
+        logger.exception(
+            "mark: failed to send end_of_call mark stream_sid=%s", stream_sid
+        )
+        return False
+
+
+async def _hang_up_after_grace(state: _CallState) -> None:
+    """Wait HANGUP_GRACE_SECONDS, then end the call IFF the caller
+    didn't speak in the meantime.
+
+    The grace window lets a caller squeeze in a late follow-up like
+    *"how long does that take?"* — a final transcript clears
+    ``state.pending_hangup`` and we abort.
+    """
+    try:
+        await asyncio.sleep(HANGUP_GRACE_SECONDS)
+    except asyncio.CancelledError:
+        return
+    if not state.pending_hangup or not state.call_sid:
+        return
+    try:
+        await asyncio.to_thread(_twilio_end_call_sync, state.call_sid)
+        logger.info("call ended by server call_sid=%s", state.call_sid)
+    except Exception:
+        logger.exception(
+            "auto-hangup: REST end_call failed call_sid=%s", state.call_sid
+        )
+
+
+def _abort_pending_hangup(state: _CallState) -> None:
+    """Cancel a pending auto-hangup because the caller spoke during
+    the grace window. Safe to call when no hangup is pending."""
+    state.pending_hangup = False
+    if state.hangup_task and not state.hangup_task.done():
+        state.hangup_task.cancel()
+    state.hangup_task = None
 
 
 async def clear_twilio_audio(websocket: WebSocket, stream_sid: str | None) -> None:
@@ -87,6 +171,8 @@ class _CallState:
     history:      list[dict]       = field(default_factory=list)
     llm_task:     asyncio.Task | None = None   # current LLM→TTS turn
     silence_task: asyncio.Task | None = None   # silence watchdog
+    hangup_task:  asyncio.Task | None = None   # pending auto-hangup (#78)
+    pending_hangup: bool           = False     # set when goodbye mark sent (#78)
 
 
 async def _open_deepgram_connection(call_sid: str | None, on_final: Callable):
@@ -218,6 +304,16 @@ async def _run_llm_tts_turn(
                         text=full_reply,
                         detail={"text": full_reply},
                     )
+                # Order just got confirmed — queue a Twilio mark behind the
+                # goodbye audio so we know precisely when to hang up (#78).
+                if (
+                    state.order is not None
+                    and state.order.status == OrderStatus.CONFIRMED
+                    and state.stream_sid
+                ):
+                    sent = await send_end_of_call_mark(websocket, state.stream_sid)
+                    if sent:
+                        state.pending_hangup = True
 
     except asyncio.CancelledError:
         logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)
@@ -244,6 +340,10 @@ async def _handle_final_transcript(
         state.silence_task and not state.silence_task.done()
     )
     _cancel_silence_task(state)
+    # Caller spoke — abort any pending auto-hangup (#78). Even if they
+    # spoke during the grace window after a confirmation, we want to
+    # keep the call alive and process this transcript.
+    _abort_pending_hangup(state)
     if interrupted or silence_was_active:
         # Drop Twilio's pending audio buffer so the caller actually hears
         # us pause instead of getting talked over (#74).
@@ -336,6 +436,22 @@ async def media_stream(websocket: WebSocket) -> None:
                     audio = base64.b64decode(msg["media"]["payload"])
                     await dg_conn.send(audio)
 
+            elif event == "mark":
+                # Twilio echoes our outgoing marks once the audio queued
+                # before them has finished playing. We use it to drive
+                # auto-hangup after order confirmation (#78).
+                mark_name = msg.get("mark", {}).get("name")
+                if mark_name == END_OF_CALL_MARK and state.pending_hangup:
+                    logger.info(
+                        "auto-hangup: end_of_call mark received call_sid=%s",
+                        state.call_sid,
+                    )
+                    if state.hangup_task and not state.hangup_task.done():
+                        state.hangup_task.cancel()
+                    state.hangup_task = asyncio.create_task(
+                        _hang_up_after_grace(state)
+                    )
+
             elif event == "stop":
                 logger.info("media-stream stop call_sid=%s", state.call_sid)
                 _bg_call_event(state.call_sid, kind="stop")
@@ -351,6 +467,9 @@ async def media_stream(websocket: WebSocket) -> None:
         logger.info("media-stream disconnected call_sid=%s", state.call_sid)
     finally:
         _cancel_silence_task(state)
+        # Auto-hangup: stop any pending grace-window timer; the call is
+        # already ending so we don't need to fire the REST close (#78).
+        _abort_pending_hangup(state)
         if state.llm_task and not state.llm_task.done():
             state.llm_task.cancel()
             try:

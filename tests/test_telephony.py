@@ -288,6 +288,83 @@ async def test_clear_twilio_audio_skips_when_stream_sid_missing():
 
 
 @pytest.mark.asyncio
+async def test_send_end_of_call_mark_emits_mark_payload():
+    from app.telephony.router import END_OF_CALL_MARK, send_end_of_call_mark
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+
+    sent = await send_end_of_call_mark(ws, "MZtest456")
+
+    assert sent is True
+    ws.send_json.assert_awaited_once_with(
+        {
+            "event": "mark",
+            "streamSid": "MZtest456",
+            "mark": {"name": END_OF_CALL_MARK},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_end_of_call_mark_returns_false_when_stream_sid_missing():
+    from app.telephony.router import send_end_of_call_mark
+
+    ws = AsyncMock()
+    sent = await send_end_of_call_mark(ws, None)
+    assert sent is False
+    ws.send_json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hang_up_after_grace_calls_twilio_when_pending(monkeypatch):
+    """The grace timer fires the REST hangup when no transcript arrived."""
+    from app.telephony.router import (
+        HANGUP_GRACE_SECONDS,
+        _CallState,
+        _hang_up_after_grace,
+    )
+
+    ended: list[str] = []
+    monkeypatch.setattr(
+        "app.telephony.router._twilio_end_call_sync",
+        lambda call_sid: ended.append(call_sid),
+    )
+    # Speed the grace timer up so the test runs fast.
+    monkeypatch.setattr("app.telephony.router.HANGUP_GRACE_SECONDS", 0.01)
+
+    state = _CallState(call_sid="CAtest", pending_hangup=True)
+    await _hang_up_after_grace(state)
+
+    assert ended == ["CAtest"]
+    # Sanity: original constant unchanged.
+    assert HANGUP_GRACE_SECONDS == 3.0
+
+
+@pytest.mark.asyncio
+async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
+    """If pending_hangup gets cleared during the grace window (caller
+    spoke), the REST hangup MUST NOT fire."""
+    from app.telephony.router import _CallState, _hang_up_after_grace
+
+    ended: list[str] = []
+    monkeypatch.setattr(
+        "app.telephony.router._twilio_end_call_sync",
+        lambda call_sid: ended.append(call_sid),
+    )
+    monkeypatch.setattr("app.telephony.router.HANGUP_GRACE_SECONDS", 0.01)
+
+    state = _CallState(call_sid="CAtest", pending_hangup=True)
+    # Simulate: caller spoke during the grace window — _handle_final_transcript
+    # cleared the flag before the timer fired.
+    state.pending_hangup = False
+
+    await _hang_up_after_grace(state)
+
+    assert ended == []
+
+
+@pytest.mark.asyncio
 async def test_clear_twilio_audio_swallows_websocket_disconnect():
     """If the caller already hung up, the clear send raises — but we
     must not let that exception escape into the call loop."""

@@ -42,6 +42,18 @@ def test_prompt_requires_text_before_tool_use():
     assert "never emit update_order before any spoken words" in lower
 
 
+def test_prompt_makes_confirmation_goodbyes_terminal():
+    """Regression for #78 — once the caller confirms, the agent should
+    say a brief terminal goodbye and NOT ask another question. Otherwise
+    the auto-hangup would cut off whatever the bot asked next."""
+    prompt = build_system_prompt()
+    lower = prompt.lower()
+    assert "closing the call" in lower
+    assert "do not ask another follow-up question after confirming" in lower
+    # Spot-check that the directive references the confirmed status flow.
+    assert 'set the order\'s status to "confirmed"' in lower or "status to confirmed" in lower
+
+
 def test_module_level_system_prompt_matches_builder():
     """The cached SYSTEM_PROMPT must equal a fresh build — catches the
     case where someone edits build_system_prompt() but forgets that
