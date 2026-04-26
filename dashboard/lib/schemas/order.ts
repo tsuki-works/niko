@@ -24,7 +24,13 @@ export const OrderStatusSchema = z.enum([
 ]);
 export type OrderStatus = z.infer<typeof OrderStatusSchema>;
 
-export const ItemCategorySchema = z.enum(['pizza', 'side', 'drink']);
+// Free-form per-tenant category string. Was a fixed enum
+// (`pizza`/`side`/`drink`) during the pizza-shop POC; relaxed to a
+// plain string post-#98 so a Caribbean tenant can write
+// `category="appetizer"` without parse failure. The dashboard never
+// branches on the value — it's just displayed/grouped — so widening
+// is a safe schema-only change.
+export const ItemCategorySchema = z.string();
 export type ItemCategory = z.infer<typeof ItemCategorySchema>;
 
 export const LineItemSchema = z.object({

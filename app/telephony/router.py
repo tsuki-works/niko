@@ -249,13 +249,25 @@ async def _open_deepgram_connection(
     conn.on(LiveTranscriptionEvents.Transcript, on_transcript)
     conn.on(LiveTranscriptionEvents.Error, on_error)
 
+    # endpointing + utterance_end_ms together control how aggressively
+    # Deepgram closes a turn. We picked 800/1000 after a 2026-04-26
+    # Twilight test call where endpointing=300 fired ~7 false barge-ins
+    # in 3 minutes — every micro-pause mid-sentence ("i would like to"
+    # <breath> "have") was treated as a turn ending, and the AI kept
+    # saying "take your time" because it thought the caller had spoken.
+    # 800ms is Deepgram's recommended value for conversational flow;
+    # utterance_end_ms=1000 layers a prosody-aware end-of-utterance
+    # signal on top so we wait for "actually finished" instead of just
+    # "stopped making noise".
     options = LiveOptions(
         model="nova-2",
         encoding="mulaw",
         sample_rate=8000,
         channels=1,
         interim_results=True,
-        endpointing=300,
+        endpointing=800,
+        utterance_end_ms=1000,
+        vad_events=True,
     )
     started = await conn.start(options)
     if not started:
