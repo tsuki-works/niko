@@ -216,17 +216,96 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
 
     # No follow-up call — text was emitted.
     assert fake_client.messages.create.call_count == 1
-    # History ends with a synthetic tool_result so the next turn is valid.
-    assert result.history[-1] == {
-        "role": "user",
-        "content": [
-            {
-                "type": "tool_result",
-                "tool_use_id": "toolu_committed",
-                "content": "Order updated.",
-            }
-        ],
-    }
+    # History ends with a synthetic tool_result so the next turn is valid,
+    # AND that result carries the server-computed subtotal so Haiku can
+    # quote a verified number instead of fabricating one (per the 2026-04-26
+    # Twilight $50.50-vs-$49.25 incident).
+    last = result.history[-1]
+    assert last["role"] == "user"
+    assert len(last["content"]) == 1
+    block = last["content"][0]
+    assert block["type"] == "tool_result"
+    assert block["tool_use_id"] == "toolu_committed"
+    assert "Subtotal: $19.99" in block["content"]
+    assert "Margarita" in block["content"]
+
+
+def test_tool_result_carries_post_apply_subtotal():
+    """Each update_order tool_result feeds the post-apply subtotal back
+    to Haiku so it can quote a server-verified number to the caller
+    (regression for the 2026-04-26 Twilight call where the model
+    fabricated a $50.50 total for an order that summed to $49.25).
+    Multiple tool_uses in one turn each get their own snapshot."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(type="text", text="Adding those now."),
+            FakeBlock(
+                type="tool_use",
+                id="toolu_one",
+                name="update_order",
+                input={
+                    "items": [
+                        {
+                            "name": "Wings",
+                            "category": "appetizers",
+                            "size": None,
+                            "quantity": 1,
+                            "unit_price": 14.50,
+                        }
+                    ],
+                    "status": "in_progress",
+                },
+            ),
+            FakeBlock(
+                type="tool_use",
+                id="toolu_two",
+                name="update_order",
+                input={
+                    "items": [
+                        {
+                            "name": "Wings",
+                            "category": "appetizers",
+                            "size": None,
+                            "quantity": 1,
+                            "unit_price": 14.50,
+                        },
+                        {
+                            "name": "Fries",
+                            "category": "appetizers",
+                            "size": None,
+                            "quantity": 1,
+                            "unit_price": 7.50,
+                        },
+                    ],
+                    "status": "in_progress",
+                },
+            ),
+        ]
+    )
+
+    result = generate_reply(
+        transcript="add wings and fries",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    last = result.history[-1]
+    assert last["role"] == "user"
+    blocks = last["content"]
+    assert len(blocks) == 2
+    # First tool_result: state after applying tool_one (just wings).
+    assert blocks[0]["tool_use_id"] == "toolu_one"
+    assert "Subtotal: $14.50" in blocks[0]["content"]
+    assert "Wings" in blocks[0]["content"]
+    # Second tool_result: state after applying tool_two (wings + fries).
+    assert blocks[1]["tool_use_id"] == "toolu_two"
+    assert "Subtotal: $22.00" in blocks[1]["content"]
+    assert "Wings" in blocks[1]["content"] and "Fries" in blocks[1]["content"]
 
 
 def test_next_transcript_merges_into_pending_tool_result():

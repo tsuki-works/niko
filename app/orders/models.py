@@ -37,6 +37,17 @@ class OrderStatus(str, Enum):
 
 
 class ItemCategory(str, Enum):
+    """Legacy fixed-enum categories from the pizza-shop demo era.
+
+    Kept around because existing Firestore order docs are written with
+    these literal values, and the LLM tool schema used to require them.
+    Post-#98 (dynamic prompt categories), the LineItem.category field
+    is a free-form string — tenants pick their own categories
+    (appetizer, soup, main, ...). This enum is no longer authoritative;
+    treat it as "values that have appeared historically" rather than
+    "the only allowed values".
+    """
+
     PIZZA = "pizza"
     SIDE = "side"
     DRINK = "drink"
@@ -48,7 +59,12 @@ def _now_utc() -> datetime:
 
 class LineItem(BaseModel):
     name: str
-    category: ItemCategory
+    # Free-form per-tenant category (matches the menu key, e.g.
+    # ``appetizers``, ``mains``, ``soups``). Was a fixed ItemCategory
+    # enum during the pizza-shop POC; relaxed to ``str`` after #98 so
+    # the LLM's tool_use payloads survive validation when a Caribbean
+    # menu emits ``category="appetizer"``.
+    category: str
     size: Optional[str] = None
     quantity: int = Field(ge=1)
     unit_price: float = Field(ge=0)

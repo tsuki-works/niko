@@ -54,13 +54,21 @@ UPDATE_ORDER_TOOL: dict[str, Any] = {
                         "name": {"type": "string"},
                         "category": {
                             "type": "string",
-                            "enum": ["pizza", "side", "drink"],
+                            "description": (
+                                "Free-form category from the menu (e.g. "
+                                "appetizer, main, soup, drink, dessert). "
+                                "Used for grouping in the dashboard — not "
+                                "validated against a fixed enum, since "
+                                "tenants pick their own category names."
+                            ),
                         },
                         "size": {
                             "type": ["string", "null"],
                             "description": (
-                                "For pizzas: small | medium | large. "
-                                "Null for sides and drinks."
+                                "Required when the menu item is multi-size "
+                                "(small/medium/large, half/whole, etc.) — "
+                                "use whichever size keys the menu shows. "
+                                "Null for single-priced items."
                             ),
                         },
                         "quantity": {"type": "integer", "minimum": 1},
@@ -155,6 +163,24 @@ def _serialize_block(block: Any) -> dict[str, Any]:
             "input": block.input,
         }
     raise ValueError(f"Unsupported content block type: {block.type!r}")
+
+
+def _summarize_order(order: Order) -> str:
+    """Server-side summary fed back to the LLM as a ``tool_result``.
+
+    Returning the post-apply subtotal + item list closes the
+    accuracy hole observed on the 2026-04-26 Twilight call where
+    Haiku quoted a $50.50 total for an order that actually summed to
+    $49.25 — without a server-verified number in the tool_result, the
+    model fabricates totals from its memory of unit prices. Now it
+    has a ground-truth subtotal to read back instead.
+    """
+    if not order.items:
+        return "Order updated. Subtotal: $0.00. (no items yet)"
+    items_summary = ", ".join(
+        f"{item.quantity}× {item.name}" for item in order.items
+    )
+    return f"Order updated. Subtotal: ${order.subtotal:.2f}. Items: {items_summary}."
 
 
 def _tool_result_block(tool_use_id: str, content: str = "Order updated.") -> dict[str, Any]:
@@ -252,8 +278,12 @@ def generate_reply(
             tool_uses.append({"id": block.id, "input": block.input})
 
     updated_order = order
+    tool_results: list[dict[str, Any]] = []
     for tu in tool_uses:
         updated_order = _apply_update(updated_order, tu["input"])
+        tool_results.append(
+            _tool_result_block(tu["id"], _summarize_order(updated_order))
+        )
 
     assistant_content = [_serialize_block(block) for block in response.content]
     new_history = [
@@ -264,10 +294,7 @@ def generate_reply(
     if tool_uses:
         new_history = [
             *new_history,
-            {
-                "role": "user",
-                "content": [_tool_result_block(tu["id"]) for tu in tool_uses],
-            },
+            {"role": "user", "content": tool_results},
         ]
 
     if not reply_text_parts and tool_uses:
@@ -341,8 +368,12 @@ async def stream_reply(
             tool_uses.append({"id": block.id, "input": block.input})
 
     updated_order = order
+    tool_results: list[dict[str, Any]] = []
     for tu in tool_uses:
         updated_order = _apply_update(updated_order, tu["input"])
+        tool_results.append(
+            _tool_result_block(tu["id"], _summarize_order(updated_order))
+        )
 
     assistant_content = [_serialize_block(block) for block in first_message.content]
     new_history = [
@@ -353,10 +384,7 @@ async def stream_reply(
     if tool_uses:
         new_history = [
             *new_history,
-            {
-                "role": "user",
-                "content": [_tool_result_block(tu["id"]) for tu in tool_uses],
-            },
+            {"role": "user", "content": tool_results},
         ]
 
     text_emitted = bool(text_parts)

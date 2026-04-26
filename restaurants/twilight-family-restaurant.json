@@ -16,7 +16,7 @@
     {"name": "Spicy French Fries", "price": 7.50},
     {"name": "Sweet and Sour Chicken Balls (8)", "price": 13.25},
     {"name": "Deep Fried Chicken Wings", "price": 13.50},
-    {"name": "Chicken Wings Flavored", "description": "BBQ, honey garlic, sweet chilli, hot and spicy, or buffalo.", "price": 14.50},
+    {"name": "Flavored Chicken Wings", "description": "Choice of BBQ, honey garlic, sweet chilli, hot and spicy, or buffalo.", "price": 14.50},
     {"name": "Chicken Wings and Fries (6)", "price": 13.25},
     {"name": "Deep Fried Chicken", "sizes": {"half": 14.00, "whole": 24.50}},
     {"name": "Deep Fried Chicken Wonton (12)", "price": 12.25},
