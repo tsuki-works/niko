@@ -12,7 +12,7 @@
  */
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 import { signIn } from '@/lib/auth/client';
@@ -27,7 +27,18 @@ function safeRedirect(raw: string | null): string {
   return raw;
 }
 
+// Next 15 requires `useSearchParams` to be wrapped in <Suspense> so
+// the surrounding tree can statically prerender. Hoisting the form
+// into an inner component keeps the suspense boundary tight.
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginShell />}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
   const next = safeRedirect(search.get('next'));
@@ -119,6 +130,31 @@ export default function LoginPage() {
         <p className="pt-4 text-center text-xs text-muted-foreground">
           Trouble signing in? Contact your Tsuki Works admin.
         </p>
+      </div>
+    </main>
+  );
+}
+
+/**
+ * Shown while the searchParams hook is suspended during prerender.
+ * Mirrors the LoginForm chrome so the layout doesn't pop in when the
+ * client takes over.
+ */
+function LoginShell() {
+  return (
+    <main className="flex min-h-svh items-center justify-center bg-background px-4">
+      <div className="w-full max-w-sm">
+        <div className="flex flex-col items-center gap-3 pb-6">
+          <NikoMark size={54} />
+          <div className="text-center">
+            <h1 className="text-2xl font-medium tracking-tight">
+              Sign in to Niko
+            </h1>
+            <p className="pt-1 text-sm text-muted-foreground">
+              Loading…
+            </p>
+          </div>
+        </div>
       </div>
     </main>
   );
