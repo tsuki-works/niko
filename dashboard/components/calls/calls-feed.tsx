@@ -17,11 +17,12 @@ import type { CallSession } from '@/lib/schemas/call';
 
 type Props = {
   initial: CallSession[];
+  restaurantId: string;
 };
 
 const ANNOUNCE_THROTTLE_MS = 2000;
 
-export function CallsFeed({ initial }: Props) {
+export function CallsFeed({ initial, restaurantId }: Props) {
   const [calls, setCalls] = useState<CallSession[]>(initial);
   const [announcement, setAnnouncement] = useState('');
 
@@ -32,7 +33,12 @@ export function CallsFeed({ initial }: Props) {
     if (!db) return;
 
     const q = query(
-      collection(db, 'call_sessions').withConverter(callSessionConverter),
+      collection(
+        db,
+        'restaurants',
+        restaurantId,
+        'call_sessions',
+      ).withConverter(callSessionConverter),
       orderBy('started_at', 'desc'),
       fsLimit(50),
     );
@@ -56,7 +62,7 @@ export function CallsFeed({ initial }: Props) {
       (err) => console.error('Calls subscription error', err),
     );
     return unsub;
-  }, []);
+  }, [restaurantId]);
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-6">

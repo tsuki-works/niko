@@ -23,25 +23,18 @@ import {
   type OrderStatus,
 } from '@/lib/schemas/order';
 import { parseOrderFromJson } from '@/lib/firebase/converters';
+import { apiFetch } from '@/lib/api/http';
 
 const STUB_GET_ORDER_BY_ID = true;
 const STUB_CANCEL_ORDER = true;
-
-function apiBase(): string {
-  const base = process.env.NIKO_API_BASE_URL;
-  if (!base) throw new Error('NIKO_API_BASE_URL is not set');
-  return base.replace(/\/$/, '');
-}
 
 export async function listOrders(params: {
   status?: OrderStatus;
   limit?: number;
 }): Promise<Order[]> {
   const limit = params.limit ?? 50;
-  const url = new URL(`${apiBase()}/orders`);
-  url.searchParams.set('limit', String(limit));
-
-  const res = await fetch(url, { cache: 'no-store' });
+  const path = `/orders?limit=${encodeURIComponent(String(limit))}`;
+  const res = await apiFetch(path);
   if (!res.ok) {
     throw new Error(`GET /orders failed: ${res.status} ${res.statusText}`);
   }
@@ -66,8 +59,8 @@ export async function getOrder(callSid: string): Promise<Order | null> {
     return all.find((o) => o.call_sid === callSid) ?? null;
   }
 
-  const url = `${apiBase()}/orders/${encodeURIComponent(callSid)}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const path = `/orders/${encodeURIComponent(callSid)}`;
+  const res = await apiFetch(path);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(
@@ -90,11 +83,8 @@ export async function cancelOrderApi(callSid: string): Promise<CancelResult> {
     };
   }
 
-  const url = `${apiBase()}/orders/${encodeURIComponent(callSid)}/cancel`;
-  const res = await fetch(url, {
-    method: 'POST',
-    cache: 'no-store',
-  });
+  const path = `/orders/${encodeURIComponent(callSid)}/cancel`;
+  const res = await apiFetch(path, { method: 'POST' });
   if (!res.ok) {
     return {
       success: false,

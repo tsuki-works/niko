@@ -46,7 +46,13 @@ function isActive(pathname: string, item: NavItem): boolean {
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function AppSidebar() {
+export function AppSidebar({
+  restaurantName,
+  userEmail,
+}: {
+  restaurantName?: string;
+  userEmail?: string;
+}) {
   const pathname = usePathname();
 
   return (
@@ -101,8 +107,13 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <div className="px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-          Phase 1 POC
+        <div className="flex flex-col gap-0.5 px-2 py-1 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+          {restaurantName ? (
+            <span className="truncate font-medium text-foreground">
+              {restaurantName}
+            </span>
+          ) : null}
+          {userEmail ? <span className="truncate">{userEmail}</span> : null}
         </div>
       </SidebarFooter>
     </Sidebar>

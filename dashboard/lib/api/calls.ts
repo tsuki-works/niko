@@ -13,6 +13,8 @@
  */
 import 'server-only';
 
+import { apiFetch } from '@/lib/api/http';
+
 export type CallStatus = 'confirmed' | 'ended' | 'in_progress';
 
 export type CallEventKind =
@@ -59,17 +61,9 @@ export type CallTimelineResult =
   | { available: false }
   | { available: true; notFound: true };
 
-function apiBase(): string {
-  const base = process.env.NIKO_API_BASE_URL;
-  if (!base) throw new Error('NIKO_API_BASE_URL is not set');
-  return base.replace(/\/$/, '');
-}
-
 export async function listRecentCalls(hours = 24): Promise<CallsListResult> {
-  const url = new URL(`${apiBase()}/dev/calls`);
-  url.searchParams.set('hours', String(hours));
-
-  const res = await fetch(url, { cache: 'no-store' });
+  const path = `/dev/calls?hours=${encodeURIComponent(String(hours))}`;
+  const res = await apiFetch(path);
   if (res.status === 404) return { available: false };
   if (!res.ok) {
     throw new Error(`GET /dev/calls failed: ${res.status} ${res.statusText}`);
@@ -82,16 +76,14 @@ export async function listRecentCalls(hours = 24): Promise<CallsListResult> {
 export async function getCallTimeline(
   callSid: string,
 ): Promise<CallTimelineResult> {
-  const url = `${apiBase()}/dev/calls/${encodeURIComponent(callSid)}`;
-  const res = await fetch(url, { cache: 'no-store' });
+  const path = `/dev/calls/${encodeURIComponent(callSid)}`;
+  const res = await apiFetch(path);
 
   if (res.status === 404) {
     // The backend returns 404 for both "dev disabled" and "call not found".
     // Probe the list endpoint to disambiguate — if it 404s the feature is
     // disabled; otherwise the specific call_sid wasn't in the log window.
-    const probe = await fetch(`${apiBase()}/dev/calls?hours=1`, {
-      cache: 'no-store',
-    });
+    const probe = await apiFetch('/dev/calls?hours=1');
     if (probe.status === 404) return { available: false };
     return { available: true, notFound: true };
   }

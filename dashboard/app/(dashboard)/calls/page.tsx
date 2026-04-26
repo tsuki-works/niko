@@ -1,12 +1,18 @@
+import { redirect } from 'next/navigation';
+
 import { CallsFeed } from '@/components/calls/calls-feed';
 import { ComingSoon } from '@/components/shared/coming-soon';
 import { listRecentCalls } from '@/lib/api/calls';
 import { parseCallSessionFromJson } from '@/lib/firebase/call-converters';
+import { getServerSession } from '@/lib/auth/session';
 import type { CallSession } from '@/lib/schemas/call';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CallsPage() {
+  const session = await getServerSession();
+  if (!session) redirect('/login');
+
   const result = await listRecentCalls(24);
 
   if (!result.available) {
@@ -29,5 +35,5 @@ export default async function CallsPage() {
     }),
   );
 
-  return <CallsFeed initial={initial} />;
+  return <CallsFeed initial={initial} restaurantId={session.restaurantId} />;
 }

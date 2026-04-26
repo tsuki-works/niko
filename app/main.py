@@ -1,13 +1,14 @@
 import logging
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 
 logging.basicConfig(level=logging.INFO)
 
 from datetime import datetime
 from typing import Any
 
+from app.auth import Tenant, current_tenant
 from app.config import settings
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import call_sessions, firestore as order_storage
@@ -28,26 +29,39 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/orders")
-def list_orders(limit: int = 50, restaurant_id: str = DEMO_RID):
-    """Return recent orders for the dashboard, most-recent-first.
+@app.get("/me")
+def whoami(tenant: Tenant = Depends(current_tenant)):
+    """Return the verified tenant context for the dashboard.
 
-    Read-only view over the Firestore
-    ``restaurants/{restaurant_id}/orders`` subcollection (#79).
-
-    The ``restaurant_id`` query param defaults to the demo tenant for
-    now; PR D adds Firebase Auth and derives the tenant from the
-    requester's custom claims so the param can drop to the
-    authenticated user's restaurant only.
-
-    Hard cap on ``limit`` so a misconfigured client can't exhaust the
-    Cloud Run instance.
+    Used right after login to populate the auth-aware UI shell with
+    the user's email + restaurant id without re-decoding the cookie
+    on the client. Adds a round-trip but keeps the dashboard's
+    server-derived auth source-of-truth single.
     """
+    return {
+        "uid": tenant.uid,
+        "email": tenant.email,
+        "restaurant_id": tenant.restaurant_id,
+        "role": tenant.role,
+    }
 
+
+@app.get("/orders")
+def list_orders(
+    limit: int = 50,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Return the calling tenant's recent orders, most-recent-first.
+
+    Reads from ``restaurants/{tenant.restaurant_id}/orders``. The
+    tenant comes from the verified Firebase session cookie or Bearer
+    ID token — there is no query-param override (#81 closes the
+    cross-tenant-read hole that was open through PR C).
+    """
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=400, detail="limit must be 1..200")
     orders = order_storage.list_recent_orders(
-        restaurant_id=restaurant_id, limit=limit
+        restaurant_id=tenant.restaurant_id, limit=limit
     )
     return {"orders": [o.model_dump(mode="json") for o in orders]}
 
@@ -68,21 +82,23 @@ def _iso(value: Any) -> str | None:
 
 
 @app.get("/dev/calls")
-def dev_list_calls(limit: int = 50, restaurant_id: str = DEMO_RID):
-    """List recent call sessions from Firestore, newest-first.
+def dev_list_calls(
+    limit: int = 50,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """List the calling tenant's recent call sessions, newest-first.
 
     Gated on ``NIKO_DEV_ENDPOINTS=true``. Reads from the nested
-    ``restaurants/{restaurant_id}/call_sessions`` subcollection (#79
-    PR C). The dashboard's live ``onSnapshot`` subscription still
-    points at the legacy flat ``call_sessions`` collection until PR D
-    moves it; both paths receive every write via the dual-write
-    pattern in ``app/storage/call_sessions.py``.
+    ``restaurants/{tenant.restaurant_id}/call_sessions`` subcollection.
+    The dashboard's live ``onSnapshot`` now also points at the nested
+    path (PR D); the legacy flat collection writes are still mirrored
+    in ``app/storage/call_sessions.py`` until PR F removes them.
     """
     _require_dev_endpoints()
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=400, detail="limit must be 1..200")
     sessions = call_sessions.list_recent_sessions(
-        restaurant_id=restaurant_id, limit=limit
+        restaurant_id=tenant.restaurant_id, limit=limit
     )
     return {
         "calls": [
@@ -101,18 +117,20 @@ def dev_list_calls(limit: int = 50, restaurant_id: str = DEMO_RID):
 
 
 @app.get("/dev/calls/{call_sid}")
-def dev_call_timeline(call_sid: str, restaurant_id: str = DEMO_RID):
-    """Full event timeline for one call_sid (#70 + #79 PR C).
+def dev_call_timeline(
+    call_sid: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Full event timeline for one of the calling tenant's calls.
 
-    Reads from the
-    ``restaurants/{restaurant_id}/call_sessions/{call_sid}/events``
-    subcollection. The dashboard uses this for the initial server
-    render; live updates still arrive via direct Firestore
-    ``onSnapshot`` against the legacy flat path until PR D switches
-    the subscription.
+    Reads from
+    ``restaurants/{tenant.restaurant_id}/call_sessions/{call_sid}/events``.
+    A 404 here means *either* the call_sid doesn't exist *or* it
+    belongs to a different tenant — both are indistinguishable to
+    the caller, which is the desired tenant-isolation property.
     """
     _require_dev_endpoints()
-    events = call_sessions.get_session_events(call_sid, restaurant_id)
+    events = call_sessions.get_session_events(call_sid, tenant.restaurant_id)
     if events is None:
         raise HTTPException(status_code=404, detail="call_sid not found")
     return {
@@ -135,7 +153,9 @@ def seed_order():
     real Firestore read path before the voice loop is wired up.
 
     Gated on ``NIKO_DEV_ENDPOINTS=true`` — returns 404 in production so
-    the route effectively doesn't exist there.
+    the route effectively doesn't exist there. Seeds always land
+    under the demo tenant ``niko-pizza-kitchen`` (no auth required;
+    this is a Tsuki-internal dev escape hatch).
     """
 
     if not settings.niko_dev_endpoints:
@@ -144,6 +164,7 @@ def seed_order():
     seed = Order(
         call_sid=f"CAseed-{int(time.time())}",
         caller_phone="+15551234567",
+        restaurant_id=DEMO_RID,
         order_type=OrderType.PICKUP,
         items=[
             LineItem(

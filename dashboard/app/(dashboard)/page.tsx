@@ -1,17 +1,25 @@
+import { redirect } from 'next/navigation';
+
 import { OrdersFeed } from '@/components/orders/orders-feed';
 import type { CountsByStatus } from '@/components/orders/filter-tabs';
 import { listOrders, parseStatusParam } from '@/lib/api/orders';
+import { getServerSession } from '@/lib/auth/session';
+import { humanizeRestaurantId } from '@/lib/formatters/restaurant';
 import type { Order, OrderStatus } from '@/lib/schemas/order';
 
 export const dynamic = 'force-dynamic';
-
-const RESTAURANT_PHONE = '+1 647-905-8093';
 
 export default async function Page({
   searchParams,
 }: {
   searchParams: Promise<{ status?: string }>;
 }) {
+  // Belt-and-suspenders: layout already verified the session, but
+  // running it here lets us narrow the type without `!` and gives us
+  // restaurantId for the data subscription.
+  const session = await getServerSession();
+  if (!session) redirect('/login');
+
   const { status } = await searchParams;
   const filter = parseStatusParam(status);
 
@@ -26,7 +34,8 @@ export default async function Page({
       initial={initial}
       initialCounts={counts}
       statusFilter={filter}
-      restaurantPhone={RESTAURANT_PHONE}
+      restaurantId={session.restaurantId}
+      restaurantName={humanizeRestaurantId(session.restaurantId)}
     />
   );
 }
