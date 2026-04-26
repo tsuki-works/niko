@@ -29,9 +29,11 @@ from twilio.twiml.voice_response import Connect, VoiceResponse
 
 from app.config import settings
 from app.llm.client import stream_reply
+from app.llm.prompts import build_system_prompt
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
 from app.orders.models import Order, OrderStatus
-from app.storage import call_sessions
+from app.restaurants.models import Restaurant
+from app.storage import call_sessions, restaurants as restaurants_storage
 from app.tts.client import speak
 
 router = APIRouter()
@@ -199,6 +201,8 @@ class _CallState:
     stream_sid:   str | None       = None
     order:        Order | None     = None
     history:      list[dict]       = field(default_factory=list)
+    restaurant:   Restaurant | None = None     # tenant for this call (#79)
+    system_prompt: str             = ""        # built from restaurant on start
     llm_task:     asyncio.Task | None = None   # current LLM→TTS turn
     silence_task: asyncio.Task | None = None   # silence watchdog
     hangup_task:  asyncio.Task | None = None   # pending auto-hangup (#78)
@@ -300,7 +304,10 @@ async def _run_llm_tts_turn(
 
     try:
         async for event in stream_reply(
-            transcript=transcript, history=state.history, order=state.order
+            transcript=transcript,
+            history=state.history,
+            order=state.order,
+            system_prompt=state.system_prompt,
         ):
             if asyncio.current_task().cancelled():
                 return
@@ -460,11 +467,20 @@ async def media_stream(websocket: WebSocket) -> None:
                 start = msg.get("start", {})
                 state.call_sid = start.get("callSid")
                 state.stream_sid = start.get("streamSid")
-                state.order = Order(call_sid=state.call_sid or "unknown")
+                # PR A: every call uses the demo tenant. PR B reads
+                # Twilio's ``To`` field and routes to the matching
+                # restaurant doc.
+                state.restaurant = restaurants_storage.load_or_fallback_demo()
+                state.system_prompt = build_system_prompt(state.restaurant)
+                state.order = Order(
+                    call_sid=state.call_sid or "unknown",
+                    restaurant_id=state.restaurant.id,
+                )
                 logger.info(
-                    "media-stream start call_sid=%s stream_sid=%s",
+                    "media-stream start call_sid=%s stream_sid=%s restaurant=%s",
                     state.call_sid,
                     state.stream_sid,
+                    state.restaurant.id,
                 )
                 if state.call_sid:
                     asyncio.get_running_loop().create_task(

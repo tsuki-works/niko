@@ -16,6 +16,8 @@ from app.llm import client as client_module
 from app.llm.client import _apply_update, generate_reply, stream_reply
 from app.orders.models import Order, OrderStatus, OrderType
 
+_TEST_SYSTEM_PROMPT = "you are a test agent"
+
 
 @dataclass
 class FakeBlock:
@@ -51,6 +53,7 @@ def test_plain_text_response_leaves_order_unchanged():
         transcript="hello",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -94,6 +97,7 @@ def test_tool_use_updates_order_in_single_turn():
         transcript="one medium pepperoni for pickup",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -133,6 +137,7 @@ def test_tool_only_response_triggers_followup_call():
         transcript="never mind cancel",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -152,6 +157,7 @@ def test_history_threads_user_and_assistant_turns():
         transcript="one pepperoni please",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -204,6 +210,7 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
         transcript="i'll take a large margarita for pickup",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -263,6 +270,7 @@ def test_next_transcript_merges_into_pending_tool_result():
         transcript="extra olives please",
         history=history_with_pending_tool_result,
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -298,6 +306,7 @@ def test_history_strips_sdk_only_fields_from_assistant_blocks():
         transcript="one pepperoni please",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -361,6 +370,7 @@ def test_off_menu_request_leaves_order_empty():
         transcript="can I get some sushi",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -389,6 +399,7 @@ def test_unclear_utterance_asks_for_clarification():
         transcript="mmrgh pfftbl",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -454,6 +465,7 @@ def test_caller_changes_mind_replaces_items():
         transcript="actually scratch that, make it a veggie supreme",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
@@ -540,6 +552,7 @@ async def test_stream_reply_emits_text_deltas_then_final():
             transcript="hello",
             history=[],
             order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
             client=fake_client,
         )
     )
@@ -592,6 +605,7 @@ async def test_stream_reply_applies_tool_use_to_order_state():
             transcript="one medium pepperoni for pickup",
             history=[],
             order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
             client=fake_client,
         )
     )
@@ -633,6 +647,7 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
             transcript="never mind cancel",
             history=[],
             order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
             client=fake_client,
         )
     )
@@ -659,7 +674,11 @@ async def test_stream_reply_text_deltas_arrive_before_final():
 
     seen: list[str] = []
     async for event in stream_reply(
-        transcript="x", history=[], order=order, client=fake_client
+        transcript="x",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
     ):
         if event.text_delta is not None:
             seen.append(f"delta:{event.text_delta}")
@@ -707,6 +726,7 @@ def test_modifications_round_trip_into_line_item():
         transcript="large margherita extra cheese no basil",
         history=[],
         order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
         client=fake_client,
     )
 
