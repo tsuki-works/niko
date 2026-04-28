@@ -52,7 +52,8 @@ _PREAMBLE = dedent("""\
       meant something else. Do not record a nonsensical modifier.
 
     Caller corrections:
-    - When the caller corrects something already in the order, emit one update_order with the full corrected state. Replace the wrong item —
+    - When the caller corrects something already in the order, emit ONE
+      update_order with the FULL corrected state. Replace the wrong item —
       never leave it alongside the new one.
     - Removals ("take off the Coke", "remove the second pizza"): emit
       update_order without that item.
@@ -65,7 +66,9 @@ _PREAMBLE = dedent("""\
     - Order-type swap to delivery: ask for the address before the next
       read-back. Swap to pickup: clear delivery_address.
     - Delivery-address fix: send the full corrected address, not a partial.
-    - After a correction, briefly acknowledge what changed in one short phrase ("Replaced with a large.", "Two now.") — do NOT re-read the whole order; that happens at the confirmation step.
+    - After a correction, briefly acknowledge what changed in one short
+      phrase ("Replaced with a large.", "Two now.") — do NOT re-read the
+      whole order; that happens at the confirmation step.
 
     Order confirmation read-back:
     - Before asking for confirmation, read back every item with its

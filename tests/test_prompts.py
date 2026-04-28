@@ -255,7 +255,8 @@ def test_prompt_includes_caller_corrections_block():
     # Section header is present
     assert "caller corrections:" in lower
     # Core "replace, don't add" rule
-    assert "emit one update_order with the full corrected state" in lower
+    assert "emit one" in lower
+    assert "update_order with the full corrected state" in lower
     assert "replace the wrong item" in lower
     # Coverage of each correction shape (one anchor per pattern)
     assert "removals" in lower
@@ -264,4 +265,5 @@ def test_prompt_includes_caller_corrections_block():
     assert "order-type swap to delivery" in lower
     assert "delivery-address fix" in lower
     # Post-correction acknowledgement is short, not a full re-read
-    assert "do not re-read the whole order" in lower
+    assert "do not re-read" in lower
+    assert "whole order" in lower
