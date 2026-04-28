@@ -184,3 +184,29 @@ def test_get_restaurant_returns_none_when_firestore_raises(caplog):
         result = storage.get_restaurant("niko-pizza-kitchen")
 
     assert result is None
+
+
+def test_restaurant_offers_delivery_defaults_to_true():
+    """Sprint 2.2 #105 — every restaurant offers delivery unless explicitly
+    flagged off. Default True preserves current behavior for existing
+    Firestore docs, no migration needed."""
+    r = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+    )
+    assert r.offers_delivery is True
+
+    r_off = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+        offers_delivery=False,
+    )
+    assert r_off.offers_delivery is False

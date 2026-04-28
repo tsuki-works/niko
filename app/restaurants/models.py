@@ -76,5 +76,10 @@ class Restaurant(BaseModel):
     # configured their carrier-level forwarding so onboarding/support can
     # answer "why are calls landing here?".
     forwarding_mode: str = "always"
+    # Whether this tenant accepts delivery orders. Default True preserves
+    # current behavior for existing Firestore docs (Niko Pizza Kitchen,
+    # Twilight Family Restaurant). Flip to False in Firestore for
+    # pickup-only restaurants — the system prompt branches accordingly.
+    offers_delivery: bool = True
     created_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)
