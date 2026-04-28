@@ -26,7 +26,7 @@ import { parseOrderFromJson } from '@/lib/firebase/converters';
 import { apiFetch } from '@/lib/api/http';
 
 const STUB_GET_ORDER_BY_ID = true;
-const STUB_CANCEL_ORDER = true;
+const STUB_CANCEL_ORDER = false;
 
 export async function listOrders(params: {
   status?: OrderStatus;
@@ -78,19 +78,29 @@ export async function cancelOrderApi(callSid: string): Promise<CancelResult> {
   if (STUB_CANCEL_ORDER) {
     return {
       success: false,
-      error:
-        "Cancel isn't wired up yet — backend endpoint POST /orders/{call_sid}/cancel is pending.",
+      error: 'cancel endpoint not yet implemented',
     };
   }
 
   const path = `/orders/${encodeURIComponent(callSid)}/cancel`;
   const res = await apiFetch(path, { method: 'POST' });
+
   if (!res.ok) {
-    return {
-      success: false,
-      error: `POST cancel failed: ${res.status} ${res.statusText}`,
-    };
+    // FastAPI returns { detail: string } on 4xx — surface that detail
+    // to the user as the error message.
+    let detail: string;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      detail =
+        typeof body.detail === 'string'
+          ? body.detail
+          : `${res.status} ${res.statusText}`;
+    } catch {
+      detail = `${res.status} ${res.statusText}`;
+    }
+    return { success: false, error: detail };
   }
+
   const body = await res.json();
   const parsed = OrderSchema.safeParse(
     body && typeof body === 'object' && 'order' in body ? body.order : body,

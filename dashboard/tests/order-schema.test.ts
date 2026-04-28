@@ -47,8 +47,38 @@ describe('OrderSchema / parseOrderFromJson', () => {
 
   it('rejects unknown statuses via OrderSchema directly', () => {
     expect(() =>
-      OrderSchema.parse({ ...VALID, status: 'completed' }),
+      OrderSchema.parse({ ...VALID, status: 'flux-capacitor-engaged' }),
     ).toThrow();
+  });
+
+  it('parses orders with the new lifecycle statuses', () => {
+    for (const status of ['preparing', 'ready', 'completed'] as const) {
+      const order = OrderSchema.parse({ ...VALID, status });
+      expect(order.status).toBe(status);
+    }
+  });
+
+  it('parses orders with new per-transition timestamps populated', () => {
+    const order = OrderSchema.parse({
+      ...VALID,
+      status: 'completed',
+      preparing_at: '2026-04-20T19:35:00.000Z',
+      ready_at: '2026-04-20T19:42:00.000Z',
+      completed_at: '2026-04-20T19:48:00.000Z',
+    });
+    expect(order.preparing_at).toBeInstanceOf(Date);
+    expect(order.ready_at).toBeInstanceOf(Date);
+    expect(order.completed_at).toBeInstanceOf(Date);
+  });
+
+  it('parses orders without the new optional timestamps (existing docs)', () => {
+    // Existing Firestore docs have only confirmed_at — make sure those
+    // still parse cleanly without the new fields present.
+    const order = OrderSchema.parse(VALID);
+    expect(order.preparing_at).toBeFalsy();
+    expect(order.ready_at).toBeFalsy();
+    expect(order.completed_at).toBeFalsy();
+    expect(order.cancelled_at).toBeFalsy();
   });
 });
 
