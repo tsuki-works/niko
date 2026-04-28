@@ -194,3 +194,31 @@ def test_persist_on_confirm_does_not_save_when_refusing():
         persist_on_confirm(order)
 
     _order_doc(client).set.assert_not_called()
+
+
+def test_order_supports_new_lifecycle_statuses_and_timestamps():
+    """Sprint 2.2 #107 — OrderStatus must include preparing/ready/completed,
+    and Order must accept the per-transition timestamps without complaint."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    order = Order(
+        call_sid="CAlife",
+        items=[_pepperoni()],
+        order_type=OrderType.PICKUP,
+        status=OrderStatus.READY,
+        confirmed_at=now,
+        preparing_at=now,
+        ready_at=now,
+    )
+
+    assert order.status is OrderStatus.READY
+    assert order.preparing_at == now
+    assert order.ready_at == now
+    assert order.completed_at is None  # not yet completed
+    assert order.cancelled_at is None
+
+    # All four enum values exist
+    assert OrderStatus.PREPARING.value == "preparing"
+    assert OrderStatus.READY.value == "ready"
+    assert OrderStatus.COMPLETED.value == "completed"
