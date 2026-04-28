@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.llm import client as client_module
-from app.llm.client import _apply_update, generate_reply, stream_reply
+from app.llm.client import _apply_update, _summarize_order, generate_reply, stream_reply
 from app.orders.models import Order, OrderStatus, OrderType
 
 _TEST_SYSTEM_PROMPT = "you are a test agent"
@@ -810,3 +810,53 @@ def test_modifications_round_trip_into_line_item():
     )
 
     assert result.order.items[0].modifications == ["extra cheese", "no basil"]
+
+
+def test_summarize_order_includes_modifications():
+    """Sprint 2.2 #2 — _summarize_order must include modification strings in
+    the tool_result so the agent can read them back to the caller verbatim."""
+    order = Order(call_sid="CAtest")
+    order = _apply_update(
+        order,
+        {
+            "items": [
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 20.99,
+                    "modifications": ["extra cheese", "no basil"],
+                }
+            ],
+            "status": "in_progress",
+        },
+    )
+    result = _summarize_order(order)
+    assert "extra cheese, no basil" in result
+    assert "Margherita" in result
+
+
+def test_summarize_order_omits_parentheses_when_no_modifications():
+    """Sprint 2.2 #3 — when an item has no modifications the summary must not
+    emit a parenthesized clause; the agent should omit the modifier phrase
+    entirely per the read-back instruction."""
+    order = Order(call_sid="CAtest")
+    order = _apply_update(
+        order,
+        {
+            "items": [
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 20.99,
+                    "modifications": [],
+                }
+            ],
+            "status": "in_progress",
+        },
+    )
+    result = _summarize_order(order)
+    assert "(" not in result

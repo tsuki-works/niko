@@ -218,3 +218,27 @@ def test_prompt_skips_empty_and_non_list_categories():
     # Scalar value not surfaced as if it were a category
     assert "Promo Text:" not in prompt
     assert "Half off Tuesdays" not in prompt
+
+
+def test_prompt_includes_customization_guidance():
+    """Sprint 2.2 #2 — prompt must instruct the agent to capture free-text
+    modifications, not invent them, and to clarify contradictory or
+    nonsensical ones."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    assert "customization" in lower
+    assert "do not invent" in lower
+    assert "clarify" in lower
+    assert "does not make sense" in lower
+
+
+def test_prompt_includes_readback_instruction():
+    """Sprint 2.2 #3 — prompt must direct the agent to read back the full
+    order using the server-verified update_order subtotal, and only
+    confirm on an explicit caller yes."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    assert "read back" in lower
+    assert "update_order" in lower
+    assert "does that sound right" in lower
+    assert "explicitly confirms" in lower

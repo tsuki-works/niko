@@ -178,7 +178,9 @@ def _summarize_order(order: Order) -> str:
     if not order.items:
         return "Order updated. Subtotal: $0.00. (no items yet)"
     items_summary = ", ".join(
-        f"{item.quantity}× {item.name}" for item in order.items
+        f"{item.quantity}× {item.name}"
+        + (f" ({', '.join(item.modifications)})" if item.modifications else "")
+        for item in order.items
     )
     return f"Order updated. Subtotal: ${order.subtotal:.2f}. Items: {items_summary}."
 
