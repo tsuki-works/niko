@@ -29,6 +29,7 @@ from anthropic import Anthropic, AsyncAnthropic
 
 from app.config import settings
 from app.orders.models import Order
+from app.orders.validation import validate_delivery_address
 
 MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS = 512
@@ -219,6 +220,46 @@ def _append_user_transcript(
     return [*history, {"role": "user", "content": transcript}]
 
 
+_INVALID_ADDRESS_NOTE = (
+    "Delivery address incomplete — please ask the caller for the full "
+    "street address."
+)
+
+
+def _apply_validation(patch: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Filter an update_order patch through server-side validators.
+
+    Returns a (cleaned_patch, rejection_notes) tuple:
+    - cleaned_patch is a copy of patch with any field that failed
+      validation removed (so the previous Order value stays put when
+      the patch is applied).
+    - rejection_notes is a list of human-readable strings to append to
+      the tool_result so Haiku knows to re-ask the caller. Empty when
+      every field passed validation.
+
+    Today only delivery_address has a validator (Sprint 2.2 #105). New
+    field validators slot in here so _apply_update stays a dumb
+    dict-merger and orchestration stays in one place.
+
+    Note on explicit-clear intents: when Haiku ships
+    delivery_address=None or "" (e.g. swapping order_type from
+    delivery to pickup), that's a legitimate clear, not a rejection.
+    The validator returns False for both, so we only invoke it when
+    there's actual non-empty content to validate.
+    """
+    cleaned = dict(patch)
+    notes: list[str] = []
+    if "delivery_address" in cleaned:
+        value = cleaned["delivery_address"]
+        # None / empty / whitespace-only is an explicit clear — pass through.
+        # Only validate when the caller actually provided content.
+        if value is not None and isinstance(value, str) and value.strip():
+            if not validate_delivery_address(value):
+                del cleaned["delivery_address"]
+                notes.append(_INVALID_ADDRESS_NOTE)
+    return cleaned, notes
+
+
 def _apply_update(order: Order, patch: dict[str, Any]) -> Order:
     """Merge a tool-call payload into the current Order.
 
@@ -282,10 +323,12 @@ def generate_reply(
     updated_order = order
     tool_results: list[dict[str, Any]] = []
     for tu in tool_uses:
-        updated_order = _apply_update(updated_order, tu["input"])
-        tool_results.append(
-            _tool_result_block(tu["id"], _summarize_order(updated_order))
-        )
+        cleaned_input, rejection_notes = _apply_validation(tu["input"])
+        updated_order = _apply_update(updated_order, cleaned_input)
+        summary = _summarize_order(updated_order)
+        if rejection_notes:
+            summary = summary + " " + " ".join(rejection_notes)
+        tool_results.append(_tool_result_block(tu["id"], summary))
 
     assistant_content = [_serialize_block(block) for block in response.content]
     new_history = [
@@ -372,10 +415,12 @@ async def stream_reply(
     updated_order = order
     tool_results: list[dict[str, Any]] = []
     for tu in tool_uses:
-        updated_order = _apply_update(updated_order, tu["input"])
-        tool_results.append(
-            _tool_result_block(tu["id"], _summarize_order(updated_order))
-        )
+        cleaned_input, rejection_notes = _apply_validation(tu["input"])
+        updated_order = _apply_update(updated_order, cleaned_input)
+        summary = _summarize_order(updated_order)
+        if rejection_notes:
+            summary = summary + " " + " ".join(rejection_notes)
+        tool_results.append(_tool_result_block(tu["id"], summary))
 
     assistant_content = [_serialize_block(block) for block in first_message.content]
     new_history = [

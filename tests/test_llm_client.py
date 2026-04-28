@@ -1028,3 +1028,109 @@ def test_correction_delivery_address_fix_overwrites_full_value():
 
     assert corrected.delivery_address == "14 Main St"
     assert corrected.order_type is OrderType.DELIVERY
+
+
+def test_correction_invalid_delivery_address_is_rejected_and_signaled():
+    """Sprint 2.2 #105 — when Haiku ships an update_order patch whose
+    delivery_address fails validation (non-empty + has a digit), the
+    address is dropped from the patch (existing value stays) AND the
+    tool_result string carries a rejection note so Haiku re-asks on
+    the next turn."""
+    order = Order(call_sid="CAtest")
+    order = _apply_update(
+        order,
+        {
+            "items": [
+                {"name": "Margherita", "category": "pizza", "size": "large",
+                 "quantity": 1, "unit_price": 19.99},
+            ],
+            "order_type": "delivery",
+            "delivery_address": "14 Spadina Ave",
+            "status": "in_progress",
+        },
+    )
+    assert order.delivery_address == "14 Spadina Ave"
+
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(type="text", text="Got it, what's your address?"),
+            FakeBlock(
+                type="tool_use",
+                id="toolu_bad_addr",
+                name="update_order",
+                input={
+                    "items": [
+                        {"name": "Margherita", "category": "pizza",
+                         "size": "large", "quantity": 1, "unit_price": 19.99},
+                    ],
+                    "order_type": "delivery",
+                    "delivery_address": "uhh",
+                    "status": "in_progress",
+                },
+            ),
+        ]
+    )
+
+    result = generate_reply(
+        transcript="my address is uhh",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    # Bad address was REJECTED — previous good value stays.
+    assert result.order.delivery_address == "14 Spadina Ave"
+    # Tool_result that went back to Haiku carries the rejection note so
+    # the model can re-ask on the next turn.
+    last = result.history[-1]
+    assert last["role"] == "user"
+    assert last["content"][0]["type"] == "tool_result"
+    assert "Delivery address incomplete" in last["content"][0]["content"]
+
+
+def test_apply_validation_passes_through_explicit_address_clears():
+    """Sprint 2.2 #105 — when Haiku ships delivery_address=None or ""
+    (e.g. swapping from delivery to pickup), that's a legitimate clear,
+    not a rejection. The patch must pass through unchanged with no
+    rejection note. Regression guard for the PD-D4 -> PD-D5 fix."""
+    from app.llm.client import _apply_validation, _INVALID_ADDRESS_NOTE
+
+    # Explicit None passes through, no rejection note.
+    cleaned, notes = _apply_validation({
+        "items": [],
+        "order_type": "pickup",
+        "delivery_address": None,
+        "status": "in_progress",
+    })
+    assert cleaned == {
+        "items": [],
+        "order_type": "pickup",
+        "delivery_address": None,
+        "status": "in_progress",
+    }
+    assert notes == []
+
+    # Empty string passes through, no rejection note.
+    cleaned, notes = _apply_validation({
+        "delivery_address": "",
+    })
+    assert cleaned == {"delivery_address": ""}
+    assert notes == []
+
+    # Whitespace-only passes through, no rejection note.
+    cleaned, notes = _apply_validation({
+        "delivery_address": "   ",
+    })
+    assert cleaned == {"delivery_address": "   "}
+    assert notes == []
+
+    # Real garbage with content STILL gets rejected — verifies the
+    # explicit-clear pass-through didn't accidentally weaken the
+    # rejection path.
+    cleaned, notes = _apply_validation({
+        "delivery_address": "uhh",
+    })
+    assert "delivery_address" not in cleaned
+    assert notes == [_INVALID_ADDRESS_NOTE]

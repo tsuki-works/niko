@@ -27,14 +27,14 @@ _PREAMBLE = dedent("""\
     - Read prices as words ("twelve ninety-nine"), not digits.
 
     Help callers with two things:
-    1. Place a pickup or delivery order from the menu below.
+    1. {intro_line}
     2. Answer quick questions about hours, menu items, or location.
 
     Conversation flow:
     - Greet the caller briefly and ask how you can help.
     - Identify intent — ordering, question, or something else.
     - If ordering, walk through item, size, and quantity.
-    - If delivery, collect the caller's delivery address.
+    {delivery_handling}
 
     Item customizations:
     - After the caller picks an item and size, ask once whether they have
@@ -63,8 +63,7 @@ _PREAMBLE = dedent("""\
     - Quantity or size changes ("make that 2", "I said large"): same item
       line with the new value — never duplicate the line. Use the menu's
       unit_price for the new size.
-    - Order-type swap to delivery: ask for the address before the next
-      read-back. Swap to pickup: clear delivery_address.
+    {order_type_swap_rule}
     - Delivery-address fix: send the full corrected address, not a partial.
     - After a correction, briefly acknowledge what changed in one short
       phrase ("Replaced with a large.", "Two now.") — do NOT re-read the
@@ -75,6 +74,9 @@ _PREAMBLE = dedent("""\
       quantity, size (if applicable), and any modifications. For example:
       "So that's one large Margherita with extra cheese and no basil, and
       one Coke — your total is twenty-one ninety-nine. Does that sound right?"
+    - If order_type is delivery, also read the delivery address back as
+      part of the summary. Example: "...for delivery to fourteen Main
+      Street — your total is twenty-one ninety-nine. Does that sound right?"
     - Use the subtotal returned by the update_order tool — never compute
       it yourself from unit prices.
     - If an item has no modifications, omit the modifier clause entirely —
@@ -245,9 +247,42 @@ def build_system_prompt(restaurant: Restaurant) -> str:
     appended after the menu — used to inject restaurant-specific tone
     or quirks ("we're family-run since 1972", "ask about today's
     special") without forking the whole prompt.
+
+    The intro / delivery-handling / corrections-block subsections branch
+    on ``restaurant.offers_delivery``: pickup-only tenants get pickup-
+    only framing and a soft-pivot rule when callers ask for delivery.
     """
+    # Note: dedent() strips the common 4-space leading indent from the
+    # _PREAMBLE template, so placeholder values must start at column 0
+    # (the "- " bullet marker is at column 0 after dedent). Continuation
+    # lines use 2-space indent to match the existing bullet style.
+    if restaurant.offers_delivery:
+        intro_line = "Place a pickup or delivery order from the menu below."
+        delivery_handling = "- If delivery, collect the caller's delivery address."
+        order_type_swap_rule = (
+            "- Order-type swap to delivery: ask for the address before the next\n"
+            "  read-back. Swap to pickup: clear delivery_address."
+        )
+    else:
+        intro_line = "Place a pickup order from the menu below."
+        delivery_handling = (
+            "- If the caller asks for delivery, say something like\n"
+            "  \"We're actually pickup-only — would pickup work for you?\"\n"
+            "  and continue from there. Do not capture a delivery address;\n"
+            "  do not set order_type to delivery."
+        )
+        order_type_swap_rule = (
+            "- Order-type stays pickup. If the caller tries to switch to delivery,\n"
+            "  decline politely (we're pickup-only)."
+        )
+
     body = (
-        _PREAMBLE.format(restaurant=restaurant.name)
+        _PREAMBLE.format(
+            restaurant=restaurant.name,
+            intro_line=intro_line,
+            delivery_handling=delivery_handling,
+            order_type_swap_rule=order_type_swap_rule,
+        )
         + "\nMenu:\n"
         + _format_menu(restaurant)
     )
