@@ -1,7 +1,7 @@
 ---
 name: niko-developer
 description: Implements features and fixes in the niko backend (FastAPI/Python in `app/`) or dashboard (Next.js/TypeScript in `dashboard/`). Use for call-flow changes, prompt menu work, restaurant onboarding, orders lifecycle, dashboard UI, Firestore storage, telephony routing. Should NOT do code review or release management — hand off to niko-reviewer / niko-pm for those.
-tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch
+tools: Read, Write, Edit, Glob, Grep, Bash, WebFetch, ExitPlanMode
 model: sonnet
 ---
 
