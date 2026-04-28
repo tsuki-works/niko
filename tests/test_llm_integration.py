@@ -21,18 +21,14 @@ from app.llm.client import generate_reply, stream_reply
 from app.llm.prompts import build_system_prompt
 from app.orders.models import Order
 from app.restaurants.models import Restaurant
+from tests.fixtures.correction_transcripts import SCENARIOS, CorrectionScenario
 
 pytestmark = pytest.mark.skipif(
     not settings.anthropic_api_key,
     reason="ANTHROPIC_API_KEY not set; skipping live integration tests",
 )
 
-# ---------------------------------------------------------------------------
-# Demo restaurant fixture — used by every live call in this file.
-# Menu includes all items referenced by the correction scenarios (margherita,
-# calzone, Coke) plus a couple of extras so the menu reads naturally.
-# large margherita is $18.99 to satisfy _assert_size_change (>= $16).
-# ---------------------------------------------------------------------------
+# Large Margherita is $18.99 to satisfy _assert_size_change (>= $16.00).
 _DEMO_RESTAURANT = Restaurant(
     id="demo-pizza",
     name="Niko Pizza Kitchen",
@@ -213,9 +209,6 @@ async def test_stream_reply_yields_deltas_before_final():
 # costs ~6× a normal call and is meant to be run pre-merge, not on every
 # `pytest` invocation. The module-level skipif still applies — without the
 # API key we skip even when -m live_llm is passed.
-
-from tests.fixtures.correction_transcripts import SCENARIOS, CorrectionScenario
-
 
 @pytest.mark.live_llm
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=[s.id for s in SCENARIOS])
