@@ -194,3 +194,228 @@ def test_persist_on_confirm_does_not_save_when_refusing():
         persist_on_confirm(order)
 
     _order_doc(client).set.assert_not_called()
+
+
+def test_order_supports_new_lifecycle_statuses_and_timestamps():
+    """Sprint 2.2 #107 — OrderStatus must include preparing/ready/completed,
+    and Order must accept the per-transition timestamps without complaint."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    order = Order(
+        call_sid="CAlife",
+        items=[_pepperoni()],
+        order_type=OrderType.PICKUP,
+        status=OrderStatus.READY,
+        confirmed_at=now,
+        preparing_at=now,
+        ready_at=now,
+    )
+
+    assert order.status is OrderStatus.READY
+    assert order.preparing_at == now
+    assert order.ready_at == now
+    assert order.completed_at is None  # not yet completed
+    assert order.cancelled_at is None
+
+    # All four enum values exist
+    assert OrderStatus.PREPARING.value == "preparing"
+    assert OrderStatus.READY.value == "ready"
+    assert OrderStatus.COMPLETED.value == "completed"
+
+
+# ---------------------------------------------------------------------------
+# B1 transition functions (Sprint 2.2 #107)
+# ---------------------------------------------------------------------------
+
+
+def _confirmed_pickup_order(**overrides) -> Order:
+    """A pickup order in CONFIRMED state — the starting point for the
+    kitchen workflow transitions."""
+    base = dict(
+        call_sid="CAconfirmed",
+        items=[_pepperoni()],
+        order_type=OrderType.PICKUP,
+        status=OrderStatus.CONFIRMED,
+        confirmed_at=datetime(2026, 4, 28, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    base.update(overrides)
+    return Order(**base)
+
+
+# ----- mark_preparing -----
+
+
+def test_mark_preparing_transitions_confirmed_to_preparing():
+    from app.orders.lifecycle import mark_preparing
+    client = _fake_client()
+    order = _confirmed_pickup_order()
+
+    updated = mark_preparing(order)
+
+    assert updated.status is OrderStatus.PREPARING
+    assert updated.preparing_at is not None
+    age = datetime.now(timezone.utc) - updated.preparing_at
+    assert timedelta(seconds=0) <= age < timedelta(seconds=5)
+    _order_doc(client).set.assert_called_once()
+
+
+def test_mark_preparing_rejects_wrong_source_state():
+    from app.orders.lifecycle import OrderTransitionError, mark_preparing
+    _fake_client()
+    order = _ready_pickup_order()  # status=IN_PROGRESS
+
+    with pytest.raises(OrderTransitionError, match="preparing"):
+        mark_preparing(order)
+
+
+def test_mark_preparing_is_idempotent():
+    from app.orders.lifecycle import mark_preparing
+    client = _fake_client()
+    original_ts = datetime(2026, 4, 28, 13, 0, 0, tzinfo=timezone.utc)
+    order = _confirmed_pickup_order(
+        status=OrderStatus.PREPARING, preparing_at=original_ts
+    )
+
+    updated = mark_preparing(order)
+
+    assert updated.preparing_at == original_ts
+    _order_doc(client).set.assert_called_once()
+
+
+# ----- mark_ready -----
+
+
+def test_mark_ready_transitions_preparing_to_ready():
+    from app.orders.lifecycle import mark_ready
+    client = _fake_client()
+    order = _confirmed_pickup_order(
+        status=OrderStatus.PREPARING,
+        preparing_at=datetime(2026, 4, 28, 13, 0, 0, tzinfo=timezone.utc),
+    )
+
+    updated = mark_ready(order)
+
+    assert updated.status is OrderStatus.READY
+    assert updated.ready_at is not None
+    _order_doc(client).set.assert_called_once()
+
+
+def test_mark_ready_rejects_wrong_source_state():
+    from app.orders.lifecycle import OrderTransitionError, mark_ready
+    _fake_client()
+    order = _confirmed_pickup_order()  # status=CONFIRMED, not PREPARING
+
+    with pytest.raises(OrderTransitionError, match="ready"):
+        mark_ready(order)
+
+
+def test_mark_ready_is_idempotent():
+    from app.orders.lifecycle import mark_ready
+    client = _fake_client()
+    original_ts = datetime(2026, 4, 28, 13, 30, 0, tzinfo=timezone.utc)
+    order = _confirmed_pickup_order(
+        status=OrderStatus.READY, ready_at=original_ts
+    )
+
+    updated = mark_ready(order)
+
+    assert updated.ready_at == original_ts
+    _order_doc(client).set.assert_called_once()
+
+
+# ----- mark_completed -----
+
+
+def test_mark_completed_transitions_ready_to_completed():
+    from app.orders.lifecycle import mark_completed
+    client = _fake_client()
+    order = _confirmed_pickup_order(
+        status=OrderStatus.READY,
+        ready_at=datetime(2026, 4, 28, 13, 30, 0, tzinfo=timezone.utc),
+    )
+
+    updated = mark_completed(order)
+
+    assert updated.status is OrderStatus.COMPLETED
+    assert updated.completed_at is not None
+    _order_doc(client).set.assert_called_once()
+
+
+def test_mark_completed_rejects_wrong_source_state():
+    from app.orders.lifecycle import OrderTransitionError, mark_completed
+    _fake_client()
+    order = _confirmed_pickup_order()  # status=CONFIRMED, not READY
+
+    with pytest.raises(OrderTransitionError, match="completed"):
+        mark_completed(order)
+
+
+def test_mark_completed_is_idempotent():
+    from app.orders.lifecycle import mark_completed
+    client = _fake_client()
+    original_ts = datetime(2026, 4, 28, 14, 0, 0, tzinfo=timezone.utc)
+    order = _confirmed_pickup_order(
+        status=OrderStatus.COMPLETED, completed_at=original_ts
+    )
+
+    updated = mark_completed(order)
+
+    assert updated.completed_at == original_ts
+    _order_doc(client).set.assert_called_once()
+
+
+# ----- cancel_order -----
+
+
+def test_cancel_order_transitions_from_in_progress():
+    from app.orders.lifecycle import cancel_order
+    client = _fake_client()
+    order = _ready_pickup_order()  # status=IN_PROGRESS
+
+    updated = cancel_order(order)
+
+    assert updated.status is OrderStatus.CANCELLED
+    assert updated.cancelled_at is not None
+    _order_doc(client).set.assert_called_once()
+
+
+def test_cancel_order_transitions_from_preparing():
+    from app.orders.lifecycle import cancel_order
+    _fake_client()
+    order = _confirmed_pickup_order(
+        status=OrderStatus.PREPARING,
+        preparing_at=datetime(2026, 4, 28, 13, 0, 0, tzinfo=timezone.utc),
+    )
+
+    updated = cancel_order(order)
+
+    assert updated.status is OrderStatus.CANCELLED
+    # preparing_at preserved — we don't erase history on cancel
+    assert updated.preparing_at is not None
+
+
+def test_cancel_order_rejects_already_completed_order():
+    from app.orders.lifecycle import OrderTransitionError, cancel_order
+    _fake_client()
+    order = _confirmed_pickup_order(
+        status=OrderStatus.COMPLETED,
+        completed_at=datetime(2026, 4, 28, 14, 0, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(OrderTransitionError, match="completed"):
+        cancel_order(order)
+
+
+def test_cancel_order_is_idempotent():
+    from app.orders.lifecycle import cancel_order
+    client = _fake_client()
+    original_ts = datetime(2026, 4, 28, 13, 0, 0, tzinfo=timezone.utc)
+    order = _confirmed_pickup_order(
+        status=OrderStatus.CANCELLED, cancelled_at=original_ts
+    )
+
+    updated = cancel_order(order)
+
+    assert updated.cancelled_at == original_ts
+    _order_doc(client).set.assert_called_once()

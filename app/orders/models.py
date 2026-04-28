@@ -33,6 +33,9 @@ class OrderType(str, Enum):
 class OrderStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     CONFIRMED = "confirmed"
+    PREPARING = "preparing"
+    READY = "ready"
+    COMPLETED = "completed"
     CANCELLED = "cancelled"
 
 
@@ -86,6 +89,15 @@ class Order(BaseModel):
     status: OrderStatus = OrderStatus.IN_PROGRESS
     created_at: datetime = Field(default_factory=_now_utc)
     confirmed_at: Optional[datetime] = None
+    # Per-transition timestamps stamped by app.orders.lifecycle on each
+    # successful state change. None for any transition that hasn't
+    # happened yet — independently useful for kitchen UX
+    # ("how long has this been cooking?") and analytics
+    # ("average time-to-fulfillment").
+    preparing_at: Optional[datetime] = None
+    ready_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

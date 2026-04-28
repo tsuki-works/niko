@@ -60,6 +60,9 @@ function computeCounts(orders: Order[]): CountsByStatus {
     all: orders.length,
     in_progress: 0,
     confirmed: 0,
+    preparing: 0,
+    ready: 0,
+    completed: 0,
     cancelled: 0,
   };
   for (const o of orders) {

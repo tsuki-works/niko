@@ -64,3 +64,96 @@ def persist_on_confirm(order: Order) -> Order:
 
     order_storage.save_order(confirmed_order)
     return confirmed_order
+
+
+class OrderTransitionError(ValueError):
+    """A transition function was called from an invalid source state.
+    Mirrors ``OrderNotReadyError``'s shape but specific to the
+    confirmed → preparing → ready → completed kitchen workflow."""
+
+
+def _transition(
+    order: Order,
+    *,
+    allowed_sources: list[OrderStatus],
+    target: OrderStatus,
+    timestamp_field: str,
+) -> Order:
+    """Generic state-machine transition helper.
+
+    Idempotent: if the order is already in the target state, save
+    again (recovery from partial failure where the in-memory transition
+    landed but the Firestore write didn't) and preserve the original
+    timestamp.
+
+    Validates source state: raises ``OrderTransitionError`` if the
+    order's current status isn't in ``allowed_sources`` and isn't
+    already the target.
+    """
+    if order.status is target:
+        order_storage.save_order(order)
+        return order
+
+    if order.status not in allowed_sources:
+        raise OrderTransitionError(
+            f"Cannot transition order {order.call_sid!r} to "
+            f"{target.value!r}: current status is {order.status.value!r}, "
+            f"expected one of {[s.value for s in allowed_sources]}"
+        )
+
+    now = datetime.now(timezone.utc)
+    updated = order.model_copy(
+        update={"status": target, timestamp_field: now}
+    )
+    order_storage.save_order(updated)
+    return updated
+
+
+def mark_preparing(order: Order) -> Order:
+    """Confirmed → Preparing. Kitchen has accepted the order and started
+    cooking. Stamps ``preparing_at``."""
+    return _transition(
+        order,
+        allowed_sources=[OrderStatus.CONFIRMED],
+        target=OrderStatus.PREPARING,
+        timestamp_field="preparing_at",
+    )
+
+
+def mark_ready(order: Order) -> Order:
+    """Preparing → Ready. Food is done and waiting for handoff (counter
+    pickup or restaurant's own driver). Stamps ``ready_at``."""
+    return _transition(
+        order,
+        allowed_sources=[OrderStatus.PREPARING],
+        target=OrderStatus.READY,
+        timestamp_field="ready_at",
+    )
+
+
+def mark_completed(order: Order) -> Order:
+    """Ready → Completed. Food has left the kitchen. Terminal state for
+    successful orders. Stamps ``completed_at``."""
+    return _transition(
+        order,
+        allowed_sources=[OrderStatus.READY],
+        target=OrderStatus.COMPLETED,
+        timestamp_field="completed_at",
+    )
+
+
+def cancel_order(order: Order) -> Order:
+    """Any pre-completed state → Cancelled. Off-ramp from the workflow
+    (caller-cancel, kitchen-reject, staff-cancel via dashboard).
+    Stamps ``cancelled_at``."""
+    return _transition(
+        order,
+        allowed_sources=[
+            OrderStatus.IN_PROGRESS,
+            OrderStatus.CONFIRMED,
+            OrderStatus.PREPARING,
+            OrderStatus.READY,
+        ],
+        target=OrderStatus.CANCELLED,
+        timestamp_field="cancelled_at",
+    )

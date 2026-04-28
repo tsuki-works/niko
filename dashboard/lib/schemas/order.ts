@@ -20,6 +20,9 @@ export type OrderType = z.infer<typeof OrderTypeSchema>;
 export const OrderStatusSchema = z.enum([
   'in_progress',
   'confirmed',
+  'preparing',
+  'ready',
+  'completed',
   'cancelled',
 ]);
 export type OrderStatus = z.infer<typeof OrderStatusSchema>;
@@ -52,8 +55,15 @@ export const OrderSchema = z.object({
   order_type: OrderTypeSchema.nullish(),
   delivery_address: z.string().nullish(),
   status: OrderStatusSchema,
-  created_at: z.date(),
-  confirmed_at: z.date().nullish(),
+  created_at: z.coerce.date(),
+  confirmed_at: z.coerce.date().nullish(),
+  // Per-transition timestamps stamped by the backend on each
+  // successful state change. None for any transition that hasn't
+  // happened yet. See app/orders/lifecycle.py for the source.
+  preparing_at: z.coerce.date().nullish(),
+  ready_at: z.coerce.date().nullish(),
+  completed_at: z.coerce.date().nullish(),
+  cancelled_at: z.coerce.date().nullish(),
   subtotal: z.number(),
 });
 export type Order = z.infer<typeof OrderSchema>;

@@ -202,3 +202,168 @@ def test_seed_order_persists_when_dev_flag_on(dev_endpoints_enabled):
         .set
     )
     set_call.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# B1 transition endpoints (Sprint 2.2 #107)
+# ---------------------------------------------------------------------------
+
+# Tests below cover four endpoints × three concerns:
+# - 200 + correct payload on valid transition
+# - 404 when the order doesn't exist or belongs to a different tenant
+# - 409 when the order is in the wrong source state
+#
+# Mocking: same TestClient + tenant-injection + firestore-mock pattern as
+# above. get_order reads via .collection().document().collection().document()
+# .get(); save_order writes via the same path's .set(). We only need the
+# read side to return data — writes can silently succeed via MagicMock.
+
+
+def _fake_firestore_with_single_order(doc: dict | None) -> MagicMock:
+    """Seed a fake Firestore client that returns ``doc`` for any single-doc
+    .get() call, and ``None`` (snapshot.exists == False) when ``doc is
+    None``. Also wires the list path so any list_recent_orders calls
+    that happen to fire don't blow up."""
+    fake_client = MagicMock()
+
+    snapshot = MagicMock()
+    if doc is not None:
+        snapshot.exists = True
+        snapshot.to_dict.return_value = doc
+    else:
+        snapshot.exists = False
+
+    (
+        fake_client.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .document.return_value
+        .get.return_value
+    ) = snapshot
+
+    # Wire the list path too so the stream doesn't raise on accidental calls.
+    (
+        fake_client.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .order_by.return_value
+        .limit.return_value
+        .stream.return_value
+    ) = iter([])
+
+    storage.set_client(fake_client)
+    return fake_client
+
+
+def _confirmed_order_doc(call_sid: str = "CA-test-1") -> dict:
+    return {
+        "call_sid": call_sid,
+        "restaurant_id": _DEMO_RID,
+        "status": "confirmed",
+        "order_type": "pickup",
+        "items": [
+            {
+                "name": "Pepperoni",
+                "category": "pizza",
+                "quantity": 1,
+                "unit_price": 17.99,
+                "modifications": [],
+            }
+        ],
+    }
+
+
+# Endpoint: POST /orders/{call_sid}/preparing -----------------------------
+
+
+def test_post_preparing_transitions_confirmed_order():
+    _fake_firestore_with_single_order(_confirmed_order_doc())
+    response = client.post("/orders/CA-test-1/preparing")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "preparing"
+    assert body["preparing_at"] is not None
+
+
+def test_post_preparing_returns_404_for_other_tenant():
+    # Order belongs to a different restaurant; get_order returns None
+    # because the tenant-scoped path finds no doc.
+    _fake_firestore_with_single_order(None)
+    response = client.post("/orders/CA-other-tenant/preparing")
+    assert response.status_code == 404
+
+
+def test_post_preparing_returns_409_for_in_progress_order():
+    doc = _confirmed_order_doc("CA-bad")
+    doc["status"] = "in_progress"
+    _fake_firestore_with_single_order(doc)
+    response = client.post("/orders/CA-bad/preparing")
+    assert response.status_code == 409
+    assert "Cannot transition" in response.json()["detail"]
+
+
+# Endpoint: POST /orders/{call_sid}/ready --------------------------------
+
+
+def test_post_ready_transitions_preparing_order():
+    doc = _confirmed_order_doc("CA-prep")
+    doc["status"] = "preparing"
+    _fake_firestore_with_single_order(doc)
+    response = client.post("/orders/CA-prep/ready")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ready"
+    assert body["ready_at"] is not None
+
+
+def test_post_ready_returns_409_for_confirmed_order():
+    _fake_firestore_with_single_order(_confirmed_order_doc("CA-bad-ready"))
+    response = client.post("/orders/CA-bad-ready/ready")
+    assert response.status_code == 409
+    assert "Cannot transition" in response.json()["detail"]
+
+
+# Endpoint: POST /orders/{call_sid}/completed ----------------------------
+
+
+def test_post_completed_transitions_ready_order():
+    doc = _confirmed_order_doc("CA-rdy")
+    doc["status"] = "ready"
+    _fake_firestore_with_single_order(doc)
+    response = client.post("/orders/CA-rdy/completed")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["completed_at"] is not None
+
+
+def test_post_completed_returns_409_for_preparing_order():
+    doc = _confirmed_order_doc("CA-bad-comp")
+    doc["status"] = "preparing"
+    _fake_firestore_with_single_order(doc)
+    response = client.post("/orders/CA-bad-comp/completed")
+    assert response.status_code == 409
+    assert "Cannot transition" in response.json()["detail"]
+
+
+# Endpoint: POST /orders/{call_sid}/cancel -------------------------------
+
+
+def test_post_cancel_transitions_from_preparing():
+    doc = _confirmed_order_doc("CA-cancel-prep")
+    doc["status"] = "preparing"
+    _fake_firestore_with_single_order(doc)
+    response = client.post("/orders/CA-cancel-prep/cancel")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert body["cancelled_at"] is not None
+
+
+def test_post_cancel_returns_409_for_completed_order():
+    doc = _confirmed_order_doc("CA-bad-cancel")
+    doc["status"] = "completed"
+    _fake_firestore_with_single_order(doc)
+    response = client.post("/orders/CA-bad-cancel/cancel")
+    assert response.status_code == 409
+    assert "Cannot transition" in response.json()["detail"]
