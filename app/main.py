@@ -10,6 +10,13 @@ from typing import Any
 
 from app.auth import Tenant, current_tenant
 from app.config import settings
+from app.orders.lifecycle import (
+    OrderTransitionError,
+    cancel_order,
+    mark_completed,
+    mark_preparing,
+    mark_ready,
+)
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import (
     call_sessions,
@@ -88,6 +95,90 @@ def list_orders(
         restaurant_id=tenant.restaurant_id, limit=limit
     )
     return {"orders": [o.model_dump(mode="json") for o in orders]}
+
+
+def _load_tenant_order(call_sid: str, tenant: Tenant) -> Order:
+    """Look up an order by call_sid scoped to the calling tenant.
+
+    Returns the Order. Raises HTTP 404 if the order doesn't exist OR
+    belongs to a different tenant — both are indistinguishable to the
+    caller, which is the desired tenant-isolation property (matches
+    the pattern in /dev/calls/{call_sid})."""
+    order = order_storage.get_order(
+        call_sid=call_sid, restaurant_id=tenant.restaurant_id
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="order not found")
+    return order
+
+
+def _transition_response(order: Order) -> dict[str, Any]:
+    return order.model_dump(mode="json")
+
+
+@app.post("/orders/{call_sid}/preparing")
+def post_order_preparing(
+    call_sid: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Transition an order from CONFIRMED to PREPARING. Idempotent.
+
+    Returns the updated Order JSON. 404 if the order doesn't belong to
+    the calling tenant. 409 if the order is in a state that can't
+    transition to preparing (e.g. still in_progress, or already past
+    preparing into ready/completed/cancelled)."""
+    order = _load_tenant_order(call_sid, tenant)
+    try:
+        updated = mark_preparing(order)
+    except OrderTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _transition_response(updated)
+
+
+@app.post("/orders/{call_sid}/ready")
+def post_order_ready(
+    call_sid: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Transition an order from PREPARING to READY. Idempotent."""
+    order = _load_tenant_order(call_sid, tenant)
+    try:
+        updated = mark_ready(order)
+    except OrderTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _transition_response(updated)
+
+
+@app.post("/orders/{call_sid}/completed")
+def post_order_completed(
+    call_sid: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Transition an order from READY to COMPLETED. Idempotent.
+    Terminal state for successful orders."""
+    order = _load_tenant_order(call_sid, tenant)
+    try:
+        updated = mark_completed(order)
+    except OrderTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _transition_response(updated)
+
+
+@app.post("/orders/{call_sid}/cancel")
+def post_order_cancel(
+    call_sid: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Cancel an order from any pre-completed state. Idempotent.
+
+    Implements the endpoint the dashboard's cancelOrder Server Action
+    has been calling against a stub since Phase 1."""
+    order = _load_tenant_order(call_sid, tenant)
+    try:
+        updated = cancel_order(order)
+    except OrderTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _transition_response(updated)
 
 
 def _require_dev_endpoints() -> None:
