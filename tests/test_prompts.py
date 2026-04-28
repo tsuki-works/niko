@@ -267,3 +267,8 @@ def test_prompt_includes_caller_corrections_block():
     # Post-correction acknowledgement is short, not a full re-read
     assert "do not re-read" in lower
     assert "whole order" in lower
+    # Caps preserve emphasis for Haiku — guard against silent downcasing
+    # (a3e8d5e had to restore these after the initial commit downcased them).
+    assert "emit ONE" in prompt
+    assert "FULL corrected state" in prompt
+    assert "do NOT re-read" in prompt
