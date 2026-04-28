@@ -24,6 +24,17 @@ Key locations:
 - **`/shared-creds`** — fetches shared third-party credentials (Twilio, Deepgram, Anthropic, ElevenLabs, Square, etc.) from the private Discord `#shared-creds` channel via the Discord MCP. Encodes the don't-commit / don't-memory-save rules.
 - **`/onboard-restaurant`** — admin-assisted onboarding from a restaurant website URL: scrapes name/phone/address/hours/menu, asks for any gaps (image-only menus, missing hours, etc.), writes `restaurants/<rid>.json`, and dry-runs/then-confirms `scripts/provision_restaurant.py`. The Sprint 2.1 path; pre-dates the Sprint 4.2 self-serve wizard.
 
+## Agent roles (`.claude/agents/`)
+
+Reusable Claude Code subagent definitions tuned to niko's stack. Each can be invoked standalone (delegated via the `Agent` tool) or as a teammate inside an [agent team](https://code.claude.com/docs/en/agent-teams). Agent teams are enabled for this repo via `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in `.claude/settings.json` — requires Claude Code ≥ 2.1.32.
+
+- **`niko-developer`** (sonnet) — implements features/fixes across `app/` (FastAPI) and `dashboard/` (Next.js). Full edit access.
+- **`niko-tester`** (sonnet) — writes/runs pytest + vitest, reproduces bugs as failing tests. Edit access scoped to test files in practice.
+- **`niko-reviewer`** (opus) — read-only review of diffs/PRs. Looks for multi-tenant violations, secret leakage, call-quality regressions, missing tests.
+- **`niko-pm`** (opus) — surveys board/PRs/roadmap and synthesizes status; can post to Discord (always confirms message + channel before sending).
+
+To spin up a team for a complex task: `Create an agent team with niko-developer, niko-tester, and niko-reviewer to land issue #N.` On Windows, only in-process mode works (no tmux/iTerm2) — cycle teammates with Shift+Down. Token cost scales linearly per teammate; reach for a single session for routine work.
+
 ## Discord integration
 
 The team coordinates in the **Tsuki Works** Discord server. Two integration paths are live:
