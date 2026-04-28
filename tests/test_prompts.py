@@ -242,3 +242,33 @@ def test_prompt_includes_readback_instruction():
     assert "update_order" in lower
     assert "does that sound right" in lower
     assert "explicitly confirms" in lower
+
+
+def test_prompt_includes_caller_corrections_block():
+    """Sprint 2.2 #103 — when a caller corrects something already in the
+    order (remove, substitute, quantity, size, order-type swap, delivery
+    address), Haiku must emit a single update_order carrying the FULL
+    corrected state. The prompt must explicitly tell it to replace the
+    wrong item, not add the new one alongside it."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    # Section header is present
+    assert "caller corrections:" in lower
+    # Core "replace, don't add" rule
+    assert "emit one" in lower
+    assert "update_order with the full corrected state" in lower
+    assert "replace the wrong item" in lower
+    # Coverage of each correction shape (one anchor per pattern)
+    assert "removals" in lower
+    assert "substitutions" in lower
+    assert "quantity or size changes" in lower
+    assert "order-type swap to delivery" in lower
+    assert "delivery-address fix" in lower
+    # Post-correction acknowledgement is short, not a full re-read
+    assert "do not re-read" in lower
+    assert "whole order" in lower
+    # Caps preserve emphasis for Haiku — guard against silent downcasing
+    # (a3e8d5e had to restore these after the initial commit downcased them).
+    assert "emit ONE" in prompt
+    assert "FULL corrected state" in prompt
+    assert "do NOT re-read" in prompt

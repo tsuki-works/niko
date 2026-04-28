@@ -860,3 +860,171 @@ def test_summarize_order_omits_parentheses_when_no_modifications():
     )
     result = _summarize_order(order)
     assert "(" not in result
+
+
+# ---------------------------------------------------------------------------
+# Caller-correction characterization tests (Sprint 2.2 #103)
+# ---------------------------------------------------------------------------
+# These assert that _apply_update — which already does full-state overwrite —
+# correctly handles every correction shape the new prompt block instructs
+# Haiku to emit. They lock in current behavior; if a future refactor
+# introduces a remove_item / change_item tool, these MUST still pass against
+# the equivalent payload shape.
+
+
+def _seed_order_with(items: list[dict[str, Any]], **extra: Any) -> Order:
+    """Helper: build an Order with the given items and apply once."""
+    base = Order(call_sid="CAtest")
+    return _apply_update(base, {"items": items, "status": "in_progress", **extra})
+
+
+def test_correction_remove_item_drops_it_from_order():
+    """Caller: 'take off the Coke.' Payload omits the Coke entirely;
+    only the Margherita remains."""
+    order = _seed_order_with(
+        [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+            {"name": "Coke", "category": "drinks", "size": None,
+             "quantity": 1, "unit_price": 2.99},
+        ],
+        order_type="pickup",
+    )
+
+    corrected = _apply_update(
+        order,
+        {"items": [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ], "order_type": "pickup", "status": "in_progress"},
+    )
+
+    assert [i.name for i in corrected.items] == ["Margherita"]
+    assert corrected.subtotal == 19.99
+
+
+def test_correction_substitute_item_replaces_not_appends():
+    """Caller: 'change the Margherita to a calzone.' Payload swaps the
+    item; quantity carries through. Crucially the resulting order has
+    ONE item, not two."""
+    order = _seed_order_with(
+        [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ],
+        order_type="pickup",
+    )
+
+    corrected = _apply_update(
+        order,
+        {"items": [
+            {"name": "Calzone", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 16.99},
+        ], "order_type": "pickup", "status": "in_progress"},
+    )
+
+    assert len(corrected.items) == 1
+    assert corrected.items[0].name == "Calzone"
+    assert corrected.items[0].unit_price == 16.99
+
+
+def test_correction_quantity_change_does_not_duplicate_line():
+    """Caller: 'make that 2 not 1.' Same line item with quantity bumped;
+    never two lines for the same item."""
+    order = _seed_order_with(
+        [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ],
+        order_type="pickup",
+    )
+
+    corrected = _apply_update(
+        order,
+        {"items": [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 2, "unit_price": 19.99},
+        ], "order_type": "pickup", "status": "in_progress"},
+    )
+
+    assert len(corrected.items) == 1
+    assert corrected.items[0].quantity == 2
+    assert corrected.subtotal == 39.98
+
+
+def test_correction_size_change_swaps_size_and_unit_price():
+    """Caller: 'I said large not medium.' Same item with new size +
+    new unit_price (the menu's price for the new size)."""
+    order = _seed_order_with(
+        [
+            {"name": "Margherita", "category": "pizza", "size": "medium",
+             "quantity": 1, "unit_price": 14.99},
+        ],
+        order_type="pickup",
+    )
+
+    corrected = _apply_update(
+        order,
+        {"items": [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ], "order_type": "pickup", "status": "in_progress"},
+    )
+
+    assert len(corrected.items) == 1
+    assert corrected.items[0].size == "large"
+    assert corrected.items[0].unit_price == 19.99
+
+
+def test_correction_order_type_swap_to_pickup_clears_delivery_address():
+    """Caller: 'switch back to pickup.' order_type flips and
+    delivery_address goes back to None — otherwise the dashboard
+    would show a stale address on a pickup order."""
+    order = _seed_order_with(
+        [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ],
+        order_type="delivery",
+        delivery_address="14 Spadina Ave",
+    )
+    assert order.order_type is OrderType.DELIVERY
+    assert order.delivery_address == "14 Spadina Ave"
+
+    corrected = _apply_update(
+        order,
+        {"items": [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ], "order_type": "pickup", "delivery_address": None,
+         "status": "in_progress"},
+    )
+
+    assert corrected.order_type is OrderType.PICKUP
+    assert corrected.delivery_address is None
+
+
+def test_correction_delivery_address_fix_overwrites_full_value():
+    """Caller: 'no, my address is 14 not 40.' Payload contains the
+    fully-corrected address — not a partial / diff."""
+    order = _seed_order_with(
+        [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ],
+        order_type="delivery",
+        delivery_address="40 Main St",
+    )
+
+    corrected = _apply_update(
+        order,
+        {"items": [
+            {"name": "Margherita", "category": "pizza", "size": "large",
+             "quantity": 1, "unit_price": 19.99},
+        ], "order_type": "delivery",
+         "delivery_address": "14 Main St",
+         "status": "in_progress"},
+    )
+
+    assert corrected.delivery_address == "14 Main St"
+    assert corrected.order_type is OrderType.DELIVERY
