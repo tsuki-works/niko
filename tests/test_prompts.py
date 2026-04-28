@@ -272,3 +272,50 @@ def test_prompt_includes_caller_corrections_block():
     assert "emit ONE" in prompt
     assert "FULL corrected state" in prompt
     assert "do NOT re-read" in prompt
+
+
+def test_prompt_renders_delivery_offered_branch():
+    """Sprint 2.2 #105 — when offers_delivery=True (default), the prompt
+    presents both pickup and delivery as options and instructs Haiku to
+    collect the address when delivery is chosen + read it back at
+    confirmation."""
+    restaurant = _demo()
+    assert restaurant.offers_delivery is True
+    prompt = build_system_prompt(restaurant)
+    lower = prompt.lower()
+    # Delivery is offered
+    assert "pickup or delivery" in lower
+    # Address is collected
+    assert "if delivery, collect the caller's delivery address" in lower
+    # Address is read back at confirmation
+    assert "if order_type is delivery" in lower
+    assert "read the delivery address back" in lower
+    # Pickup-only language is NOT present
+    assert "pickup-only" not in lower
+
+
+def test_prompt_renders_pickup_only_branch():
+    """Sprint 2.2 #105 — when offers_delivery=False, the prompt frames
+    the restaurant as pickup-only and tells Haiku to soft-pivot when
+    callers ask for delivery."""
+    restaurant = Restaurant(
+        id="t",
+        name="Pickup-Only Place",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="1 Test St",
+        hours="11am-9pm",
+        menu={"mains": [{"name": "Burger", "price": 10.00}]},
+        offers_delivery=False,
+    )
+    prompt = build_system_prompt(restaurant)
+    lower = prompt.lower()
+    # Pickup-only framing is present
+    assert "pickup order" in lower or "pickup-only" in lower
+    # Soft-pivot instruction
+    assert "we're actually pickup-only" in lower
+    assert "would pickup work for you" in lower
+    # The "If delivery, collect the caller's delivery address" line is gone
+    assert "if delivery, collect the caller's delivery address" not in lower
+    # Haiku is told not to set delivery type
+    assert "do not capture a delivery address" in lower
