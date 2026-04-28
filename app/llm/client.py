@@ -240,13 +240,23 @@ def _apply_validation(patch: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     Today only delivery_address has a validator (Sprint 2.2 #105). New
     field validators slot in here so _apply_update stays a dumb
     dict-merger and orchestration stays in one place.
+
+    Note on explicit-clear intents: when Haiku ships
+    delivery_address=None or "" (e.g. swapping order_type from
+    delivery to pickup), that's a legitimate clear, not a rejection.
+    The validator returns False for both, so we only invoke it when
+    there's actual non-empty content to validate.
     """
     cleaned = dict(patch)
     notes: list[str] = []
     if "delivery_address" in cleaned:
-        if not validate_delivery_address(cleaned["delivery_address"]):
-            del cleaned["delivery_address"]
-            notes.append(_INVALID_ADDRESS_NOTE)
+        value = cleaned["delivery_address"]
+        # None / empty / whitespace-only is an explicit clear — pass through.
+        # Only validate when the caller actually provided content.
+        if value is not None and isinstance(value, str) and value.strip():
+            if not validate_delivery_address(value):
+                del cleaned["delivery_address"]
+                notes.append(_INVALID_ADDRESS_NOTE)
     return cleaned, notes
 
 

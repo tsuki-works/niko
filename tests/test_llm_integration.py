@@ -21,7 +21,11 @@ from app.llm.client import generate_reply, stream_reply
 from app.llm.prompts import build_system_prompt
 from app.orders.models import Order
 from app.restaurants.models import Restaurant
-from tests.fixtures.correction_transcripts import SCENARIOS, CorrectionScenario
+from tests.fixtures.correction_transcripts import (
+    SCENARIOS as CORRECTION_SCENARIOS,
+    CorrectionScenario,
+)
+from tests.fixtures.delivery_transcripts import SCENARIOS as DELIVERY_SCENARIOS
 
 pytestmark = pytest.mark.skipif(
     not settings.anthropic_api_key,
@@ -69,6 +73,14 @@ _DEMO_RESTAURANT = Restaurant(
 )
 
 _DEMO_SYSTEM_PROMPT = build_system_prompt(_DEMO_RESTAURANT)
+
+# Pickup-only variant: same menu, but offers_delivery=False so the
+# system prompt branches into the soft-pivot flow. Used by the
+# pickup_only_soft_pivot scenario in delivery_transcripts.py.
+_DEMO_PICKUP_ONLY_RESTAURANT = _DEMO_RESTAURANT.model_copy(
+    update={"offers_delivery": False}
+)
+_DEMO_PICKUP_ONLY_SYSTEM_PROMPT = build_system_prompt(_DEMO_PICKUP_ONLY_RESTAURANT)
 
 
 def test_pickup_order_round_trip():
@@ -211,7 +223,11 @@ async def test_stream_reply_yields_deltas_before_final():
 # API key we skip even when -m live_llm is passed.
 
 @pytest.mark.live_llm
-@pytest.mark.parametrize("scenario", SCENARIOS, ids=[s.id for s in SCENARIOS])
+@pytest.mark.parametrize(
+    "scenario",
+    CORRECTION_SCENARIOS,
+    ids=[s.id for s in CORRECTION_SCENARIOS],
+)
 def test_caller_correction_lands_in_final_order(scenario: CorrectionScenario):
     """For each scenario: seed the order via initial turns, then send the
     correction utterance, then assert the final Order matches the
@@ -239,6 +255,64 @@ def test_caller_correction_lands_in_final_order(scenario: CorrectionScenario):
     order = result.order
 
     print(f"\n--- Correction ({scenario.id}) ---\nCaller: {correction}\n"
+          f"Haiku: {result.reply_text}\n"
+          f"Final order: {order.model_dump_json(indent=2)}")
+
+    scenario.assert_end_state(order)
+
+
+# ---------------------------------------------------------------------------
+# Pickup vs delivery live regression suite (Sprint 2.2 #105)
+# ---------------------------------------------------------------------------
+# Same shape as the caller-correction suite. Picks the right system prompt
+# per scenario id (the pickup-only soft-pivot scenario uses the
+# offers_delivery=False fixture; everything else uses the default).
+
+
+def _system_prompt_for(scenario_id: str) -> str:
+    if scenario_id == "pickup_only_soft_pivot":
+        return _DEMO_PICKUP_ONLY_SYSTEM_PROMPT
+    return _DEMO_SYSTEM_PROMPT
+
+
+@pytest.mark.live_llm
+@pytest.mark.parametrize(
+    "scenario",
+    DELIVERY_SCENARIOS,
+    ids=[s.id for s in DELIVERY_SCENARIOS],
+)
+def test_pickup_delivery_flow(scenario: CorrectionScenario):
+    """For each delivery scenario: seed via initial_turns, send the
+    trigger transcript, assert the final Order matches the
+    scenario-specific expectation."""
+
+    order = Order(call_sid=f"CAlive-deliv-{scenario.id}")
+    history: list[dict] = []
+    system_prompt = _system_prompt_for(scenario.id)
+
+    for turn in scenario.initial_turns:
+        result = generate_reply(
+            transcript=turn,
+            history=history,
+            order=order,
+            system_prompt=system_prompt,
+        )
+        order = result.order
+        history = result.history
+        print(f"\n--- Seed turn ({scenario.id}) ---\nCaller: {turn}\n"
+              f"Haiku: {result.reply_text}\n"
+              f"Order: {order.model_dump_json(indent=2)}")
+
+    trigger = scenario.correction_transcript
+    result = generate_reply(
+        transcript=trigger,
+        history=history,
+        order=order,
+        system_prompt=system_prompt,
+    )
+    order = result.order
+
+    print(f"\n--- Trigger ({scenario.id}) ---\nCaller: {trigger}\n"
           f"Haiku: {result.reply_text}\n"
           f"Final order: {order.model_dump_json(indent=2)}")
 

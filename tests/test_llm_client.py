@@ -1088,3 +1088,49 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
     assert last["role"] == "user"
     assert last["content"][0]["type"] == "tool_result"
     assert "Delivery address incomplete" in last["content"][0]["content"]
+
+
+def test_apply_validation_passes_through_explicit_address_clears():
+    """Sprint 2.2 #105 — when Haiku ships delivery_address=None or ""
+    (e.g. swapping from delivery to pickup), that's a legitimate clear,
+    not a rejection. The patch must pass through unchanged with no
+    rejection note. Regression guard for the PD-D4 -> PD-D5 fix."""
+    from app.llm.client import _apply_validation, _INVALID_ADDRESS_NOTE
+
+    # Explicit None passes through, no rejection note.
+    cleaned, notes = _apply_validation({
+        "items": [],
+        "order_type": "pickup",
+        "delivery_address": None,
+        "status": "in_progress",
+    })
+    assert cleaned == {
+        "items": [],
+        "order_type": "pickup",
+        "delivery_address": None,
+        "status": "in_progress",
+    }
+    assert notes == []
+
+    # Empty string passes through, no rejection note.
+    cleaned, notes = _apply_validation({
+        "delivery_address": "",
+    })
+    assert cleaned == {"delivery_address": ""}
+    assert notes == []
+
+    # Whitespace-only passes through, no rejection note.
+    cleaned, notes = _apply_validation({
+        "delivery_address": "   ",
+    })
+    assert cleaned == {"delivery_address": "   "}
+    assert notes == []
+
+    # Real garbage with content STILL gets rejected — verifies the
+    # explicit-clear pass-through didn't accidentally weaken the
+    # rejection path.
+    cleaned, notes = _apply_validation({
+        "delivery_address": "uhh",
+    })
+    assert "delivery_address" not in cleaned
+    assert notes == [_INVALID_ADDRESS_NOTE]
