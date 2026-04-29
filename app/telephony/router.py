@@ -105,6 +105,30 @@ def _bg_call_event(
     )
 
 
+def _start_recording_sync(call_sid: str, host: str, restaurant_id: str) -> None:
+    """Start a Twilio dual-channel recording for a live call.
+
+    Runs in a worker thread so the audio loop never blocks on network I/O.
+    Uses the restaurant_id in the callback URL so the status webhook can
+    write to the right Firestore path without a second lookup.
+    """
+    sid = settings.twilio_account_sid
+    token = settings.twilio_auth_token
+    if not sid or not token:
+        logger.warning(
+            "twilio creds missing; skipping recording call_sid=%s", call_sid
+        )
+        return
+    from twilio.rest import Client as TwilioRestClient
+
+    callback_url = f"https://{host}/recording-status/{restaurant_id}/{call_sid}"
+    TwilioRestClient(sid, token).calls(call_sid).recordings.create(
+        recording_status_callback=callback_url,
+        recording_status_callback_method="POST",
+    )
+    logger.info("recording started call_sid=%s callback=%s", call_sid, callback_url)
+
+
 def _twilio_end_call_sync(call_sid: str) -> None:
     """End a Twilio call via the REST API. Runs in a worker thread so the
     audio loop never blocks on network I/O."""
@@ -583,6 +607,14 @@ async def media_stream(websocket: WebSocket) -> None:
                             state.restaurant.id,
                         )
                     )
+                    asyncio.get_running_loop().create_task(
+                        asyncio.to_thread(
+                            _start_recording_sync,
+                            state.call_sid,
+                            websocket.headers.get("host", "localhost:8000"),
+                            state.restaurant.id,
+                        )
+                    )
                     _bg_call_event(
                         state.call_sid,
                         state.restaurant.id,
@@ -673,3 +705,48 @@ async def media_stream(websocket: WebSocket) -> None:
                 )
         if dg_conn is not None:
             await dg_conn.finish()
+
+
+@router.post("/recording-status/{restaurant_id}/{call_sid}")
+async def recording_status(
+    restaurant_id: str, call_sid: str, request: Request
+) -> Response:
+    """Twilio recording status callback.
+
+    Twilio POSTs here when a recording finishes processing. The
+    ``restaurant_id`` and ``call_sid`` are encoded in the URL (set when
+    the recording was started in ``_start_recording_sync``) so no
+    additional Firestore lookup is needed to find the right tenant path.
+
+    On ``completed``, stores the recording URL on the call session doc
+    and emits a ``recording_ready`` event so the live dashboard can show
+    the audio player.
+    """
+    form = await request.form()
+    status = (form.get("RecordingStatus") or "").lower()
+    recording_url = (form.get("RecordingUrl") or "").strip()
+    recording_sid = (form.get("RecordingSid") or "").strip()
+    try:
+        duration_seconds = int(form.get("RecordingDuration") or 0)
+    except ValueError:
+        duration_seconds = 0
+
+    logger.info(
+        "recording-status call_sid=%s status=%s recording_sid=%s duration=%ss",
+        call_sid,
+        status,
+        recording_sid,
+        duration_seconds,
+    )
+
+    if status == "completed" and recording_url and recording_sid:
+        await asyncio.to_thread(
+            call_sessions.mark_recording_ready,
+            call_sid,
+            restaurant_id,
+            recording_url=recording_url,
+            recording_sid=recording_sid,
+            duration_seconds=duration_seconds,
+        )
+
+    return Response(content="", status_code=204)

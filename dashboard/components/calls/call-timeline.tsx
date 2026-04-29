@@ -5,6 +5,7 @@ import {
   Mic,
   PhoneCall,
   PhoneOff,
+  Radio,
   Sparkles,
   Volume2,
   Zap,
@@ -17,6 +18,10 @@ import type { CallEvent, CallTimeline } from '@/lib/api/calls';
 import { cn } from '@/lib/utils';
 
 export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
+  const recordingUrl = timeline.recording_available
+    ? `/api/calls/${timeline.call_sid}/recording`
+    : null;
+
   return (
     <section className="flex flex-1 flex-col gap-4 p-6">
       <header className="flex items-center gap-3">
@@ -38,6 +43,22 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
         </div>
         <TimelineExport timeline={timeline} />
       </div>
+
+      {recordingUrl && (
+        <div className="flex flex-col gap-1.5 rounded-xl border bg-card p-4">
+          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Radio className="h-3.5 w-3.5" aria-hidden />
+            Call recording
+          </p>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio
+            controls
+            src={recordingUrl}
+            className="w-full"
+            aria-label="Call recording audio player"
+          />
+        </div>
+      )}
 
       <ol className="flex flex-col gap-2 rounded-xl border bg-card p-4">
         {timeline.events.map((event, i) => (
@@ -170,6 +191,15 @@ function renderEvent(event: CallEvent): RenderedEvent {
         label: 'silence timeout',
         body: 'no caller activity for 10s — bot prompted',
       };
+    case 'recording_ready': {
+      const duration = event.detail.duration_seconds as number | undefined;
+      return {
+        Icon: Radio,
+        accent: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+        label: 'recording ready',
+        body: typeof duration === 'number' ? `${duration}s recording available` : 'recording available',
+      };
+    }
     case 'error':
       return {
         Icon: AlertTriangle,

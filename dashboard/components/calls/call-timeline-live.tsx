@@ -49,7 +49,15 @@ export function CallTimelineLive({ callSid, restaurantId, initial }: Props) {
     return unsub;
   }, [callSid, restaurantId]);
 
-  return <CallTimelineView timeline={{ call_sid: callSid, events }} />;
+  const recording_available =
+    initial.recording_available ||
+    events.some((e) => e.kind === 'recording_ready');
+
+  return (
+    <CallTimelineView
+      timeline={{ call_sid: callSid, events, recording_available }}
+    />
+  );
 }
 
 function toApiEvent(e: ZodCallEvent): CallEvent {
