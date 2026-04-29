@@ -13,9 +13,11 @@ const MAX_ITEMS_LINE = 48;
 export function OrdersTable({
   orders,
   twilioPhone,
+  freshIds,
 }: {
   orders: Order[];
   twilioPhone: string;
+  freshIds?: ReadonlySet<string>;
 }) {
   if (orders.length === 0) return <EmptyState twilioPhone={twilioPhone} />;
 
@@ -33,7 +35,11 @@ export function OrdersTable({
         </thead>
         <tbody>
           {orders.map((order) => (
-            <OrderRow key={order.call_sid} order={order} />
+            <OrderRow
+              key={order.call_sid}
+              order={order}
+              isFresh={freshIds?.has(order.call_sid) ?? false}
+            />
           ))}
         </tbody>
       </table>
@@ -41,7 +47,7 @@ export function OrdersTable({
   );
 }
 
-function OrderRow({ order }: { order: Order }) {
+function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
   const isLive = order.status === 'in_progress';
   const isCancelled = order.status === 'cancelled';
   const mutedCell = isCancelled ? 'text-muted-foreground' : '';
@@ -58,7 +64,10 @@ function OrderRow({ order }: { order: Order }) {
     .join(' · ');
 
   return (
-    <tr className="border-t transition-colors hover:bg-muted/40">
+    <tr
+      className="border-t transition-colors hover:bg-muted/40"
+      data-fresh={isFresh ? 'true' : undefined}
+    >
       <Td className={cn('py-3', mutedCell)}>
         <Link
           href={`/orders/${encodeURIComponent(order.call_sid)}`}

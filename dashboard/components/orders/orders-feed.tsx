@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FilterTabs, type CountsByStatus } from '@/components/orders/filter-tabs';
 import { LiveIndicator } from '@/components/orders/live-indicator';
 import { OrdersTable } from '@/components/orders/orders-table';
+import { useNewOrderAlert } from '@/components/orders/use-new-order-alert';
 import { db } from '@/lib/firebase/client';
 import { orderConverter } from '@/lib/firebase/converters';
 import { formatPhone } from '@/lib/formatters/phone';
@@ -48,6 +49,8 @@ export function OrdersFeed({
 
   const seenIds = useRef(new Set(initial.map((o) => o.call_sid)));
   const lastAnnouncedAt = useRef(0);
+
+  const { freshIds } = useNewOrderAlert(orders);
 
   useEffect(() => {
     if (!db) {
@@ -116,7 +119,7 @@ export function OrdersFeed({
 
       <FilterTabs active={statusFilter} counts={initialCounts} />
 
-      <OrdersTable orders={orders} twilioPhone={twilioPhone} />
+      <OrdersTable orders={orders} twilioPhone={twilioPhone} freshIds={freshIds} />
 
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
