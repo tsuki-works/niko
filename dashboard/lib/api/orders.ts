@@ -111,6 +111,61 @@ export async function cancelOrderApi(callSid: string): Promise<CancelResult> {
   return { success: true, order: parsed.data };
 }
 
+// ---------------------------------------------------------------------------
+// B3 transition API functions (Sprint 2.2 #111)
+// ---------------------------------------------------------------------------
+// Each is a thin wrapper around POST /orders/{call_sid}/{transition}.
+// Same shape as cancelOrderApi: returns { success: true, order } on 200,
+// { success: false, error } on 4xx/5xx (FastAPI's { detail } surfaced).
+
+export type TransitionResult =
+  | { success: true; order: Order }
+  | { success: false; error: string };
+
+async function postTransition(
+  callSid: string,
+  transition: 'preparing' | 'ready' | 'completed',
+): Promise<TransitionResult> {
+  const path = `/orders/${encodeURIComponent(callSid)}/${transition}`;
+  const res = await apiFetch(path, { method: 'POST' });
+
+  if (!res.ok) {
+    // FastAPI returns { detail: string } on 4xx — surface that to the user.
+    let detail: string;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      detail =
+        typeof body.detail === 'string'
+          ? body.detail
+          : `${res.status} ${res.statusText}`;
+    } catch {
+      detail = `${res.status} ${res.statusText}`;
+    }
+    return { success: false, error: detail };
+  }
+
+  const body = await res.json();
+  const parsed = OrderSchema.safeParse(
+    body && typeof body === 'object' && 'order' in body ? body.order : body,
+  );
+  if (!parsed.success) {
+    return { success: false, error: `${transition} response failed validation` };
+  }
+  return { success: true, order: parsed.data };
+}
+
+export function markPreparingApi(callSid: string): Promise<TransitionResult> {
+  return postTransition(callSid, 'preparing');
+}
+
+export function markReadyApi(callSid: string): Promise<TransitionResult> {
+  return postTransition(callSid, 'ready');
+}
+
+export function markCompletedApi(callSid: string): Promise<TransitionResult> {
+  return postTransition(callSid, 'completed');
+}
+
 export function parseStatusParam(raw: string | undefined): OrderStatus | undefined {
   if (!raw) return undefined;
   const parsed = OrderStatusSchema.safeParse(raw);
