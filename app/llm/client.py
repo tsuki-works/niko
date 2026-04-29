@@ -194,6 +194,23 @@ def _tool_result_block(tool_use_id: str, content: str = "Order updated.") -> dic
     }
 
 
+def _system_cache_block(system_prompt: str) -> list[dict[str, Any]]:
+    """Wrap the system prompt for Anthropic prompt caching.
+
+    Passing system as a list with cache_control=ephemeral tells Anthropic
+    to cache the block server-side for up to 5 minutes. Cache hits reduce
+    system-prompt token cost by ~90% and shave first-token latency on
+    turns 2+ of the same call — near-certain for any call lasting > 20s.
+    """
+    return [
+        {
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
 def _append_user_transcript(
     history: list[dict[str, Any]], transcript: str
 ) -> list[dict[str, Any]]:
@@ -307,7 +324,7 @@ def generate_reply(
     response = api.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        system=system_prompt,
+        system=_system_cache_block(system_prompt),
         tools=[UPDATE_ORDER_TOOL],
         messages=new_history,
     )
@@ -346,7 +363,7 @@ def generate_reply(
         followup = api.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=system_prompt,
+            system=_system_cache_block(system_prompt),
             tools=[UPDATE_ORDER_TOOL],
             messages=new_history,
         )
@@ -399,7 +416,7 @@ async def stream_reply(
     async with api.messages.stream(
         model=MODEL,
         max_tokens=MAX_TOKENS,
-        system=system_prompt,
+        system=_system_cache_block(system_prompt),
         tools=[UPDATE_ORDER_TOOL],
         messages=new_history,
     ) as stream:
@@ -439,7 +456,7 @@ async def stream_reply(
         async with api.messages.stream(
             model=MODEL,
             max_tokens=MAX_TOKENS,
-            system=system_prompt,
+            system=_system_cache_block(system_prompt),
             tools=[UPDATE_ORDER_TOOL],
             messages=new_history,
         ) as followup_stream:

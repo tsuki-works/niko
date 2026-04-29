@@ -1090,6 +1090,68 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
     assert "Delivery address incomplete" in last["content"][0]["content"]
 
 
+def test_generate_reply_sends_system_as_cache_block():
+    """generate_reply wraps system_prompt in a cache_control block."""
+    captured: dict = {}
+
+    class FakeMessage:
+        content = [FakeBlock(type="text", text="Hello!")]
+        stop_reason = "end_turn"
+
+    class FakeClient:
+        class messages:
+            @staticmethod
+            def create(**kwargs):
+                captured["kwargs"] = kwargs
+                return FakeMessage()
+
+    generate_reply(
+        transcript="hi",
+        history=[],
+        order=Order(call_sid="CA123", restaurant_id="r1"),
+        system_prompt="You are niko.",
+        client=FakeClient(),
+    )
+
+    system = captured["kwargs"]["system"]
+    assert isinstance(system, list), "system must be a list, not a string"
+    assert system[0]["type"] == "text"
+    assert system[0]["text"] == "You are niko."
+    assert system[0]["cache_control"] == {"type": "ephemeral"}
+
+
+async def test_stream_reply_sends_system_as_cache_block():
+    """stream_reply wraps system_prompt in a cache_control block."""
+    captured: dict = {}
+
+    fake_stream = _FakeAsyncStream(
+        deltas=["Hi there!"],
+        blocks=[FakeBlock(type="text", text="Hi there!")],
+    )
+
+    def _capture_stream(**kwargs):
+        captured["kwargs"] = kwargs
+        return fake_stream
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = _capture_stream
+
+    async for _ in stream_reply(
+        transcript="hi",
+        history=[],
+        order=Order(call_sid="CA123", restaurant_id="r1"),
+        system_prompt="You are niko.",
+        client=fake_client,
+    ):
+        pass
+
+    system = captured["kwargs"]["system"]
+    assert isinstance(system, list)
+    assert system[0]["type"] == "text"
+    assert system[0]["text"] == "You are niko."
+    assert system[0]["cache_control"] == {"type": "ephemeral"}
+
+
 def test_apply_validation_passes_through_explicit_address_clears():
     """Sprint 2.2 #105 — when Haiku ships delivery_address=None or ""
     (e.g. swapping from delivery to pickup), that's a legitimate clear,
