@@ -3,6 +3,7 @@ import { PhoneIncoming } from 'lucide-react';
 
 import { LocalTime } from '@/components/shared/local-time';
 import { StatusBadge } from '@/components/orders/status-badge';
+import { TransitionButton } from '@/components/orders/transition-button';
 import { type Order, orderShortId } from '@/lib/schemas/order';
 import { formatCAD } from '@/lib/formatters/money';
 import { formatPhone } from '@/lib/formatters/phone';
@@ -31,6 +32,7 @@ export function OrdersTable({
             <Th>Items</Th>
             <Th className="w-32 text-right">Subtotal</Th>
             <Th className="w-32">Status</Th>
+            <Th className="w-36">Action</Th>
           </tr>
         </thead>
         <tbody>
@@ -118,6 +120,9 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
         <Link href={`/orders/${encodeURIComponent(order.call_sid)}`}>
           <StatusBadge status={order.status} />
         </Link>
+      </Td>
+      <Td>
+        <TransitionButton order={order} />
       </Td>
     </tr>
   );

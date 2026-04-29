@@ -4,6 +4,7 @@ import { ArrowLeft, Play } from 'lucide-react';
 import { CallDuration } from '@/components/orders/call-duration';
 import { CancelOrderButton } from '@/components/orders/cancel-order-button';
 import { StatusBadge } from '@/components/orders/status-badge';
+import { TransitionButton } from '@/components/orders/transition-button';
 import { LocalTime } from '@/components/shared/local-time';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,8 +28,11 @@ export function OrderDetail({ order }: { order: Order }) {
       <CallerCard order={order} />
       <ItemsCard order={order} />
       <SubtotalCard order={order} />
-      {order.status === 'confirmed' && (
-        <div className="pt-2">
+      {(order.status === 'confirmed' ||
+        order.status === 'preparing' ||
+        order.status === 'ready') && (
+        <div className="flex flex-wrap items-center gap-2 pt-2">
+          <TransitionButton order={order} />
           <CancelOrderButton callSid={order.call_sid} />
         </div>
       )}
@@ -56,6 +60,12 @@ function Header({ order }: { order: Order }) {
 
 function headerTimestamp(order: Order): React.ReactNode {
   switch (order.status) {
+    case 'in_progress':
+      return (
+        <>
+          Started <LocalTime date={order.created_at} mode="absolute" />
+        </>
+      );
     case 'confirmed':
       return order.confirmed_at ? (
         <>
@@ -64,18 +74,46 @@ function headerTimestamp(order: Order): React.ReactNode {
       ) : (
         <>Confirmed</>
       );
+    case 'preparing':
+      return order.preparing_at ? (
+        <>
+          Started prep <LocalTime date={order.preparing_at} mode="absolute" />
+        </>
+      ) : (
+        <>Preparing</>
+      );
+    case 'ready':
+      return order.ready_at ? (
+        <>
+          Ready <LocalTime date={order.ready_at} mode="absolute" />
+        </>
+      ) : (
+        <>Ready</>
+      );
+    case 'completed':
+      return order.completed_at ? (
+        <>
+          Completed <LocalTime date={order.completed_at} mode="absolute" />
+        </>
+      ) : (
+        <>Completed</>
+      );
     case 'cancelled':
-      return (
+      return order.cancelled_at ? (
+        <>
+          Cancelled <LocalTime date={order.cancelled_at} mode="absolute" />
+        </>
+      ) : (
         <>
           Cancelled <LocalTime date={order.created_at} mode="absolute" />
         </>
       );
-    case 'in_progress':
-      return (
-        <>
-          Started <LocalTime date={order.created_at} mode="absolute" />
-        </>
-      );
+    default: {
+      // Exhaustiveness check: if a new OrderStatus is added without a
+      // case here, TypeScript will error on this line.
+      const _exhaustive: never = order.status;
+      return _exhaustive;
+    }
   }
 }
 

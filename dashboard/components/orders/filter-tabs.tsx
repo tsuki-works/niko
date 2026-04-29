@@ -15,6 +15,9 @@ const TABS: Tab[] = [
   { key: 'all', label: 'All', href: '/' },
   { key: 'in_progress', label: 'Live', href: '/?status=in_progress' },
   { key: 'confirmed', label: 'Confirmed', href: '/?status=confirmed' },
+  { key: 'preparing', label: 'Preparing', href: '/?status=preparing' },
+  { key: 'ready', label: 'Ready', href: '/?status=ready' },
+  { key: 'completed', label: 'Completed', href: '/?status=completed' },
   { key: 'cancelled', label: 'Cancelled', href: '/?status=cancelled' },
 ];
 
