@@ -51,6 +51,7 @@
 
   --warning: oklch(0.75 0.15 85);
   --warning-foreground: oklch(0.28 0.05 85);
+  --fresh-flash: oklch(0.75 0.15 85);
 
   --destructive: oklch(0.58 0.18 28);
   --destructive-foreground: oklch(0.99 0.005 28);
@@ -113,6 +114,7 @@
 
   --warning: oklch(0.80 0.15 85);
   --warning-foreground: oklch(0.22 0.05 85);
+  --fresh-flash: oklch(0.80 0.15 85);
 
   --destructive: oklch(0.68 0.19 28);
   --destructive-foreground: oklch(0.18 0.03 28);
@@ -174,6 +176,7 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-fresh-flash: var(--fresh-flash);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
@@ -216,13 +219,13 @@
    8s total: full-strength flash ~150ms in, then linear fade. */
 @keyframes new-order-flash {
   0% {
-    background-color: rgb(245 158 11 / 0.2);
+    background-color: color-mix(in oklch, var(--color-fresh-flash) 20%, transparent);
   }
   10% {
-    background-color: rgb(245 158 11 / 0.2);
+    background-color: color-mix(in oklch, var(--color-fresh-flash) 20%, transparent);
   }
   100% {
-    background-color: rgb(245 158 11 / 0);
+    background-color: transparent;
   }
 }
 
@@ -230,11 +233,9 @@ tr[data-fresh="true"] {
   animation: new-order-flash 8s ease-out forwards;
 }
 
-/* Respect prefers-reduced-motion — no flash, just a brief solid tint
-   that the row will lose on the next render when freshIds drops it. */
 @media (prefers-reduced-motion: reduce) {
   tr[data-fresh="true"] {
     animation: none;
-    background-color: rgb(245 158 11 / 0.15);
+    background-color: color-mix(in oklch, var(--color-fresh-flash) 15%, transparent);
   }
 }
