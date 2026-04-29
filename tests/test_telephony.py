@@ -490,6 +490,16 @@ def test_looks_like_goodbye_excludes_coming_right_up():
     assert _looks_like_goodbye("Two Cokes coming right up!") is False
 
 
+def test_looks_like_goodbye_remaining_patterns_still_match():
+    """Positive coverage so a drive-by removal of a pattern is caught."""
+    from app.telephony.router import _looks_like_goodbye
+    assert _looks_like_goodbye("Thanks for ordering, see you soon!")
+    assert _looks_like_goodbye("Your order is in — we'll have it ready shortly.")
+    assert _looks_like_goodbye("Thanks for calling!")
+    assert _looks_like_goodbye("Have a great day.")
+    assert _looks_like_goodbye("Enjoy your meal!")
+
+
 def test_hangup_grace_seconds_is_five():
     """Grace window must be 5s so callers can add late items."""
     from app.telephony.router import HANGUP_GRACE_SECONDS
@@ -525,6 +535,54 @@ async def test_mark_echo_timeout_fires_grace_window(monkeypatch):
     assert grace_started["flag"] is True, (
         "mark echo timeout must trigger grace window when no echo arrives"
     )
+
+
+@pytest.mark.asyncio
+async def test_mark_echo_timeout_skips_grace_when_pending_hangup_cleared(monkeypatch):
+    """If pending_hangup is cleared during the 8s sleep (caller spoke and
+    _abort_pending_hangup raced), the timeout must NOT fire the grace window."""
+    import asyncio
+    from app.telephony import router as router_mod
+    from app.telephony.router import _CallState, _hang_up_after_mark_timeout
+
+    monkeypatch.setattr(router_mod, "MARK_ECHO_TIMEOUT_SECONDS", 0.05)
+
+    state = _CallState()
+    state.call_sid = "CA_abort_race"
+    state.pending_hangup = False  # already cleared before timeout fires
+
+    grace_started = {"flag": False}
+
+    async def fake_grace(s):
+        grace_started["flag"] = True
+
+    monkeypatch.setattr(router_mod, "_hang_up_after_grace", fake_grace)
+
+    await _hang_up_after_mark_timeout(state)
+
+    assert grace_started["flag"] is False, (
+        "timeout must not fire grace when pending_hangup was already cleared"
+    )
+
+
+@pytest.mark.asyncio
+async def test_abort_pending_hangup_cancels_mark_timeout_task():
+    """_abort_pending_hangup must cancel mark_timeout_task so the fallback
+    timer doesn't fire after the caller speaks during the grace window."""
+    import asyncio
+    from app.telephony.router import _CallState, _abort_pending_hangup
+
+    state = _CallState(call_sid="CAtest", pending_hangup=True)
+
+    async def _noop():
+        await asyncio.sleep(60)
+
+    state.mark_timeout_task = asyncio.create_task(_noop())
+
+    _abort_pending_hangup(state)
+
+    assert state.mark_timeout_task is None
+    assert state.pending_hangup is False
 
 
 @pytest.mark.asyncio

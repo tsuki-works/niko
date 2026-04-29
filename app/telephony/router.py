@@ -448,6 +448,8 @@ async def _run_llm_tts_turn(
                         )
                         if sent:
                             state.pending_hangup = True
+                            if state.mark_timeout_task and not state.mark_timeout_task.done():
+                                state.mark_timeout_task.cancel()
                             state.mark_timeout_task = asyncio.create_task(
                                 _hang_up_after_mark_timeout(state)
                             )
