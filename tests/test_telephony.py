@@ -497,6 +497,37 @@ def test_hangup_grace_seconds_is_five():
 
 
 @pytest.mark.asyncio
+async def test_mark_echo_timeout_fires_grace_window(monkeypatch):
+    """If Twilio never echoes the end_of_call mark, the timeout fires
+    the grace window anyway so the call terminates."""
+    import asyncio
+    from app.telephony import router as router_mod
+    from app.telephony.router import (
+        _CallState,
+        _hang_up_after_mark_timeout,
+    )
+
+    monkeypatch.setattr(router_mod, "MARK_ECHO_TIMEOUT_SECONDS", 0.05)
+
+    state = _CallState()
+    state.call_sid = "CA_timeout_test"
+    state.pending_hangup = True
+
+    grace_started = {"flag": False}
+
+    async def fake_grace(s):
+        grace_started["flag"] = True
+
+    monkeypatch.setattr(router_mod, "_hang_up_after_grace", fake_grace)
+
+    await _hang_up_after_mark_timeout(state)
+
+    assert grace_started["flag"] is True, (
+        "mark echo timeout must trigger grace window when no echo arrives"
+    )
+
+
+@pytest.mark.asyncio
 async def test_clear_twilio_audio_swallows_websocket_disconnect():
     """If the caller already hung up, the clear send raises — but we
     must not let that exception escape into the call loop."""

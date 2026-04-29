@@ -49,6 +49,11 @@ GREETING_TRANSCRIPT = "[call started — greet the caller]"
 # squeeze in a late question before terminating the call.
 END_OF_CALL_MARK = "end_of_call"
 HANGUP_GRACE_SECONDS = 5.0
+# Fallback if Twilio never echoes the end_of_call mark back to us
+# (WebSocket dropped, mark lost in transit). After this many seconds
+# we trigger the grace window anyway so the call still terminates
+# instead of hanging open. Picked > typical mark round-trip (1-3s).
+MARK_ECHO_TIMEOUT_SECONDS = 8.0
 
 # Phrases the model uses when wrapping up. Used as a fallback signal
 # for auto-hangup when Haiku says a goodbye but forgets to mark the
@@ -172,6 +177,35 @@ async def _hang_up_after_grace(state: _CallState) -> None:
         )
 
 
+async def _hang_up_after_mark_timeout(state: _CallState) -> None:
+    """Fallback for when Twilio never echoes the end_of_call mark.
+
+    The primary path is: send mark → Twilio echoes when audio drains →
+    start grace timer. If the echo never arrives, this timer fires
+    after ``MARK_ECHO_TIMEOUT_SECONDS`` and starts the grace window
+    anyway, so the call still ends instead of hanging open.
+
+    Cancelled by the echo handler when the echo arrives, or by
+    ``_abort_pending_hangup`` when the caller speaks.
+    """
+    try:
+        await asyncio.sleep(MARK_ECHO_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        return
+    if not state.pending_hangup or not state.call_sid:
+        return
+    logger.warning(
+        "auto-hangup: mark echo timed out after %.1fs, falling back to "
+        "grace window call_sid=%s",
+        MARK_ECHO_TIMEOUT_SECONDS,
+        state.call_sid,
+    )
+    if state.hangup_task and not state.hangup_task.done():
+        state.hangup_task.cancel()
+    state.hangup_task = None
+    await _hang_up_after_grace(state)
+
+
 def _abort_pending_hangup(state: _CallState) -> None:
     """Cancel a pending auto-hangup because the caller spoke during
     the grace window. Safe to call when no hangup is pending."""
@@ -179,6 +213,9 @@ def _abort_pending_hangup(state: _CallState) -> None:
     if state.hangup_task and not state.hangup_task.done():
         state.hangup_task.cancel()
     state.hangup_task = None
+    if state.mark_timeout_task and not state.mark_timeout_task.done():
+        state.mark_timeout_task.cancel()
+    state.mark_timeout_task = None
 
 
 async def clear_twilio_audio(websocket: WebSocket, stream_sid: str | None) -> None:
@@ -211,9 +248,10 @@ class _CallState:
     history:      list[dict]       = field(default_factory=list)
     restaurant:   Restaurant | None = None     # tenant for this call (#79)
     system_prompt: str             = ""        # built from restaurant on start
-    llm_task:     asyncio.Task | None = None   # current LLM→TTS turn
-    silence_task: asyncio.Task | None = None   # silence watchdog
-    hangup_task:  asyncio.Task | None = None   # pending auto-hangup (#78)
+    llm_task:          asyncio.Task | None = None   # current LLM→TTS turn
+    silence_task:      asyncio.Task | None = None   # silence watchdog
+    hangup_task:       asyncio.Task | None = None   # pending auto-hangup (#78)
+    mark_timeout_task: asyncio.Task | None = None   # mark-echo fallback (#114)
     pending_hangup: bool           = False     # set when goodbye mark sent (#78)
 
 
@@ -410,6 +448,9 @@ async def _run_llm_tts_turn(
                         )
                         if sent:
                             state.pending_hangup = True
+                            state.mark_timeout_task = asyncio.create_task(
+                                _hang_up_after_mark_timeout(state)
+                            )
 
     except asyncio.CancelledError:
         logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)
@@ -613,6 +654,9 @@ async def media_stream(websocket: WebSocket) -> None:
                         "auto-hangup: end_of_call mark received call_sid=%s",
                         state.call_sid,
                     )
+                    if state.mark_timeout_task and not state.mark_timeout_task.done():
+                        state.mark_timeout_task.cancel()
+                    state.mark_timeout_task = None
                     if state.hangup_task and not state.hangup_task.done():
                         state.hangup_task.cancel()
                     state.hangup_task = asyncio.create_task(
