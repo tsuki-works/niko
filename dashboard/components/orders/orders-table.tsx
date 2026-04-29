@@ -85,11 +85,18 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
         </Link>
       </Td>
       <Td className={cn('text-muted-foreground', mutedCell)}>
-        <Link href={`/orders/${encodeURIComponent(order.call_sid)}`}>
+        <Link
+          href={`/orders/${encodeURIComponent(order.call_sid)}`}
+          data-testid={`order-time-${order.call_sid}`}
+          data-anchor-iso={timeColumnAnchor(order).toISOString()}
+        >
           {isLive ? (
             'now'
           ) : (
-            <LocalTime date={order.created_at} mode="relative" />
+            <LocalTime
+              date={timeColumnAnchor(order)}
+              mode="relative"
+            />
           )}
         </Link>
       </Td>
@@ -170,6 +177,17 @@ function EmptyState({ twilioPhone }: { twilioPhone: string }) {
       </p>
     </div>
   );
+}
+
+function timeColumnAnchor(order: Order): Date {
+  switch (order.status) {
+    case 'preparing':
+      return order.preparing_at ?? order.created_at;
+    case 'ready':
+      return order.ready_at ?? order.created_at;
+    default:
+      return order.created_at;
+  }
 }
 
 function shortItem(item: {
