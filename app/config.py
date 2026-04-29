@@ -38,5 +38,11 @@ class Settings(BaseSettings):
     # dashboard needs seed data before the voice loop is wired up.
     niko_dev_endpoints: bool = False
 
+    # Set by the deploy pipeline to the git commit SHA. Used to surface
+    # the build version in the dashboard and (when testing_mode=True) as
+    # a spoken announcement at call start.
+    commit_sha: str = ""
+    testing_mode: bool = False
+
 
 settings = Settings()

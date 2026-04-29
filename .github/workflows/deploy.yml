@@ -47,6 +47,8 @@ jobs:
           region: ${{ vars.GCP_REGION }}
           image: ${{ env.IMAGE }}
           flags: --allow-unauthenticated --port=8080
+          env_vars: |
+            COMMIT_SHA=${{ github.sha }}
 
       - name: Show service URL
         run: |

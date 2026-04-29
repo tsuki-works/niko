@@ -49,9 +49,11 @@ function isActive(pathname: string, item: NavItem): boolean {
 export function AppSidebar({
   restaurantName,
   userEmail,
+  buildSha,
 }: {
   restaurantName?: string;
   userEmail?: string;
+  buildSha?: string;
 }) {
   const pathname = usePathname();
 
@@ -114,6 +116,11 @@ export function AppSidebar({
             </span>
           ) : null}
           {userEmail ? <span className="truncate">{userEmail}</span> : null}
+          {buildSha ? (
+            <span className="truncate font-mono text-[10px] opacity-50">
+              {buildSha.slice(0, 7)}
+            </span>
+          ) : null}
         </div>
       </SidebarFooter>
     </Sidebar>
