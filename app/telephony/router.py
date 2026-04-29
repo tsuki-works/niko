@@ -634,6 +634,12 @@ async def media_stream(websocket: WebSocket) -> None:
                 dg_conn = await _open_deepgram_connection(
                     state.call_sid, state.restaurant.id, on_final
                 )
+                if settings.testing_mode and settings.commit_sha and state.stream_sid:
+                    await speak(
+                        f"Test build {settings.commit_sha[:7]}.",
+                        websocket,
+                        state.stream_sid,
+                    )
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)
                 )

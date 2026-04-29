@@ -42,6 +42,7 @@ export default async function DashboardLayout({
       <AppSidebar
         restaurantName={restaurantName}
         userEmail={session.email ?? ''}
+        buildSha={process.env.NEXT_PUBLIC_COMMIT_SHA}
       />
       <SidebarInset>
         <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
