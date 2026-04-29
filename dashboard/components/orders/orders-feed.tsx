@@ -12,6 +12,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import { FilterTabs, type CountsByStatus } from '@/components/orders/filter-tabs';
 import { LiveIndicator } from '@/components/orders/live-indicator';
+import {
+  OptimisticStatusProvider,
+  useOptimisticStatus,
+} from '@/components/orders/optimistic-status-context';
 import { OrdersTable } from '@/components/orders/orders-table';
 import { useNewOrderAlert } from '@/components/orders/use-new-order-alert';
 import { db } from '@/lib/firebase/client';
@@ -36,7 +40,7 @@ type Props = {
 
 const ANNOUNCE_THROTTLE_MS = 2000;
 
-export function OrdersFeed({
+function OrdersFeedInner({
   initial,
   initialCounts,
   statusFilter,
@@ -49,6 +53,26 @@ export function OrdersFeed({
 
   const seenIds = useRef(new Set(initial.map((o) => o.call_sid)));
   const lastAnnouncedAt = useRef(0);
+
+  const { overrides, clearOptimistic } = useOptimisticStatus();
+
+  // Reconcile optimistic overrides: drop any override whose real
+  // Firestore status now matches (onSnapshot caught up).
+  useEffect(() => {
+    for (const o of orders) {
+      const override = overrides.get(o.call_sid);
+      if (override !== undefined && override === o.status) {
+        clearOptimistic(o.call_sid);
+      }
+    }
+  }, [orders, overrides, clearOptimistic]);
+
+  // Build the displayed list: real orders with status overridden
+  // where an optimistic override exists.
+  const displayOrders = orders.map((o) => {
+    const override = overrides.get(o.call_sid);
+    return override !== undefined ? { ...o, status: override } : o;
+  });
 
   const { freshIds } = useNewOrderAlert(orders);
 
@@ -119,11 +143,19 @@ export function OrdersFeed({
 
       <FilterTabs active={statusFilter} counts={initialCounts} />
 
-      <OrdersTable orders={orders} twilioPhone={twilioPhone} freshIds={freshIds} />
+      <OrdersTable orders={displayOrders} twilioPhone={twilioPhone} freshIds={freshIds} />
 
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
       </div>
     </section>
+  );
+}
+
+export function OrdersFeed(props: Props) {
+  return (
+    <OptimisticStatusProvider>
+      <OrdersFeedInner {...props} />
+    </OptimisticStatusProvider>
   );
 }

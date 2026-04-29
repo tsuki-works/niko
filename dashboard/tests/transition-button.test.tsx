@@ -116,3 +116,51 @@ it('shows error toast when the action returns failure', async () => {
   });
   expect(toast.success).not.toHaveBeenCalled();
 });
+
+import { OptimisticStatusProvider } from '@/components/orders/optimistic-status-context';
+
+it('calls the action immediately on tap (optimistic UI inflight)', async () => {
+  let resolveAction: (v: { success: true }) => void = () => undefined;
+  vi.mocked(markPreparingAction).mockImplementationOnce(
+    () => new Promise((resolve) => {
+      resolveAction = resolve;
+    }),
+  );
+
+  const renderResult = render(
+    <OptimisticStatusProvider>
+      <TransitionButton order={makeOrder('confirmed')} />
+    </OptimisticStatusProvider>,
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: /start preparing/i }));
+  await waitFor(() => {
+    expect(markPreparingAction).toHaveBeenCalled();
+  });
+
+  resolveAction({ success: true });
+  await waitFor(() => {
+    expect(toast.success).toHaveBeenCalled();
+  });
+
+  renderResult.unmount();
+});
+
+it('shows error toast on action failure (rollback handled by OrdersFeed)', async () => {
+  vi.mocked(markPreparingAction).mockResolvedValueOnce({
+    success: false,
+    error: 'order not found',
+  });
+
+  render(
+    <OptimisticStatusProvider>
+      <TransitionButton order={makeOrder('confirmed')} />
+    </OptimisticStatusProvider>,
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: /start preparing/i }));
+
+  await waitFor(() => {
+    expect(toast.error).toHaveBeenCalledWith('order not found');
+  });
+});
