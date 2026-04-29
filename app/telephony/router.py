@@ -48,7 +48,7 @@ GREETING_TRANSCRIPT = "[call started — greet the caller]"
 # heard the goodbye; we then hold for the grace window in case they
 # squeeze in a late question before terminating the call.
 END_OF_CALL_MARK = "end_of_call"
-HANGUP_GRACE_SECONDS = 3.0
+HANGUP_GRACE_SECONDS = 5.0
 
 # Phrases the model uses when wrapping up. Used as a fallback signal
 # for auto-hangup when Haiku says a goodbye but forgets to mark the
@@ -64,7 +64,6 @@ _GOODBYE_PATTERNS = (
     "have a great day",
     "have a good day",
     "enjoy your",
-    "coming right up",
 )
 
 

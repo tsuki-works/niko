@@ -457,7 +457,7 @@ async def test_hang_up_after_grace_calls_twilio_when_pending(monkeypatch):
 
     assert ended == ["CAtest"]
     # Sanity: original constant unchanged.
-    assert HANGUP_GRACE_SECONDS == 3.0
+    assert HANGUP_GRACE_SECONDS == 5.0
 
 
 @pytest.mark.asyncio
@@ -481,6 +481,19 @@ async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
     await _hang_up_after_grace(state)
 
     assert ended == []
+
+
+def test_looks_like_goodbye_excludes_coming_right_up():
+    """'coming right up' is mid-order, not a wrap-up — must NOT trigger fallback."""
+    from app.telephony.router import _looks_like_goodbye
+    assert _looks_like_goodbye("One large Margherita coming right up.") is False
+    assert _looks_like_goodbye("Two Cokes coming right up!") is False
+
+
+def test_hangup_grace_seconds_is_five():
+    """Grace window must be 5s so callers can add late items."""
+    from app.telephony.router import HANGUP_GRACE_SECONDS
+    assert HANGUP_GRACE_SECONDS == 5.0
 
 
 @pytest.mark.asyncio
