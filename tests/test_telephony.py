@@ -144,6 +144,18 @@ def test_voice_passes_restaurant_id_as_stream_parameter(monkeypatch):
     assert 'value="niko-pizza-kitchen"' in body
 
 
+def test_voice_stream_requests_both_tracks(monkeypatch):
+    """Twilio sends both inbound and outbound audio over the same WS
+    only when we ask for ``tracks="both_tracks"`` on the <Stream>. This
+    is the foundation for the WS-side recording pipeline (#82)."""
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    response = client.post("/voice", data=_VOICE_FORM)
+    body = response.text
+    assert 'tracks="both_tracks"' in body
+
+
 def test_voice_uses_firestore_lookup_when_present(monkeypatch):
     """When Firestore has a doc for the dialed number, ``/voice`` uses
     it directly without touching the MENU fallback."""
