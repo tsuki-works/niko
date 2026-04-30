@@ -289,6 +289,12 @@ async def get_call_recording(
         raise HTTPException(status_code=503, detail="Twilio credentials not configured")
 
     recording_url = session["recording_url"]
+    # Defense-in-depth: even though /recording-status validates the URL
+    # before persisting, refuse to fetch anything outside Twilio's host
+    # so any stale or forged document can never turn this proxy into an
+    # SSRF with Twilio Basic creds attached.
+    if not recording_url.startswith("https://api.twilio.com/"):
+        raise HTTPException(status_code=502, detail="invalid recording URL")
     if not recording_url.endswith(".mp3"):
         recording_url += ".mp3"
 

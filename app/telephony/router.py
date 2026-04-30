@@ -25,6 +25,7 @@ from typing import Callable
 
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
+from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import Connect, VoiceResponse
 
 from app.config import settings
@@ -105,28 +106,48 @@ def _bg_call_event(
     )
 
 
-def _start_recording_sync(call_sid: str, host: str, restaurant_id: str) -> None:
+def _start_recording_sync(call_sid: str, restaurant_id: str) -> None:
     """Start a Twilio dual-channel recording for a live call.
 
     Runs in a worker thread so the audio loop never blocks on network I/O.
     Uses the restaurant_id in the callback URL so the status webhook can
-    write to the right Firestore path without a second lookup.
+    write to the right Firestore path without a second lookup. The
+    callback host comes from ``settings.public_base_url`` rather than the
+    inbound WebSocket's Host header — the WS Host is client-controlled
+    and would let an attacker redirect Twilio's POSTs.
     """
     sid = settings.twilio_account_sid
     token = settings.twilio_auth_token
+    base = (settings.public_base_url or "").rstrip("/")
     if not sid or not token:
         logger.warning(
             "twilio creds missing; skipping recording call_sid=%s", call_sid
         )
         return
-    from twilio.rest import Client as TwilioRestClient
+    if not base:
+        logger.warning(
+            "PUBLIC_BASE_URL not set; skipping recording call_sid=%s", call_sid
+        )
+        return
+    try:
+        from twilio.rest import Client as TwilioRestClient
 
-    callback_url = f"https://{host}/recording-status/{restaurant_id}/{call_sid}"
-    TwilioRestClient(sid, token).calls(call_sid).recordings.create(
-        recording_status_callback=callback_url,
-        recording_status_callback_method="POST",
-    )
-    logger.info("recording started call_sid=%s callback=%s", call_sid, callback_url)
+        callback_url = f"{base}/recording-status/{restaurant_id}/{call_sid}"
+        TwilioRestClient(sid, token).calls(call_sid).recordings.create(
+            recording_status_callback=callback_url,
+            recording_status_callback_method="POST",
+        )
+        logger.info(
+            "recording started call_sid=%s callback=%s", call_sid, callback_url
+        )
+    except Exception:
+        # Swallow the error — call audio must keep flowing even if Twilio's
+        # recording API rejects the request. Without this guard the
+        # exception lands on an unawaited Task and surfaces only as a
+        # garbage-collection warning.
+        logger.exception(
+            "recording: failed to start Twilio recording call_sid=%s", call_sid
+        )
 
 
 def _twilio_end_call_sync(call_sid: str) -> None:
@@ -611,7 +632,6 @@ async def media_stream(websocket: WebSocket) -> None:
                         asyncio.to_thread(
                             _start_recording_sync,
                             state.call_sid,
-                            websocket.headers.get("host", "localhost:8000"),
                             state.restaurant.id,
                         )
                     )
@@ -707,6 +727,13 @@ async def media_stream(websocket: WebSocket) -> None:
             await dg_conn.finish()
 
 
+# The recording URL Twilio sends in the callback must live under this
+# host. Anything else is rejected before being persisted, so a forged
+# (or legacy-data) URL can never become an SSRF target when the dashboard
+# proxies it through GET /calls/{call_sid}/recording.
+_TWILIO_RECORDING_URL_PREFIX = "https://api.twilio.com/"
+
+
 @router.post("/recording-status/{restaurant_id}/{call_sid}")
 async def recording_status(
     restaurant_id: str, call_sid: str, request: Request
@@ -718,11 +745,38 @@ async def recording_status(
     the recording was started in ``_start_recording_sync``) so no
     additional Firestore lookup is needed to find the right tenant path.
 
+    Authenticity is enforced via Twilio's ``X-Twilio-Signature`` header
+    (HMAC-SHA1 of the request URL + sorted form fields, keyed by the
+    account auth token). Without this check the endpoint would let any
+    unauthenticated POST inject an arbitrary ``RecordingUrl`` into the
+    tenant's call session.
+
     On ``completed``, stores the recording URL on the call session doc
     and emits a ``recording_ready`` event so the live dashboard can show
     the audio player.
     """
+    auth_token = settings.twilio_auth_token
+    base = (settings.public_base_url or "").rstrip("/")
+    if not auth_token or not base:
+        logger.error(
+            "recording-status: server not configured for signature validation "
+            "(twilio_auth_token=%s, public_base_url=%s)",
+            bool(auth_token),
+            bool(base),
+        )
+        return Response(content="", status_code=503)
+
     form = await request.form()
+    form_dict = {k: v for k, v in form.items()}
+    signature = request.headers.get("X-Twilio-Signature", "")
+    full_url = f"{base}/recording-status/{restaurant_id}/{call_sid}"
+    validator = RequestValidator(auth_token)
+    if not validator.validate(full_url, form_dict, signature):
+        logger.warning(
+            "recording-status: invalid Twilio signature call_sid=%s", call_sid
+        )
+        return Response(content="", status_code=403)
+
     status = (form.get("RecordingStatus") or "").lower()
     recording_url = (form.get("RecordingUrl") or "").strip()
     recording_sid = (form.get("RecordingSid") or "").strip()
@@ -740,6 +794,13 @@ async def recording_status(
     )
 
     if status == "completed" and recording_url and recording_sid:
+        if not recording_url.startswith(_TWILIO_RECORDING_URL_PREFIX):
+            logger.warning(
+                "recording-status: rejecting non-Twilio RecordingUrl call_sid=%s url=%r",
+                call_sid,
+                recording_url,
+            )
+            return Response(content="", status_code=400)
         await asyncio.to_thread(
             call_sessions.mark_recording_ready,
             call_sid,

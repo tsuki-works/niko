@@ -496,3 +496,113 @@ async def test_clear_twilio_audio_swallows_websocket_disconnect():
 
     # No exception escaping is the assertion.
     await clear_twilio_audio(ws, "MZtest456")
+
+
+# ---------------------------------------------------------------------------
+# POST /recording-status — Twilio signature validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _recording_status_env(monkeypatch):
+    """Configure settings so /recording-status doesn't immediately 503.
+    Tests for the 503 path override the env explicitly."""
+    from app.config import settings
+    from app.telephony import router as telephony_router
+
+    monkeypatch.setattr(settings, "twilio_auth_token", "test_token", raising=False)
+    monkeypatch.setattr(
+        settings, "public_base_url", "http://testserver", raising=False
+    )
+    captured: list[dict] = []
+
+    def _fake_mark(call_sid, restaurant_id, **kw):
+        captured.append({"call_sid": call_sid, "restaurant_id": restaurant_id, **kw})
+
+    monkeypatch.setattr(
+        telephony_router.call_sessions, "mark_recording_ready", _fake_mark
+    )
+    return captured
+
+
+def _force_signature_valid(monkeypatch, valid: bool) -> None:
+    monkeypatch.setattr(
+        "app.telephony.router.RequestValidator.validate",
+        lambda self, url, params, sig: valid,
+    )
+
+
+def test_recording_status_rejects_invalid_signature(
+    _recording_status_env, monkeypatch
+):
+    """No (or wrong) X-Twilio-Signature → 403, no Firestore write.
+    This is the P0 the original PR shipped without."""
+    _force_signature_valid(monkeypatch, False)
+    response = client.post(
+        "/recording-status/niko-pizza-kitchen/CAtest123",
+        data={
+            "RecordingStatus": "completed",
+            "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
+            "RecordingSid": "REabc",
+            "RecordingDuration": "42",
+        },
+    )
+    assert response.status_code == 403
+    assert _recording_status_env == []
+
+
+def test_recording_status_returns_503_when_public_base_url_unset(monkeypatch):
+    """Without PUBLIC_BASE_URL we cannot reconstruct the signed URL,
+    so the only safe behavior is to refuse all callbacks."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "twilio_auth_token", "test_token", raising=False)
+    monkeypatch.setattr(settings, "public_base_url", None, raising=False)
+    response = client.post(
+        "/recording-status/niko-pizza-kitchen/CAtest123",
+        data={"RecordingStatus": "completed"},
+    )
+    assert response.status_code == 503
+
+
+def test_recording_status_writes_firestore_with_valid_signature(
+    _recording_status_env, monkeypatch
+):
+    _force_signature_valid(monkeypatch, True)
+    response = client.post(
+        "/recording-status/niko-pizza-kitchen/CAtest123",
+        data={
+            "RecordingStatus": "completed",
+            "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
+            "RecordingSid": "REabc",
+            "RecordingDuration": "42",
+        },
+    )
+    assert response.status_code == 204
+    assert len(_recording_status_env) == 1
+    write = _recording_status_env[0]
+    assert write["call_sid"] == "CAtest123"
+    assert write["restaurant_id"] == "niko-pizza-kitchen"
+    assert write["recording_sid"] == "REabc"
+    assert write["duration_seconds"] == 42
+
+
+def test_recording_status_rejects_non_twilio_recording_url(
+    _recording_status_env, monkeypatch
+):
+    """Even with a valid signature, refuse to persist a RecordingUrl
+    that doesn't live on api.twilio.com — defense-in-depth against
+    malformed/spoofed payloads becoming an SSRF vector when the
+    dashboard later proxies the URL."""
+    _force_signature_valid(monkeypatch, True)
+    response = client.post(
+        "/recording-status/niko-pizza-kitchen/CAtest123",
+        data={
+            "RecordingStatus": "completed",
+            "RecordingUrl": "https://attacker.example/evil.mp3",
+            "RecordingSid": "REabc",
+            "RecordingDuration": "42",
+        },
+    )
+    assert response.status_code == 400
+    assert _recording_status_env == []

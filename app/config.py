@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None
 
+    # Public HTTPS base URL of this service (e.g. "https://niko-xyz.run.app"
+    # or an ngrok URL locally). Required for Twilio recording callbacks:
+    # the URL we hand Twilio when starting a recording must equal the URL
+    # we reconstruct in /recording-status to validate Twilio's signature.
+    # Building it from the request's Host header would defeat the
+    # signature check, since the Host header is client-controlled.
+    public_base_url: Optional[str] = None
+
     square_access_token: Optional[str] = None
     square_application_id: Optional[str] = None
 
