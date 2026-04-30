@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import logging
 import struct
+import time
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +177,50 @@ def begin_recording(
         upload_url=upload_url,
         encoder=_make_encoder(),
     )
+
+
+def append_chunks(
+    session: RecordingUploadSession,
+    inbound_mu_law: bytes,
+    outbound_mu_law: bytes,
+) -> None:
+    """Decode + interleave + encode + buffer; flush a chunk when the
+    pending MP3 buffer reaches the 256 KB GCS-minimum.
+
+    No-op once ``session.broken`` is True (set by `_put_chunk` after two
+    consecutive failures).
+    """
+    if session.broken:
+        return
+
+    pcm = _compute_pcm_pair(inbound_mu_law, outbound_mu_law)
+    if not pcm:
+        return
+
+    # Track per-channel sample count for duration calc.
+    # Stereo PCM-16 = 4 bytes per (per-channel) sample-pair.
+    session.total_pcm_samples += len(pcm) // 4
+
+    mp3 = session.encoder.encode(pcm)
+    if mp3:
+        session.pending_mp3.extend(mp3)
+
+    while len(session.pending_mp3) >= _GCS_CHUNK_BYTES:
+        n = (len(session.pending_mp3) // _GCS_CHUNK_BYTES) * _GCS_CHUNK_BYTES
+        chunk = bytes(session.pending_mp3[:n])
+        del session.pending_mp3[:n]
+        _put_chunk(session, chunk, is_final=False, total=None)
+
+
+def _put_chunk(
+    session: RecordingUploadSession,
+    chunk: bytes,
+    *,
+    is_final: bool,
+    total: int | None,
+) -> None:
+    """PUT one resumable-upload chunk to the session URL.
+
+    Stub — real impl in Task 10.
+    """
+    raise NotImplementedError

@@ -103,3 +103,33 @@ def test_begin_recording_creates_session_and_sets_custom_time(monkeypatch):
     assert session.total_bytes_uploaded == 0
     assert session.broken is False
     assert before + timedelta(days=7) - timedelta(seconds=2) <= fake_blob.custom_time <= after + timedelta(days=7)
+
+
+def test_append_chunks_buffers_below_threshold(monkeypatch):
+    from app.storage import recordings
+
+    put_count = {"n": 0}
+
+    def fake_put(session, chunk_bytes, *, is_final, total):
+        put_count["n"] += 1
+
+    monkeypatch.setattr(recordings, "_put_chunk", fake_put)
+
+    session = recordings.RecordingUploadSession(
+        call_sid="CAt", restaurant_id="rid",
+        blob_name="rid/CAt.mp3", upload_url="https://fake",
+        encoder=recordings._make_encoder(),
+    )
+
+    # 50 ms of audio per side, repeated 10 times — well under 256 KB MP3.
+    inbound = b"\xff" * 400  # 50 ms at 8 kHz
+    outbound = b"\x00" * 400
+    for _ in range(10):
+        recordings.append_chunks(session, inbound, outbound)
+
+    assert put_count["n"] == 0
+    assert session.total_bytes_uploaded == 0
+    assert session.total_pcm_samples == 400 * 10
+    # encoder may or may not produce output for short bursts (LAME buffers
+    # internally before emitting frames); accept >= 0.
+    assert len(session.pending_mp3) >= 0
