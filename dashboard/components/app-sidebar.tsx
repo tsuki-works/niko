@@ -58,14 +58,26 @@ export function AppSidebar({
   const pathname = usePathname();
 
   return (
-    // `collapsible="none"` means the sidebar is always expanded.
-    // The ShadCN primitive gives this variant only `h-full`, which
-    // doesn't resolve when SidebarProvider has only `min-h-svh` (no
+    // `collapsible="none"` keeps the sidebar always-expanded. The
+    // ShadCN primitive applies only `h-full` to this variant, which
+    // doesn't resolve against SidebarProvider's `min-h-svh` (no
     // explicit parent height) — the sidebar collapses to nav content
-    // height. `min-h-svh` here gives it a viewport-height floor; the
-    // parent flex row's default `align-items: stretch` then grows it
-    // with tall pages (e.g. /menu) so the sidebar reaches the bottom.
-    <Sidebar collapsible="none" className="min-h-svh border-r">
+    // size. We bypass the flex-stretch puzzle entirely with sticky
+    // positioning + explicit `h-svh`, giving us the standard "always-
+    // visible sidebar that follows the viewport" pattern (cf. GitHub,
+    // Stripe). `self-start` keeps stretch from interfering. Inline
+    // styles back up the Tailwind classes in case `tailwind-merge`
+    // mishandles `min-h-0` ↔ `min-h-svh` conflicts on Tailwind v4.
+    <Sidebar
+      collapsible="none"
+      className="sticky top-0 h-svh self-start border-r"
+      style={{
+        position: 'sticky',
+        top: 0,
+        height: '100svh',
+        alignSelf: 'flex-start',
+      }}
+    >
       <SidebarHeader>
         <div className="flex items-center gap-2.5 px-2 py-3">
           {/* 48px lines up with the "Niko" + "by Tsuki Works" stack
