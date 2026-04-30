@@ -34,7 +34,8 @@ from app.llm.prompts import build_system_prompt
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
 from app.orders.models import Order, OrderStatus
 from app.restaurants.models import Restaurant
-from app.storage import call_sessions, restaurants as restaurants_storage
+from app.storage import call_sessions, recordings, restaurants as restaurants_storage
+from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
 from app.tts.client import speak
 
 router = APIRouter()
@@ -298,6 +299,8 @@ class _CallState:
     hangup_task:       asyncio.Task | None = None   # pending auto-hangup (#78)
     mark_timeout_task: asyncio.Task | None = None   # mark-echo fallback (#114)
     pending_hangup: bool           = False     # set when goodbye mark sent (#78)
+    recording_session: "RecordingUploadSession | None" = None
+    should_hangup: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 async def _open_deepgram_connection(
