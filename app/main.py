@@ -1,7 +1,9 @@
 import logging
 import time
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import Response as HTTPResponse
 
 logging.basicConfig(level=logging.INFO)
 
@@ -260,6 +262,57 @@ def dev_call_timeline(
             for e in events
         ],
     }
+
+
+@app.get("/calls/{call_sid}/recording")
+async def get_call_recording(
+    call_sid: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Proxy the Twilio recording MP3 for the calling tenant's call.
+
+    Twilio recordings require HTTP Basic Auth, so the browser can't fetch
+    them directly. This endpoint looks up the recording URL from Firestore
+    (tenant-scoped, so cross-tenant reads return 404), fetches the MP3
+    from Twilio with credentials, and streams it to the browser.
+
+    Returns 404 while the recording is still processing or if this call
+    has no recording.
+    """
+    session = call_sessions.get_session(call_sid, tenant.restaurant_id)
+    if not session or not session.get("recording_url"):
+        raise HTTPException(status_code=404, detail="recording not available yet")
+
+    sid = settings.twilio_account_sid
+    token = settings.twilio_auth_token
+    if not sid or not token:
+        raise HTTPException(status_code=503, detail="Twilio credentials not configured")
+
+    recording_url = session["recording_url"]
+    # Defense-in-depth: even though /recording-status validates the URL
+    # before persisting, refuse to fetch anything outside Twilio's host
+    # so any stale or forged document can never turn this proxy into an
+    # SSRF with Twilio Basic creds attached.
+    if not recording_url.startswith("https://api.twilio.com/"):
+        raise HTTPException(status_code=502, detail="invalid recording URL")
+    if not recording_url.endswith(".mp3"):
+        recording_url += ".mp3"
+
+    # Buffered fetch: recordings are short (<5 min ≈ <5 MB) so we fetch
+    # the whole MP3 before responding. This lets us check the Twilio status
+    # code before committing to a 200, avoiding the broken-stream problem
+    # that arises when raising HTTPException inside a generator.
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        twilio_resp = await client.get(recording_url, auth=(sid, token))
+
+    if twilio_resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Failed to fetch recording from Twilio")
+
+    return HTTPResponse(
+        content=twilio_resp.content,
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": f'inline; filename="{call_sid}.mp3"'},
+    )
 
 
 @app.post("/dev/seed-order")

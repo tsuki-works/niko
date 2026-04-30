@@ -28,6 +28,7 @@ export type CallEventKind =
   | 'silence_timeout'
   | 'stop'
   | 'order_confirmed'
+  | 'recording_ready'
   | 'error'
   | 'log';
 
@@ -50,6 +51,10 @@ export type CallEvent = {
 export type CallTimeline = {
   call_sid: string;
   events: CallEvent[];
+  // True when Twilio has finished processing the recording. Absent/false
+  // while the recording is still processing or if the call has none.
+  // The audio player proxies through GET /calls/{call_sid}/recording.
+  recording_available?: boolean;
 };
 
 export type CallsListResult =
@@ -94,6 +99,7 @@ export async function getCallTimeline(
     );
   }
 
-  const body = (await res.json()) as CallTimeline;
-  return { available: true, timeline: body };
+  const body = (await res.json()) as Omit<CallTimeline, 'recording_available'> & { events: CallEvent[] };
+  const recording_available = body.events.some((e) => e.kind === 'recording_ready');
+  return { available: true, timeline: { ...body, recording_available } };
 }

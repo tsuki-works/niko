@@ -30,6 +30,7 @@ export const CallEventKindSchema = z.enum([
   'silence_timeout',
   'stop',
   'order_confirmed',
+  'recording_ready',
   'error',
   'log',
 ]);
@@ -47,6 +48,10 @@ export const CallSessionSchema = z.object({
   transcript_count: z.number().int().min(0).default(0),
   has_error: z.boolean().default(false),
   last_event_at: z.coerce.date().nullish(),
+  // Set by the backend once the Twilio recording is processed. Absent on
+  // calls that have no recording yet. Frontend never sees the raw URL —
+  // it proxies playback through GET /calls/{call_sid}/recording.
+  recording_url: z.string().optional(),
 });
 export type CallSession = z.infer<typeof CallSessionSchema>;
 

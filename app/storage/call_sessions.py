@@ -206,6 +206,64 @@ def get_session_events(
     return [snap.to_dict() for snap in events_query.stream()]
 
 
+def mark_recording_ready(
+    call_sid: str,
+    restaurant_id: str,
+    *,
+    recording_url: str,
+    recording_sid: str,
+    duration_seconds: int,
+) -> None:
+    """Stamp the call session with the completed Twilio recording URL.
+
+    Patches both parent docs with recording metadata and appends a
+    ``recording_ready`` event to the events subcollection so the live
+    dashboard's onSnapshot can surface the audio player without polling.
+    The raw ``recording_url`` is stored server-side only; the frontend
+    proxies playback through ``GET /calls/{call_sid}/recording``.
+    """
+    ts = _now()
+    patch: dict[str, Any] = {
+        "recording_url": recording_url,
+        "recording_sid": recording_sid,
+        "recording_duration_seconds": duration_seconds,
+        "last_event_at": ts,
+    }
+    event_payload = {
+        "timestamp": ts,
+        "kind": "recording_ready",
+        "text": "",
+        "detail": {
+            "recording_sid": recording_sid,
+            "duration_seconds": duration_seconds,
+        },
+    }
+    try:
+        client = _get_client()
+        legacy = _legacy_parent(client, call_sid)
+        legacy.update(patch)
+        legacy.collection(_EVENTS_SUBCOLLECTION).add(event_payload)
+
+        nested = _nested_parent(client, restaurant_id, call_sid)
+        nested.update(patch)
+        nested.collection(_EVENTS_SUBCOLLECTION).add(event_payload)
+    except Exception:
+        logger.exception(
+            "call_sessions: mark_recording_ready failed call_sid=%s", call_sid
+        )
+
+
+def get_session(
+    call_sid: str, restaurant_id: str
+) -> Optional[dict[str, Any]]:
+    """Return the parent call session doc, or None if it doesn't exist."""
+    client = _get_client()
+    snap = _nested_parent(client, restaurant_id, call_sid).get()
+    if not snap.exists:
+        return None
+    return snap.to_dict()
+
+
 def mark_call_ended(
     call_sid: str,
     restaurant_id: str,
