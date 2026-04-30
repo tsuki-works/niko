@@ -253,6 +253,45 @@ def mark_recording_ready(
         )
 
 
+def mark_recording_deleted(call_sid: str, restaurant_id: str) -> None:
+    """Clear recording metadata from the call session doc and emit a
+    ``recording_deleted`` event so the dashboard's onSnapshot can hide
+    the audio player.
+
+    Mirrors the dual-write shape of ``mark_recording_ready`` —
+    patches both legacy flat and nested call-session docs and appends
+    a matching event on each. Idempotent: calling it twice on the
+    same call is a no-op for the dashboard (the second clear writes
+    the same Nones; the second event row is harmless).
+    """
+    ts = _now()
+    patch: dict[str, Any] = {
+        "recording_url": None,
+        "recording_sid": None,
+        "recording_duration_seconds": None,
+        "last_event_at": ts,
+    }
+    event_payload = {
+        "timestamp": ts,
+        "kind": "recording_deleted",
+        "text": "",
+        "detail": {},
+    }
+    try:
+        client = _get_client()
+        legacy = _legacy_parent(client, call_sid)
+        legacy.update(patch)
+        legacy.collection(_EVENTS_SUBCOLLECTION).add(event_payload)
+
+        nested = _nested_parent(client, restaurant_id, call_sid)
+        nested.update(patch)
+        nested.collection(_EVENTS_SUBCOLLECTION).add(event_payload)
+    except Exception:
+        logger.exception(
+            "call_sessions: mark_recording_deleted failed call_sid=%s", call_sid
+        )
+
+
 def get_session(
     call_sid: str, restaurant_id: str
 ) -> Optional[dict[str, Any]]:

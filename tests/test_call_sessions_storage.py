@@ -327,3 +327,45 @@ def test_record_event_swallows_firestore_exceptions(fake_client):
     call_sessions.record_event(
         "CAtest", _DEMO_RID, kind="transcript_final", text="hi"
     )
+
+
+def test_mark_recording_deleted_clears_url_and_emits_event(monkeypatch):
+    from app.storage import call_sessions
+
+    patches: list[dict] = []
+    events: list[dict] = []
+
+    class FakeDoc:
+        def __init__(self):
+            self._collection = FakeCollection(events)
+        def update(self, patch):
+            patches.append(patch)
+        def collection(self, _name):
+            return self._collection
+
+    class FakeCollection:
+        def __init__(self, events):
+            self._events = events
+        def add(self, payload):
+            self._events.append(payload)
+
+    fake_legacy = FakeDoc()
+    fake_nested = FakeDoc()
+
+    monkeypatch.setattr(call_sessions, "_get_client", lambda: object())
+    monkeypatch.setattr(call_sessions, "_legacy_parent", lambda _c, _sid: fake_legacy)
+    monkeypatch.setattr(call_sessions, "_nested_parent", lambda _c, _rid, _sid: fake_nested)
+
+    call_sessions.mark_recording_deleted("CAtest", "rid1")
+
+    # Both parents are cleared
+    assert len(patches) == 2
+    for p in patches:
+        assert p.get("recording_url") is None
+        assert p.get("recording_sid") is None
+        assert p.get("recording_duration_seconds") is None
+
+    # An event was appended on each side
+    assert len(events) == 2
+    for ev in events:
+        assert ev["kind"] == "recording_deleted"
