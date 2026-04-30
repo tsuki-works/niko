@@ -337,3 +337,37 @@ def test_delete_recording_idempotent_on_404(monkeypatch):
     recordings.delete_recording(call_sid="CAt", restaurant_id="rid")
 
 
+def test_generate_signed_url_uses_v4_get_30min(monkeypatch):
+    from datetime import timedelta
+    from app.storage import recordings
+
+    captured: dict = {}
+
+    fake_blob = type("FakeBlob", (), {})()
+    def fake_signed(*, version, method, expiration):
+        captured["version"] = version
+        captured["method"] = method
+        captured["expiration"] = expiration
+        return "https://signed.googleapis.com/?sig=fake"
+    fake_blob.generate_signed_url = fake_signed
+
+    fake_bucket = type("FakeBucket", (), {})()
+    def get_blob(name):
+        captured["blob_name"] = name
+        return fake_blob
+    fake_bucket.blob = get_blob
+
+    fake_client = type("FakeClient", (), {})()
+    fake_client.bucket = lambda name: fake_bucket
+
+    monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
+
+    url = recordings.generate_signed_url(call_sid="CAt", restaurant_id="rid")
+
+    assert url == "https://signed.googleapis.com/?sig=fake"
+    assert captured["blob_name"] == "rid/CAt.mp3"
+    assert captured["version"] == "v4"
+    assert captured["method"] == "GET"
+    assert captured["expiration"] == timedelta(minutes=30)
+
+

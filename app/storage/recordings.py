@@ -325,3 +325,25 @@ def delete_recording(*, call_sid: str, restaurant_id: str) -> None:
         )
 
 
+def generate_signed_url(
+    *, call_sid: str, restaurant_id: str, ttl_minutes: int = 30
+) -> str:
+    """Return a V4 signed GET URL for the recording blob. TTL defaults
+    to 30 minutes — long enough for a typical playback session, short
+    enough that a leaked URL ages out fast.
+
+    Cloud Run's runtime SA can sign V4 URLs without a private key file
+    by using the IAM ``signBlob`` API; the SA must hold
+    ``roles/iam.serviceAccountTokenCreator`` on itself. See
+    ``scripts/setup-recordings-bucket.sh``.
+    """
+    blob_name = f"{restaurant_id}/{call_sid}.mp3"
+    bucket = _get_storage_client().bucket(settings.recordings_bucket)
+    blob = bucket.blob(blob_name)
+    return blob.generate_signed_url(
+        version="v4",
+        method="GET",
+        expiration=timedelta(minutes=ttl_minutes),
+    )
+
+
