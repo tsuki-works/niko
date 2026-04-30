@@ -221,6 +221,40 @@ def _put_chunk(
 ) -> None:
     """PUT one resumable-upload chunk to the session URL.
 
-    Stub — real impl in Task 10.
+    Builds the ``Content-Range`` header from the session's current
+    ``total_bytes_uploaded``. Retries once on 5xx with a 0.5 s pause; on
+    second failure, marks the session broken and stops further uploads.
+    GCS returns 308 ("Resume Incomplete") for a successful non-final
+    chunk and 200/201 for the final, so accept all three.
     """
-    raise NotImplementedError
+    start = session.total_bytes_uploaded
+    end = start + len(chunk) - 1
+    total_str = str(total) if (is_final and total is not None) else "*"
+    headers = {"Content-Range": f"bytes {start}-{end}/{total_str}"}
+
+    for attempt in range(2):
+        try:
+            resp = requests.put(
+                session.upload_url, data=chunk, headers=headers, timeout=30.0
+            )
+        except Exception:
+            logger.exception(
+                "recording: chunk PUT raised call_sid=%s attempt=%d",
+                session.call_sid, attempt,
+            )
+            resp = None
+
+        ok = resp is not None and resp.status_code in (200, 201, 308)
+        if ok:
+            session.total_bytes_uploaded += len(chunk)
+            return
+        if attempt == 0:
+            time.sleep(0.5)
+            continue
+        session.broken = True
+        logger.error(
+            "recording: chunk PUT failed twice — session broken call_sid=%s status=%s",
+            session.call_sid,
+            resp.status_code if resp else "(no response)",
+        )
+        return

@@ -133,3 +133,74 @@ def test_append_chunks_buffers_below_threshold(monkeypatch):
     # encoder may or may not produce output for short bursts (LAME buffers
     # internally before emitting frames); accept >= 0.
     assert len(session.pending_mp3) >= 0
+
+
+def test_put_chunk_sends_content_range_open_for_non_final(monkeypatch):
+    from app.storage import recordings
+
+    calls: list[dict] = []
+
+    def fake_put(url, data, headers, timeout):
+        calls.append({"url": url, "data_len": len(data), "headers": headers})
+        return type("R", (), {"status_code": 200, "text": ""})()
+
+    monkeypatch.setattr(recordings.requests, "put", fake_put)
+
+    session = recordings.RecordingUploadSession(
+        call_sid="CAt", restaurant_id="rid",
+        blob_name="rid/CAt.mp3", upload_url="https://fake",
+        encoder=recordings._make_encoder(),
+    )
+
+    chunk = b"x" * 256 * 1024
+    recordings._put_chunk(session, chunk, is_final=False, total=None)
+
+    assert len(calls) == 1
+    assert calls[0]["url"] == "https://fake"
+    assert calls[0]["data_len"] == 256 * 1024
+    assert calls[0]["headers"]["Content-Range"] == "bytes 0-262143/*"
+    assert session.total_bytes_uploaded == 256 * 1024
+
+
+def test_put_chunk_retries_once_on_5xx(monkeypatch):
+    from app.storage import recordings
+
+    responses = iter([
+        type("R", (), {"status_code": 503, "text": "transient"})(),
+        type("R", (), {"status_code": 200, "text": ""})(),
+    ])
+    sleeps: list[float] = []
+    monkeypatch.setattr(recordings.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(recordings.requests, "put", lambda *a, **kw: next(responses))
+
+    session = recordings.RecordingUploadSession(
+        call_sid="CAt", restaurant_id="rid",
+        blob_name="rid/CAt.mp3", upload_url="https://fake",
+        encoder=recordings._make_encoder(),
+    )
+
+    recordings._put_chunk(session, b"x" * 256 * 1024, is_final=False, total=None)
+
+    assert sleeps == [0.5]
+    assert session.broken is False
+    assert session.total_bytes_uploaded == 256 * 1024
+
+
+def test_put_chunk_marks_broken_after_two_5xx(monkeypatch):
+    from app.storage import recordings
+
+    monkeypatch.setattr(recordings.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(
+        recordings.requests, "put",
+        lambda *a, **kw: type("R", (), {"status_code": 503, "text": "fail"})(),
+    )
+
+    session = recordings.RecordingUploadSession(
+        call_sid="CAt", restaurant_id="rid",
+        blob_name="rid/CAt.mp3", upload_url="https://fake",
+        encoder=recordings._make_encoder(),
+    )
+
+    recordings._put_chunk(session, b"x" * 256 * 1024, is_final=False, total=None)
+    assert session.broken is True
+    assert session.total_bytes_uploaded == 0
