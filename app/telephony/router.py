@@ -675,6 +675,18 @@ async def media_stream(websocket: WebSocket) -> None:
                         rid or restaurants_storage.DEMO_RID
                     )
                 state.system_prompt = build_system_prompt(state.restaurant)
+                try:
+                    state.recording_session = recordings.begin_recording(
+                        call_sid=state.call_sid or "unknown",
+                        restaurant_id=state.restaurant.id,
+                        retention_days=state.restaurant.recording_retention_days,
+                    )
+                except Exception:
+                    logger.exception(
+                        "recording: begin_recording failed call_sid=%s — call continues without recording",
+                        state.call_sid,
+                    )
+                    state.recording_session = None
                 state.order = Order(
                     call_sid=state.call_sid or "unknown",
                     restaurant_id=state.restaurant.id,

@@ -268,6 +268,54 @@ def test_media_stream_handles_full_call_lifecycle(mock_pipeline):
     mock_pipeline.finish.assert_called_once()
 
 
+def test_media_stream_begins_recording_on_start(mock_pipeline, monkeypatch):
+    """On WS start, after tenant resolution, begin_recording is called
+    with the resolved restaurant id and the tenant's retention setting."""
+    from app.storage import recordings as recordings_mod
+    from app.restaurants.models import Restaurant
+
+    seeded = Restaurant(
+        id="niko-pizza-kitchen",
+        name="Niko",
+        display_phone="+1", twilio_phone=_DEMO_TO,
+        address="a", hours="h",
+        menu={"pizzas": [], "sides": [], "drinks": []},
+        recording_retention_days=42,
+    )
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant", lambda _rid: seeded
+    )
+    monkeypatch.setattr(
+        restaurants_storage, "load_or_fallback_demo", lambda _rid: seeded
+    )
+
+    captured: list[dict] = []
+
+    def fake_begin(*, call_sid, restaurant_id, retention_days):
+        captured.append({
+            "call_sid": call_sid,
+            "restaurant_id": restaurant_id,
+            "retention_days": retention_days,
+        })
+        return MagicMock(broken=False)
+
+    monkeypatch.setattr(recordings_mod, "begin_recording", fake_begin)
+    monkeypatch.setattr(recordings_mod, "append_chunks", lambda *a, **kw: None)
+    monkeypatch.setattr(recordings_mod, "finalize_recording", lambda _s: ("", 0))
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert len(captured) == 1
+    assert captured[0] == {
+        "call_sid": "CAtest123",
+        "restaurant_id": "niko-pizza-kitchen",
+        "retention_days": 42,
+    }
+
+
 # ---------------------------------------------------------------------------
 # AI greeting
 # ---------------------------------------------------------------------------
