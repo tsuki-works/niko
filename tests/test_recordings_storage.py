@@ -265,3 +265,31 @@ def test_finalize_recording_sends_final_chunk_with_total_and_returns_url(monkeyp
     assert final["total"] is not None
     assert duration == 2
     assert url == "gs://niko-recordings/rid/CAt.mp3"
+
+
+def test_finalize_recording_with_zero_pcm_cancels_session(monkeypatch):
+    from app.storage import recordings
+
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        recordings.requests, "delete",
+        lambda url, timeout: deleted.append(url) or type("R", (), {"status_code": 204})(),
+    )
+    # _put_chunk should NOT be called.
+    monkeypatch.setattr(
+        recordings, "_put_chunk",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not PUT on empty session")),
+    )
+
+    session = recordings.RecordingUploadSession(
+        call_sid="CAt", restaurant_id="rid",
+        blob_name="rid/CAt.mp3",
+        upload_url="https://upload.googleapis.com/session/abc",
+        encoder=recordings._make_encoder(),
+    )
+
+    url, duration = recordings.finalize_recording(session)
+
+    assert url == ""
+    assert duration == 0
+    assert deleted == ["https://upload.googleapis.com/session/abc"]
