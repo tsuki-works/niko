@@ -25,7 +25,6 @@ from typing import Callable
 
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
-from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import Connect, VoiceResponse
 
 from app.config import settings
@@ -111,65 +110,6 @@ def _bg_call_event(
     )
 
 
-def _start_recording_sync(call_sid: str, restaurant_id: str) -> None:
-    """Start a Twilio dual-channel recording for a live call.
-
-    Runs in a worker thread so the audio loop never blocks on network I/O.
-    Uses the restaurant_id in the callback URL so the status webhook can
-    write to the right Firestore path without a second lookup. The
-    callback host comes from ``settings.public_base_url`` rather than the
-    inbound WebSocket's Host header — the WS Host is client-controlled
-    and would let an attacker redirect Twilio's POSTs.
-    """
-    sid = settings.twilio_account_sid
-    token = settings.twilio_auth_token
-    base = (settings.public_base_url or "").rstrip("/")
-    if not sid or not token:
-        logger.warning(
-            "twilio creds missing; skipping recording call_sid=%s", call_sid
-        )
-        return
-    if not base:
-        logger.warning(
-            "PUBLIC_BASE_URL not set; skipping recording call_sid=%s", call_sid
-        )
-        return
-    try:
-        from twilio.rest import Client as TwilioRestClient
-
-        callback_url = f"{base}/recording-status/{restaurant_id}/{call_sid}"
-        TwilioRestClient(sid, token).calls(call_sid).recordings.create(
-            recording_status_callback=callback_url,
-            recording_status_callback_method="POST",
-        )
-        logger.info(
-            "recording started call_sid=%s callback=%s", call_sid, callback_url
-        )
-    except Exception:
-        # Swallow the error — call audio must keep flowing even if Twilio's
-        # recording API rejects the request. Without this guard the
-        # exception lands on an unawaited Task and surfaces only as a
-        # garbage-collection warning.
-        logger.exception(
-            "recording: failed to start Twilio recording call_sid=%s", call_sid
-        )
-
-
-def _twilio_end_call_sync(call_sid: str) -> None:
-    """End a Twilio call via the REST API. Runs in a worker thread so the
-    audio loop never blocks on network I/O."""
-    sid = settings.twilio_account_sid
-    token = settings.twilio_auth_token
-    if not sid or not token:
-        logger.warning(
-            "twilio creds missing; cannot end call_sid=%s", call_sid
-        )
-        return
-    from twilio.rest import Client as TwilioRestClient
-
-    TwilioRestClient(sid, token).calls(call_sid).update(status="completed")
-
-
 async def send_end_of_call_mark(
     websocket: WebSocket, stream_sid: str | None
 ) -> bool:
@@ -201,12 +141,20 @@ async def send_end_of_call_mark(
 
 
 async def _hang_up_after_grace(state: _CallState) -> None:
-    """Wait HANGUP_GRACE_SECONDS, then end the call IFF the caller
-    didn't speak in the meantime.
+    """Wait HANGUP_GRACE_SECONDS, then close the WebSocket to end the
+    call.
 
-    The grace window lets a caller squeeze in a late follow-up like
-    *"how long does that take?"* — a final transcript clears
-    ``state.pending_hangup`` and we abort.
+    Closing our /media-stream WebSocket ends Twilio's <Connect>; with no
+    further TwiML the inbound call hangs up. This avoids the Twilio REST
+    Calls.update endpoint, which returns 404 on calls in <Connect> state
+    (same root cause as the recording 404). The grace window lets a
+    caller squeeze in a late follow-up like *"how long does that
+    take?"* — a final transcript clears ``state.pending_hangup`` and
+    we abort.
+
+    ``state.should_hangup`` is also set as a fallback signal in case
+    the WS close doesn't immediately unblock ``receive_text()`` (rare,
+    but harmless to set both).
     """
     try:
         await asyncio.sleep(HANGUP_GRACE_SECONDS)
@@ -214,13 +162,18 @@ async def _hang_up_after_grace(state: _CallState) -> None:
         return
     if not state.pending_hangup or not state.call_sid:
         return
-    try:
-        await asyncio.to_thread(_twilio_end_call_sync, state.call_sid)
-        logger.info("call ended by server call_sid=%s", state.call_sid)
-    except Exception:
-        logger.exception(
-            "auto-hangup: REST end_call failed call_sid=%s", state.call_sid
-        )
+    state.should_hangup.set()
+    if state.websocket is not None:
+        try:
+            await state.websocket.close(code=1000)
+            logger.info(
+                "call ended by server (WS-close path) call_sid=%s",
+                state.call_sid,
+            )
+        except Exception:
+            logger.exception(
+                "auto-hangup: WS close failed call_sid=%s", state.call_sid
+            )
 
 
 async def _hang_up_after_mark_timeout(state: _CallState) -> None:
@@ -301,6 +254,11 @@ class _CallState:
     pending_hangup: bool           = False     # set when goodbye mark sent (#78)
     recording_session: "RecordingUploadSession | None" = None
     should_hangup: asyncio.Event = field(default_factory=asyncio.Event)
+    # WS reference so _hang_up_after_grace can close the connection
+    # server-side. Closing the WS ends Twilio's <Connect>; with no
+    # further TwiML the call hangs up. Avoids the Twilio REST
+    # Calls.update endpoint which 404s on <Connect>-state calls.
+    websocket: "WebSocket | None" = None
 
 
 async def _open_deepgram_connection(
@@ -604,25 +562,6 @@ async def voice(request: Request) -> Response:
         twiml.hangup()
         return Response(content=str(twiml), media_type="application/xml")
 
-    # Start the recording synchronously before returning TwiML. The REST
-    # call must land before Twilio reads our <Connect><Stream> response —
-    # once the call enters <Connect> state, the Recordings API returns
-    # 404. The 2s ceiling caps how long /voice can block: Twilio drops a
-    # voice webhook at ~15s, so even a hung Twilio API can never strand
-    # the caller. Recording is non-essential to call flow; on timeout we
-    # log and continue.
-    if call_sid:
-        try:
-            await asyncio.wait_for(
-                asyncio.to_thread(_start_recording_sync, call_sid, restaurant.id),
-                timeout=2.0,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "recording: start timed out (>2s) call_sid=%s — answering call without recording",
-                call_sid,
-            )
-
     host = request.headers.get("host", "localhost:8000")
     connect = Connect()
     stream = connect.stream(url=f"wss://{host}/media-stream", tracks="both_tracks")
@@ -642,7 +581,7 @@ async def media_stream(websocket: WebSocket) -> None:
       stop       — call ended; persists completed orders to Firestore
     """
     await websocket.accept()
-    state = _CallState()
+    state = _CallState(websocket=websocket)
     dg_conn = None
 
     async def on_final(text: str) -> None:
@@ -835,87 +774,3 @@ async def media_stream(websocket: WebSocket) -> None:
             await dg_conn.finish()
 
 
-# The recording URL Twilio sends in the callback must live under this
-# host. Anything else is rejected before being persisted, so a forged
-# (or legacy-data) URL can never become an SSRF target when the dashboard
-# proxies it through GET /calls/{call_sid}/recording.
-_TWILIO_RECORDING_URL_PREFIX = "https://api.twilio.com/"
-
-
-@router.post("/recording-status/{restaurant_id}/{call_sid}")
-async def recording_status(
-    restaurant_id: str, call_sid: str, request: Request
-) -> Response:
-    """Twilio recording status callback.
-
-    Twilio POSTs here when a recording finishes processing. The
-    ``restaurant_id`` and ``call_sid`` are encoded in the URL (set when
-    the recording was started in ``_start_recording_sync``) so no
-    additional Firestore lookup is needed to find the right tenant path.
-
-    Authenticity is enforced via Twilio's ``X-Twilio-Signature`` header
-    (HMAC-SHA1 of the request URL + sorted form fields, keyed by the
-    account auth token). Without this check the endpoint would let any
-    unauthenticated POST inject an arbitrary ``RecordingUrl`` into the
-    tenant's call session.
-
-    On ``completed``, stores the recording URL on the call session doc
-    and emits a ``recording_ready`` event so the live dashboard can show
-    the audio player.
-    """
-    auth_token = settings.twilio_auth_token
-    base = (settings.public_base_url or "").rstrip("/")
-    if not auth_token or not base:
-        logger.error(
-            "recording-status: server not configured for signature validation "
-            "(twilio_auth_token=%s, public_base_url=%s)",
-            bool(auth_token),
-            bool(base),
-        )
-        return Response(content="", status_code=503)
-
-    form = await request.form()
-    form_dict = {k: v for k, v in form.items()}
-    signature = request.headers.get("X-Twilio-Signature", "")
-    full_url = f"{base}/recording-status/{restaurant_id}/{call_sid}"
-    validator = RequestValidator(auth_token)
-    if not validator.validate(full_url, form_dict, signature):
-        logger.warning(
-            "recording-status: invalid Twilio signature call_sid=%s", call_sid
-        )
-        return Response(content="", status_code=403)
-
-    status = (form.get("RecordingStatus") or "").lower()
-    recording_url = (form.get("RecordingUrl") or "").strip()
-    recording_sid = (form.get("RecordingSid") or "").strip()
-    try:
-        duration_seconds = int(form.get("RecordingDuration") or 0)
-    except ValueError:
-        duration_seconds = 0
-
-    logger.info(
-        "recording-status call_sid=%s status=%s recording_sid=%s duration=%ss",
-        call_sid,
-        status,
-        recording_sid,
-        duration_seconds,
-    )
-
-    if status == "completed" and recording_url and recording_sid:
-        if not recording_url.startswith(_TWILIO_RECORDING_URL_PREFIX):
-            logger.warning(
-                "recording-status: rejecting non-Twilio RecordingUrl call_sid=%s url=%r",
-                call_sid,
-                recording_url,
-            )
-            return Response(content="", status_code=400)
-        await asyncio.to_thread(
-            call_sessions.mark_recording_ready,
-            call_sid,
-            restaurant_id,
-            recording_url=recording_url,
-            recording_sid=recording_sid,
-            duration_seconds=duration_seconds,
-        )
-
-    return Response(content="", status_code=204)
