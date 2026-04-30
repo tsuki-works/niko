@@ -258,3 +258,52 @@ def _put_chunk(
             resp.status_code if resp else "(no response)",
         )
         return
+
+
+def finalize_recording(
+    session: RecordingUploadSession,
+) -> tuple[str, int]:
+    """Flush the encoder + send the final chunk with a known total length.
+
+    Returns ``(gs:// URL, duration_seconds)``. If the session never had
+    any audio (zero PCM samples), DELETEs the resumable session URL and
+    returns ``("", 0)`` so the caller can skip the Firestore write.
+    Returns ``("", 0)`` on a broken session too.
+    """
+    if session.broken:
+        return ("", 0)
+
+    if session.total_pcm_samples == 0:
+        # No data — cancel the resumable session so GCS doesn't keep an
+        # orphan around for 7 days.
+        try:
+            requests.delete(session.upload_url, timeout=10.0)
+        except Exception:
+            logger.exception(
+                "recording: failed to cancel empty session call_sid=%s",
+                session.call_sid,
+            )
+        return ("", 0)
+
+    # Flush the encoder tail. lameenc raises RuntimeError if flush() is
+    # called before any encode() call, so guard against that.
+    try:
+        tail = session.encoder.flush()
+    except RuntimeError:
+        tail = b""
+    if tail:
+        session.pending_mp3.extend(tail)
+
+    final_chunk = bytes(session.pending_mp3)
+    session.pending_mp3.clear()
+    total = session.total_bytes_uploaded + len(final_chunk)
+
+    _put_chunk(session, final_chunk, is_final=True, total=total)
+    if session.broken:
+        return ("", 0)
+
+    duration_seconds = session.total_pcm_samples // _PCM_SAMPLE_RATE
+    return (
+        f"gs://{settings.recordings_bucket}/{session.blob_name}",
+        duration_seconds,
+    )

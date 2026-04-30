@@ -231,3 +231,37 @@ def test_append_chunks_flushes_one_chunk_when_threshold_hit(monkeypatch):
     # Exactly one chunk of size 256 KB must have been PUT.
     assert chunks == [(256 * 1024, False)]
     assert len(session.pending_mp3) > 0  # leftover stays for next chunk
+
+
+def test_finalize_recording_sends_final_chunk_with_total_and_returns_url(monkeypatch):
+    from app.storage import recordings
+
+    captured: list[dict] = []
+
+    def fake_put(session, chunk, *, is_final, total):
+        captured.append({"len": len(chunk), "is_final": is_final, "total": total})
+        session.total_bytes_uploaded += len(chunk)
+
+    monkeypatch.setattr(recordings, "_put_chunk", fake_put)
+
+    session = recordings.RecordingUploadSession(
+        call_sid="CAt", restaurant_id="rid",
+        blob_name="rid/CAt.mp3", upload_url="https://fake",
+        encoder=recordings._make_encoder(),
+    )
+
+    # Simulate one prior chunk already uploaded.
+    session.total_bytes_uploaded = 256 * 1024
+    # Simulate 2 seconds of stereo audio captured.
+    session.total_pcm_samples = 2 * 8000
+    # Some bytes still pending for the final flush.
+    session.pending_mp3.extend(b"x" * 1234)
+
+    url, duration = recordings.finalize_recording(session)
+
+    assert len(captured) == 1
+    final = captured[0]
+    assert final["is_final"] is True
+    assert final["total"] is not None
+    assert duration == 2
+    assert url == "gs://niko-recordings/rid/CAt.mp3"
