@@ -204,3 +204,30 @@ def test_put_chunk_marks_broken_after_two_5xx(monkeypatch):
     recordings._put_chunk(session, b"x" * 256 * 1024, is_final=False, total=None)
     assert session.broken is True
     assert session.total_bytes_uploaded == 0
+
+
+def test_append_chunks_flushes_one_chunk_when_threshold_hit(monkeypatch):
+    from app.storage import recordings
+
+    chunks: list[tuple[int, bool]] = []
+
+    def fake_put(session, chunk, *, is_final, total):
+        chunks.append((len(chunk), is_final))
+        session.total_bytes_uploaded += len(chunk)
+
+    monkeypatch.setattr(recordings, "_put_chunk", fake_put)
+
+    session = recordings.RecordingUploadSession(
+        call_sid="CAt", restaurant_id="rid",
+        blob_name="rid/CAt.mp3", upload_url="https://fake",
+        encoder=recordings._make_encoder(),
+    )
+
+    # Force the pending buffer to cross 256 KB by pre-loading it; then a
+    # single small append triggers the flush loop.
+    session.pending_mp3.extend(b"x" * (256 * 1024 + 100))
+    recordings.append_chunks(session, b"\xff" * 8, b"\x00" * 8)
+
+    # Exactly one chunk of size 256 KB must have been PUT.
+    assert chunks == [(256 * 1024, False)]
+    assert len(session.pending_mp3) > 0  # leftover stays for next chunk
