@@ -191,10 +191,11 @@ def test_voice_rejects_unmapped_number(monkeypatch):
 
 
 def test_voice_schedules_recording_start(monkeypatch):
-    """Recording must be kicked off from /voice — not the WS start event.
-    On WS start, Twilio has already routed the call into <Connect> state
-    and the Recordings REST API returns 404 ('not eligible'). Triggering
-    from /voice avoids that race entirely (#82 follow-up)."""
+    """Recording must be kicked off from /voice — and awaited inline,
+    not fire-and-forget. If we return TwiML before the REST call lands,
+    Twilio routes the call into <Connect> and the Recordings API
+    returns 404 ('not eligible'). Awaiting guarantees the REST call
+    completes before our TwiML response (#82 follow-up)."""
     monkeypatch.setattr(
         restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
     )
@@ -205,13 +206,7 @@ def test_voice_schedules_recording_start(monkeypatch):
     )
     response = client.post("/voice", data=_VOICE_FORM)
     assert response.status_code == 200
-    # The recording start runs via asyncio.to_thread — give the executor a
-    # moment to drain before asserting.
-    import time as _t
-    for _ in range(50):
-        if captured:
-            break
-        _t.sleep(0.02)
+    # Awaited inline — must be populated by the time the response returns.
     assert captured == [("CAtest", "niko-pizza-kitchen")]
 
 

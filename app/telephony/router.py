@@ -601,17 +601,24 @@ async def voice(request: Request) -> Response:
         twiml.hangup()
         return Response(content=str(twiml), media_type="application/xml")
 
-    # Kick off the recording REST call before returning TwiML. We can't
-    # do this on the WebSocket start event because by then Twilio has
-    # routed the call into <Connect> and the Recordings API returns 404
-    # ("not eligible"). Triggering it from the inbound voice webhook —
-    # while the call is still in Twilio's normal in-progress state —
-    # avoids the race entirely. The task is fire-and-forget; the audio
-    # path must never block on Twilio REST latency.
+    # Start the recording synchronously before returning TwiML. The REST
+    # call must land before Twilio reads our <Connect><Stream> response —
+    # once the call enters <Connect> state, the Recordings API returns
+    # 404. The 2s ceiling caps how long /voice can block: Twilio drops a
+    # voice webhook at ~15s, so even a hung Twilio API can never strand
+    # the caller. Recording is non-essential to call flow; on timeout we
+    # log and continue.
     if call_sid:
-        asyncio.get_running_loop().create_task(
-            asyncio.to_thread(_start_recording_sync, call_sid, restaurant.id)
-        )
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_start_recording_sync, call_sid, restaurant.id),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "recording: start timed out (>2s) call_sid=%s — answering call without recording",
+                call_sid,
+            )
 
     host = request.headers.get("host", "localhost:8000")
     connect = Connect()
