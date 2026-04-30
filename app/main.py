@@ -1,9 +1,9 @@
+import asyncio
 import logging
 import time
 
-import httpx
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import Response as HTTPResponse
+from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi.responses import RedirectResponse
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,6 +23,7 @@ from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import (
     call_sessions,
     firestore as order_storage,
+    recordings,
     restaurants as restaurants_storage,
 )
 from app.storage.restaurants import DEMO_RID
@@ -269,50 +270,54 @@ async def get_call_recording(
     call_sid: str,
     tenant: Tenant = Depends(current_tenant),
 ):
-    """Proxy the Twilio recording MP3 for the calling tenant's call.
+    """Tenant-authed entry point for playback.
 
-    Twilio recordings require HTTP Basic Auth, so the browser can't fetch
-    them directly. This endpoint looks up the recording URL from Firestore
-    (tenant-scoped, so cross-tenant reads return 404), fetches the MP3
-    from Twilio with credentials, and streams it to the browser.
-
-    Returns 404 while the recording is still processing or if this call
-    has no recording.
+    Returns a 302 redirect to a 30-min V4 signed URL for the recording
+    blob in GCS. The browser's <audio> element follows the redirect
+    natively, so Cloud Run sees zero audio bytes for the playback path.
+    Cross-tenant lookups return 404 — same behavior as
+    ``call_sessions.get_session``.
     """
     session = call_sessions.get_session(call_sid, tenant.restaurant_id)
     if not session or not session.get("recording_url"):
         raise HTTPException(status_code=404, detail="recording not available yet")
-
-    sid = settings.twilio_account_sid
-    token = settings.twilio_auth_token
-    if not sid or not token:
-        raise HTTPException(status_code=503, detail="Twilio credentials not configured")
-
-    recording_url = session["recording_url"]
-    # Defense-in-depth: even though /recording-status validates the URL
-    # before persisting, refuse to fetch anything outside Twilio's host
-    # so any stale or forged document can never turn this proxy into an
-    # SSRF with Twilio Basic creds attached.
-    if not recording_url.startswith("https://api.twilio.com/"):
+    if not session["recording_url"].startswith("gs://"):
         raise HTTPException(status_code=502, detail="invalid recording URL")
-    if not recording_url.endswith(".mp3"):
-        recording_url += ".mp3"
-
-    # Buffered fetch: recordings are short (<5 min ≈ <5 MB) so we fetch
-    # the whole MP3 before responding. This lets us check the Twilio status
-    # code before committing to a 200, avoiding the broken-stream problem
-    # that arises when raising HTTPException inside a generator.
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        twilio_resp = await client.get(recording_url, auth=(sid, token))
-
-    if twilio_resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Failed to fetch recording from Twilio")
-
-    return HTTPResponse(
-        content=twilio_resp.content,
-        media_type="audio/mpeg",
-        headers={"Content-Disposition": f'inline; filename="{call_sid}.mp3"'},
+    signed = await asyncio.to_thread(
+        recordings.generate_signed_url,
+        call_sid=call_sid,
+        restaurant_id=tenant.restaurant_id,
     )
+    return RedirectResponse(url=signed, status_code=302)
+
+
+@app.delete("/calls/{call_sid}/recording", status_code=204)
+async def delete_call_recording(
+    call_sid: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Owner-only: delete the recording blob from GCS, clear
+    ``recording_url`` from the call session doc, emit a
+    ``recording_deleted`` event. Idempotent — returns 204 even if the
+    blob was already gone or the call had no recording, as long as the
+    call session itself exists for this tenant.
+    """
+    if tenant.role != "owner":
+        raise HTTPException(status_code=403, detail="owner role required")
+    session = call_sessions.get_session(call_sid, tenant.restaurant_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="call not found")
+    await asyncio.to_thread(
+        recordings.delete_recording,
+        call_sid=call_sid,
+        restaurant_id=tenant.restaurant_id,
+    )
+    await asyncio.to_thread(
+        call_sessions.mark_recording_deleted,
+        call_sid,
+        tenant.restaurant_id,
+    )
+    return Response(status_code=204)
 
 
 @app.post("/dev/seed-order")

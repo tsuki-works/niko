@@ -144,6 +144,18 @@ def test_voice_passes_restaurant_id_as_stream_parameter(monkeypatch):
     assert 'value="niko-pizza-kitchen"' in body
 
 
+def test_voice_stream_requests_both_tracks(monkeypatch):
+    """Twilio sends both inbound and outbound audio over the same WS
+    only when we ask for ``tracks="both_tracks"`` on the <Stream>. This
+    is the foundation for the WS-side recording pipeline (#82)."""
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    response = client.post("/voice", data=_VOICE_FORM)
+    body = response.text
+    assert 'tracks="both_tracks"' in body
+
+
 def test_voice_uses_firestore_lookup_when_present(monkeypatch):
     """When Firestore has a doc for the dialed number, ``/voice`` uses
     it directly without touching the MENU fallback."""
@@ -190,45 +202,6 @@ def test_voice_rejects_unmapped_number(monkeypatch):
     assert "<Connect" not in body
 
 
-def test_voice_schedules_recording_start(monkeypatch):
-    """Recording must be kicked off from /voice — and awaited inline,
-    not fire-and-forget. If we return TwiML before the REST call lands,
-    Twilio routes the call into <Connect> and the Recordings API
-    returns 404 ('not eligible'). Awaiting guarantees the REST call
-    completes before our TwiML response (#82 follow-up)."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
-    captured: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        "app.telephony.router._start_recording_sync",
-        lambda call_sid, restaurant_id: captured.append((call_sid, restaurant_id)),
-    )
-    response = client.post("/voice", data=_VOICE_FORM)
-    assert response.status_code == 200
-    # Awaited inline — must be populated by the time the response returns.
-    assert captured == [("CAtest", "niko-pizza-kitchen")]
-
-
-def test_voice_skips_recording_when_no_call_sid(monkeypatch):
-    """Defensive: if Twilio's webhook ever lands without a CallSid (test
-    harnesses, future TwiML changes), don't crash trying to start a
-    recording with an empty SID."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
-    called: list = []
-    monkeypatch.setattr(
-        "app.telephony.router._start_recording_sync",
-        lambda *a, **kw: called.append(a),
-    )
-    response = client.post(
-        "/voice", data={"From": "+10000000000", "To": _DEMO_TO}  # no CallSid
-    )
-    assert response.status_code == 200
-    assert called == []
-
-
 # ---------------------------------------------------------------------------
 # WS /media-stream — basic lifecycle
 # ---------------------------------------------------------------------------
@@ -254,6 +227,168 @@ def test_media_stream_handles_full_call_lifecycle(mock_pipeline):
         ws.send_text(json.dumps(_STOP_MSG))
     # No exception = handler completed cleanly; Deepgram.finish was called
     mock_pipeline.finish.assert_called_once()
+
+
+def test_media_stream_begins_recording_on_start(mock_pipeline, monkeypatch):
+    """On WS start, after tenant resolution, begin_recording is called
+    with the resolved restaurant id and the tenant's retention setting."""
+    from app.storage import recordings as recordings_mod
+    from app.restaurants.models import Restaurant
+
+    seeded = Restaurant(
+        id="niko-pizza-kitchen",
+        name="Niko",
+        display_phone="+1", twilio_phone=_DEMO_TO,
+        address="a", hours="h",
+        menu={"pizzas": [], "sides": [], "drinks": []},
+        recording_retention_days=42,
+    )
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant", lambda _rid: seeded
+    )
+    monkeypatch.setattr(
+        restaurants_storage, "load_or_fallback_demo", lambda _rid: seeded
+    )
+
+    captured: list[dict] = []
+
+    def fake_begin(*, call_sid, restaurant_id, retention_days):
+        captured.append({
+            "call_sid": call_sid,
+            "restaurant_id": restaurant_id,
+            "retention_days": retention_days,
+        })
+        return MagicMock(broken=False)
+
+    monkeypatch.setattr(recordings_mod, "begin_recording", fake_begin)
+    monkeypatch.setattr(recordings_mod, "append_chunks", lambda *a, **kw: None)
+    monkeypatch.setattr(recordings_mod, "finalize_recording", lambda _s: ("", 0))
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert len(captured) == 1
+    assert captured[0] == {
+        "call_sid": "CAtest123",
+        "restaurant_id": "niko-pizza-kitchen",
+        "retention_days": 42,
+    }
+
+
+def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
+    """Each Twilio media event drives append_chunks with the right
+    inbound/outbound payloads."""
+    from base64 import b64encode
+    from app.storage import recordings as recordings_mod
+
+    fake_session = MagicMock(broken=False)
+    captured: list[tuple[bytes, bytes]] = []
+
+    monkeypatch.setattr(
+        recordings_mod, "begin_recording",
+        lambda *, call_sid, restaurant_id, retention_days: fake_session,
+    )
+    monkeypatch.setattr(
+        recordings_mod, "append_chunks",
+        lambda session, inbound_mu_law, outbound_mu_law:
+            captured.append((inbound_mu_law, outbound_mu_law)),
+    )
+    monkeypatch.setattr(
+        recordings_mod, "finalize_recording", lambda _s: ("", 0),
+    )
+
+    fake_dg = AsyncMock()
+    fake_dg.send = AsyncMock()
+    fake_dg.finish = AsyncMock()
+
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
+        return fake_dg
+
+    async def fake_speak(text, websocket, stream_sid, **kw):
+        pass
+
+    monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
+    monkeypatch.setattr("app.telephony.router.speak", fake_speak)
+    monkeypatch.setattr(
+        "app.telephony.router.stream_reply", _make_fake_stream_reply()
+    )
+    from app.storage import call_sessions
+    monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_recording_ready", lambda *a, **kw: None)
+
+    inbound_payload = b64encode(b"\xff" * 8).decode()
+    outbound_payload = b64encode(b"\x00" * 8).decode()
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps({
+            "event": "media",
+            "media": {"track": "inbound", "chunk": "1", "timestamp": "5", "payload": inbound_payload},
+        }))
+        ws.send_text(json.dumps({
+            "event": "media",
+            "media": {"track": "outbound", "chunk": "2", "timestamp": "10", "payload": outbound_payload},
+        }))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert (b"\xff" * 8, b"") in captured
+    assert (b"", b"\x00" * 8) in captured
+
+
+def test_media_stream_finalizes_recording_on_stop(monkeypatch):
+    """After the call ends, finalize_recording runs and mark_recording_ready
+    writes the resulting gs:// URL to Firestore."""
+    from app.storage import recordings as recordings_mod
+    from app.storage import call_sessions
+
+    fake_session = MagicMock(broken=False)
+    monkeypatch.setattr(
+        recordings_mod, "begin_recording",
+        lambda *, call_sid, restaurant_id, retention_days: fake_session,
+    )
+    monkeypatch.setattr(recordings_mod, "append_chunks", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        recordings_mod, "finalize_recording",
+        lambda session: ("gs://niko-recordings/niko-pizza-kitchen/CAtest123.mp3", 12),
+    )
+
+    fake_dg = AsyncMock()
+    fake_dg.send = AsyncMock()
+    fake_dg.finish = AsyncMock()
+
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
+        return fake_dg
+
+    monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
+    monkeypatch.setattr("app.telephony.router.speak", AsyncMock())
+    monkeypatch.setattr("app.telephony.router.stream_reply", _make_fake_stream_reply())
+
+    monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
+
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        call_sessions, "mark_recording_ready",
+        lambda call_sid, rid, **kw: captured.append({"call_sid": call_sid, "rid": rid, **kw}),
+    )
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert len(captured) == 1
+    assert captured[0]["call_sid"] == "CAtest123"
+    assert captured[0]["rid"] == "niko-pizza-kitchen"
+    assert captured[0]["recording_url"] == "gs://niko-recordings/niko-pizza-kitchen/CAtest123.mp3"
+    assert captured[0]["recording_sid"] == "CAtest123"
+    assert captured[0]["duration_seconds"] == 12
 
 
 # ---------------------------------------------------------------------------
@@ -475,41 +610,34 @@ async def test_send_end_of_call_mark_returns_false_when_stream_sid_missing():
 
 
 @pytest.mark.asyncio
-async def test_hang_up_after_grace_calls_twilio_when_pending(monkeypatch):
-    """The grace timer fires the REST hangup when no transcript arrived."""
+async def test_hang_up_after_grace_sets_should_hangup_event(monkeypatch):
+    """After the grace window, _hang_up_after_grace sets the WS-loop's
+    should_hangup event so the loop exits and the WebSocket closes —
+    Twilio's <Connect> ends and the call hangs up. The REST update path
+    is gone (it 404'd on <Connect>-state calls)."""
     from app.telephony.router import (
         HANGUP_GRACE_SECONDS,
         _CallState,
         _hang_up_after_grace,
     )
 
-    ended: list[str] = []
-    monkeypatch.setattr(
-        "app.telephony.router._twilio_end_call_sync",
-        lambda call_sid: ended.append(call_sid),
-    )
-    # Speed the grace timer up so the test runs fast.
     monkeypatch.setattr("app.telephony.router.HANGUP_GRACE_SECONDS", 0.01)
 
     state = _CallState(call_sid="CAtest", pending_hangup=True)
+    assert not state.should_hangup.is_set()
+
     await _hang_up_after_grace(state)
 
-    assert ended == ["CAtest"]
-    # Sanity: original constant unchanged.
+    assert state.should_hangup.is_set()
     assert HANGUP_GRACE_SECONDS == 5.0
 
 
 @pytest.mark.asyncio
 async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
     """If pending_hangup gets cleared during the grace window (caller
-    spoke), the REST hangup MUST NOT fire."""
+    spoke), the should_hangup event MUST NOT fire."""
     from app.telephony.router import _CallState, _hang_up_after_grace
 
-    ended: list[str] = []
-    monkeypatch.setattr(
-        "app.telephony.router._twilio_end_call_sync",
-        lambda call_sid: ended.append(call_sid),
-    )
     monkeypatch.setattr("app.telephony.router.HANGUP_GRACE_SECONDS", 0.01)
 
     state = _CallState(call_sid="CAtest", pending_hangup=True)
@@ -519,7 +647,7 @@ async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
 
     await _hang_up_after_grace(state)
 
-    assert ended == []
+    assert not state.should_hangup.is_set()
 
 
 def test_looks_like_goodbye_excludes_coming_right_up():
@@ -639,111 +767,3 @@ async def test_clear_twilio_audio_swallows_websocket_disconnect():
     await clear_twilio_audio(ws, "MZtest456")
 
 
-# ---------------------------------------------------------------------------
-# POST /recording-status — Twilio signature validation
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def _recording_status_env(monkeypatch):
-    """Configure settings so /recording-status doesn't immediately 503.
-    Tests for the 503 path override the env explicitly."""
-    from app.config import settings
-    from app.telephony import router as telephony_router
-
-    monkeypatch.setattr(settings, "twilio_auth_token", "test_token", raising=False)
-    monkeypatch.setattr(
-        settings, "public_base_url", "http://testserver", raising=False
-    )
-    captured: list[dict] = []
-
-    def _fake_mark(call_sid, restaurant_id, **kw):
-        captured.append({"call_sid": call_sid, "restaurant_id": restaurant_id, **kw})
-
-    monkeypatch.setattr(
-        telephony_router.call_sessions, "mark_recording_ready", _fake_mark
-    )
-    return captured
-
-
-def _force_signature_valid(monkeypatch, valid: bool) -> None:
-    monkeypatch.setattr(
-        "app.telephony.router.RequestValidator.validate",
-        lambda self, url, params, sig: valid,
-    )
-
-
-def test_recording_status_rejects_invalid_signature(
-    _recording_status_env, monkeypatch
-):
-    """No (or wrong) X-Twilio-Signature → 403, no Firestore write.
-    This is the P0 the original PR shipped without."""
-    _force_signature_valid(monkeypatch, False)
-    response = client.post(
-        "/recording-status/niko-pizza-kitchen/CAtest123",
-        data={
-            "RecordingStatus": "completed",
-            "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
-            "RecordingSid": "REabc",
-            "RecordingDuration": "42",
-        },
-    )
-    assert response.status_code == 403
-    assert _recording_status_env == []
-
-
-def test_recording_status_returns_503_when_public_base_url_unset(monkeypatch):
-    """Without PUBLIC_BASE_URL we cannot reconstruct the signed URL,
-    so the only safe behavior is to refuse all callbacks."""
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "twilio_auth_token", "test_token", raising=False)
-    monkeypatch.setattr(settings, "public_base_url", None, raising=False)
-    response = client.post(
-        "/recording-status/niko-pizza-kitchen/CAtest123",
-        data={"RecordingStatus": "completed"},
-    )
-    assert response.status_code == 503
-
-
-def test_recording_status_writes_firestore_with_valid_signature(
-    _recording_status_env, monkeypatch
-):
-    _force_signature_valid(monkeypatch, True)
-    response = client.post(
-        "/recording-status/niko-pizza-kitchen/CAtest123",
-        data={
-            "RecordingStatus": "completed",
-            "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
-            "RecordingSid": "REabc",
-            "RecordingDuration": "42",
-        },
-    )
-    assert response.status_code == 204
-    assert len(_recording_status_env) == 1
-    write = _recording_status_env[0]
-    assert write["call_sid"] == "CAtest123"
-    assert write["restaurant_id"] == "niko-pizza-kitchen"
-    assert write["recording_sid"] == "REabc"
-    assert write["duration_seconds"] == 42
-
-
-def test_recording_status_rejects_non_twilio_recording_url(
-    _recording_status_env, monkeypatch
-):
-    """Even with a valid signature, refuse to persist a RecordingUrl
-    that doesn't live on api.twilio.com — defense-in-depth against
-    malformed/spoofed payloads becoming an SSRF vector when the
-    dashboard later proxies the URL."""
-    _force_signature_valid(monkeypatch, True)
-    response = client.post(
-        "/recording-status/niko-pizza-kitchen/CAtest123",
-        data={
-            "RecordingStatus": "completed",
-            "RecordingUrl": "https://attacker.example/evil.mp3",
-            "RecordingSid": "REabc",
-            "RecordingDuration": "42",
-        },
-    )
-    assert response.status_code == 400
-    assert _recording_status_env == []

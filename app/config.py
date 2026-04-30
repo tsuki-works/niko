@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     # signature check, since the Host header is client-controlled.
     public_base_url: Optional[str] = None
 
+    # Recordings bucket. Phase 2 default; can be overridden via env if we
+    # ever split prod/dev/staging buckets.
+    recordings_bucket: str = "niko-recordings"
+
+    # Default retention applied at upload time when a Restaurant doc
+    # doesn't carry its own ``recording_retention_days`` field. The bucket
+    # lifecycle rule deletes blobs whose ``custom_time`` has passed.
+    recording_default_retention_days: int = 90
+
     square_access_token: Optional[str] = None
     square_application_id: Optional[str] = None
 
