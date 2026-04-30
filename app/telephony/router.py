@@ -602,16 +602,23 @@ async def voice(request: Request) -> Response:
         return Response(content=str(twiml), media_type="application/xml")
 
     # Start the recording synchronously before returning TwiML. The REST
-    # call MUST complete before Twilio reads our <Connect><Stream> response
-    # — once the call enters <Connect> state, the Recordings API returns
-    # 404 ("not eligible"). Firing this as a background task isn't enough:
-    # the executor can run it after TwiML has already been parsed and the
-    # call routed. ~300-500ms of added latency on /voice is fine — the
-    # caller just hears a beat more of PSTN ringing before we answer, and
-    # _start_recording_sync swallows its own exceptions so a Twilio
-    # outage cannot block the call from being answered.
+    # call must land before Twilio reads our <Connect><Stream> response —
+    # once the call enters <Connect> state, the Recordings API returns
+    # 404. The 2s ceiling caps how long /voice can block: Twilio drops a
+    # voice webhook at ~15s, so even a hung Twilio API can never strand
+    # the caller. Recording is non-essential to call flow; on timeout we
+    # log and continue.
     if call_sid:
-        await asyncio.to_thread(_start_recording_sync, call_sid, restaurant.id)
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(_start_recording_sync, call_sid, restaurant.id),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "recording: start timed out (>2s) call_sid=%s — answering call without recording",
+                call_sid,
+            )
 
     host = request.headers.get("host", "localhost:8000")
     connect = Connect()
