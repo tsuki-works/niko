@@ -190,6 +190,50 @@ def test_voice_rejects_unmapped_number(monkeypatch):
     assert "<Connect" not in body
 
 
+def test_voice_schedules_recording_start(monkeypatch):
+    """Recording must be kicked off from /voice — not the WS start event.
+    On WS start, Twilio has already routed the call into <Connect> state
+    and the Recordings REST API returns 404 ('not eligible'). Triggering
+    from /voice avoids that race entirely (#82 follow-up)."""
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    captured: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.telephony.router._start_recording_sync",
+        lambda call_sid, restaurant_id: captured.append((call_sid, restaurant_id)),
+    )
+    response = client.post("/voice", data=_VOICE_FORM)
+    assert response.status_code == 200
+    # The recording start runs via asyncio.to_thread — give the executor a
+    # moment to drain before asserting.
+    import time as _t
+    for _ in range(50):
+        if captured:
+            break
+        _t.sleep(0.02)
+    assert captured == [("CAtest", "niko-pizza-kitchen")]
+
+
+def test_voice_skips_recording_when_no_call_sid(monkeypatch):
+    """Defensive: if Twilio's webhook ever lands without a CallSid (test
+    harnesses, future TwiML changes), don't crash trying to start a
+    recording with an empty SID."""
+    monkeypatch.setattr(
+        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
+    )
+    called: list = []
+    monkeypatch.setattr(
+        "app.telephony.router._start_recording_sync",
+        lambda *a, **kw: called.append(a),
+    )
+    response = client.post(
+        "/voice", data={"From": "+10000000000", "To": _DEMO_TO}  # no CallSid
+    )
+    assert response.status_code == 200
+    assert called == []
+
+
 # ---------------------------------------------------------------------------
 # WS /media-stream — basic lifecycle
 # ---------------------------------------------------------------------------
