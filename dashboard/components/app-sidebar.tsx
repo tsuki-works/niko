@@ -58,11 +58,14 @@ export function AppSidebar({
   const pathname = usePathname();
 
   return (
-    // `collapsible="none"` means the sidebar is always expanded
-    // (no trigger, no icon-mode). The ShadCN primitive gives this
-    // variant only `h-full`, which can collapse to content height
-    // in a flex row — so we force `h-svh` to pin it to viewport.
-    <Sidebar collapsible="none" className="h-svh border-r">
+    // `collapsible="none"` means the sidebar is always expanded.
+    // The ShadCN primitive gives this variant only `h-full`, which
+    // doesn't resolve when SidebarProvider has only `min-h-svh` (no
+    // explicit parent height) — the sidebar collapses to nav content
+    // height. `min-h-svh` here gives it a viewport-height floor; the
+    // parent flex row's default `align-items: stretch` then grows it
+    // with tall pages (e.g. /menu) so the sidebar reaches the bottom.
+    <Sidebar collapsible="none" className="min-h-svh border-r">
       <SidebarHeader>
         <div className="flex items-center gap-2.5 px-2 py-3">
           {/* 48px lines up with the "Niko" + "by Tsuki Works" stack
