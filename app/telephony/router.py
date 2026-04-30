@@ -728,9 +728,23 @@ async def media_stream(websocket: WebSocket) -> None:
                 )
 
             elif event == "media":
-                if dg_conn is not None:
-                    audio = base64.b64decode(msg["media"]["payload"])
-                    await dg_conn.send(audio)
+                payload = base64.b64decode(msg["media"]["payload"])
+                track = msg["media"].get("track")
+                if track == "inbound":
+                    inbound_chunk = payload
+                    outbound_chunk = b""
+                    if dg_conn is not None:
+                        await dg_conn.send(payload)
+                elif track == "outbound":
+                    inbound_chunk = b""
+                    outbound_chunk = payload
+                else:
+                    inbound_chunk = b""
+                    outbound_chunk = b""
+                if state.recording_session is not None:
+                    recordings.append_chunks(
+                        state.recording_session, inbound_chunk, outbound_chunk
+                    )
 
             elif event == "mark":
                 # Twilio echoes our outgoing marks once the audio queued

@@ -316,6 +316,69 @@ def test_media_stream_begins_recording_on_start(mock_pipeline, monkeypatch):
     }
 
 
+def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
+    """Each Twilio media event drives append_chunks with the right
+    inbound/outbound payloads."""
+    from base64 import b64encode
+    from app.storage import recordings as recordings_mod
+
+    fake_session = MagicMock(broken=False)
+    captured: list[tuple[bytes, bytes]] = []
+
+    monkeypatch.setattr(
+        recordings_mod, "begin_recording",
+        lambda *, call_sid, restaurant_id, retention_days: fake_session,
+    )
+    monkeypatch.setattr(
+        recordings_mod, "append_chunks",
+        lambda session, inbound_mu_law, outbound_mu_law:
+            captured.append((inbound_mu_law, outbound_mu_law)),
+    )
+    monkeypatch.setattr(
+        recordings_mod, "finalize_recording", lambda _s: ("", 0),
+    )
+
+    fake_dg = AsyncMock()
+    fake_dg.send = AsyncMock()
+    fake_dg.finish = AsyncMock()
+
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
+        return fake_dg
+
+    async def fake_speak(text, websocket, stream_sid, **kw):
+        pass
+
+    monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
+    monkeypatch.setattr("app.telephony.router.speak", fake_speak)
+    monkeypatch.setattr(
+        "app.telephony.router.stream_reply", _make_fake_stream_reply()
+    )
+    from app.storage import call_sessions
+    monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_recording_ready", lambda *a, **kw: None)
+
+    inbound_payload = b64encode(b"\xff" * 8).decode()
+    outbound_payload = b64encode(b"\x00" * 8).decode()
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps({
+            "event": "media",
+            "media": {"track": "inbound", "chunk": "1", "timestamp": "5", "payload": inbound_payload},
+        }))
+        ws.send_text(json.dumps({
+            "event": "media",
+            "media": {"track": "outbound", "chunk": "2", "timestamp": "10", "payload": outbound_payload},
+        }))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert (b"\xff" * 8, b"") in captured
+    assert (b"", b"\x00" * 8) in captured
+
+
 # ---------------------------------------------------------------------------
 # AI greeting
 # ---------------------------------------------------------------------------
