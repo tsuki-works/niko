@@ -62,9 +62,12 @@ def test_make_encoder_returns_lame_encoder_at_32kbps():
     mp3 = enc.encode(pcm)
     mp3 += enc.flush()
 
-    # Output must contain at least one MP3 frame sync (0xFFE/0xFFF prefix).
-    assert b"\xff\xfb" in mp3 or b"\xff\xfa" in mp3 or b"\xff\xf3" in mp3, (
-        f"no MP3 frame sync found in {mp3[:32]!r}"
+    # Output must start with an MP3 frame sync word (11-bit 0x7FF sync).
+    # The second byte's top 3 bits must be 110 or 111, so the second byte
+    # is in range 0xE0-0xFF. lameenc may emit MPEG-1 (0xFF 0xFx) or
+    # MPEG-2 (0xFF 0xEx) depending on sample rate; both are valid MP3.
+    assert len(mp3) >= 2 and mp3[0] == 0xFF and (mp3[1] & 0xE0) == 0xE0, (
+        f"no MP3 frame sync found in {bytes(mp3[:32])!r}"
     )
     assert 1000 < len(mp3) < 10000
 
