@@ -120,6 +120,7 @@ def _make_encoder() -> "lameenc.Encoder":
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from google.api_core.exceptions import NotFound
 from google.cloud import storage as gcs
 
 from app.config import settings
@@ -307,3 +308,20 @@ def finalize_recording(
         f"gs://{settings.recordings_bucket}/{session.blob_name}",
         duration_seconds,
     )
+
+
+def delete_recording(*, call_sid: str, restaurant_id: str) -> None:
+    """Delete the recording blob for one call. Idempotent: if the blob
+    is already gone, return cleanly. All other errors propagate so the
+    HTTP handler can decide how to surface them."""
+    blob_name = f"{restaurant_id}/{call_sid}.mp3"
+    bucket = _get_storage_client().bucket(settings.recordings_bucket)
+    blob = bucket.blob(blob_name)
+    try:
+        blob.delete()
+    except NotFound:
+        logger.info(
+            "recording: delete on missing blob (idempotent) call_sid=%s", call_sid
+        )
+
+

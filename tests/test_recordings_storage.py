@@ -293,3 +293,47 @@ def test_finalize_recording_with_zero_pcm_cancels_session(monkeypatch):
     assert url == ""
     assert duration == 0
     assert deleted == ["https://upload.googleapis.com/session/abc"]
+
+
+def test_delete_recording_calls_blob_delete(monkeypatch):
+    from app.storage import recordings
+
+    deleted: list[str] = []
+
+    fake_blob = type("FakeBlob", (), {})()
+    fake_blob.delete = lambda: deleted.append("called")
+
+    fake_bucket = type("FakeBucket", (), {})()
+    fake_bucket.blob = lambda name: (deleted.append(name) or fake_blob)
+
+    fake_client = type("FakeClient", (), {})()
+    fake_client.bucket = lambda name: fake_bucket
+
+    monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
+
+    recordings.delete_recording(call_sid="CAt", restaurant_id="rid")
+
+    assert deleted == ["rid/CAt.mp3", "called"]
+
+
+def test_delete_recording_idempotent_on_404(monkeypatch):
+    from google.api_core.exceptions import NotFound
+    from app.storage import recordings
+
+    fake_blob = type("FakeBlob", (), {})()
+    def raise_notfound():
+        raise NotFound("gone")
+    fake_blob.delete = raise_notfound
+
+    fake_bucket = type("FakeBucket", (), {})()
+    fake_bucket.blob = lambda name: fake_blob
+
+    fake_client = type("FakeClient", (), {})()
+    fake_client.bucket = lambda name: fake_bucket
+
+    monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
+
+    # Should NOT raise.
+    recordings.delete_recording(call_sid="CAt", restaurant_id="rid")
+
+
