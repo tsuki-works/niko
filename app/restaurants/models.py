@@ -81,5 +81,6 @@ class Restaurant(BaseModel):
     # Twilight Family Restaurant). Flip to False in Firestore for
     # pickup-only restaurants — the system prompt branches accordingly.
     offers_delivery: bool = True
+    recording_retention_days: int = Field(default=90, ge=1, le=3650)
     created_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)

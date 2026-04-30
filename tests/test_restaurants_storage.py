@@ -210,3 +210,39 @@ def test_restaurant_offers_delivery_defaults_to_true():
         offers_delivery=False,
     )
     assert r_off.offers_delivery is False
+
+
+def test_restaurant_recording_retention_default_is_90():
+    from app.restaurants.models import Restaurant
+
+    r = Restaurant(
+        id="x", name="X", display_phone="+1", twilio_phone="+1",
+        address="a", hours="h", menu={"pizzas": [], "sides": [], "drinks": []},
+    )
+    assert r.recording_retention_days == 90
+
+
+def test_restaurant_recording_retention_accepts_override():
+    from app.restaurants.models import Restaurant
+
+    r = Restaurant(
+        id="x", name="X", display_phone="+1", twilio_phone="+1",
+        address="a", hours="h",
+        menu={"pizzas": [], "sides": [], "drinks": []},
+        recording_retention_days=30,
+    )
+    assert r.recording_retention_days == 30
+
+
+def test_restaurant_recording_retention_rejects_zero_or_negative():
+    import pytest
+    from pydantic import ValidationError
+    from app.restaurants.models import Restaurant
+
+    with pytest.raises(ValidationError):
+        Restaurant(
+            id="x", name="X", display_phone="+1", twilio_phone="+1",
+            address="a", hours="h",
+            menu={"pizzas": [], "sides": [], "drinks": []},
+            recording_retention_days=0,
+        )
