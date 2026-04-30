@@ -805,8 +805,7 @@ async def media_stream(websocket: WebSocket) -> None:
         rid_for_close = _state_rid(state)
         if state.call_sid and rid_for_close:
             try:
-                await asyncio.to_thread(
-                    call_sessions.mark_call_ended,
+                call_sessions.mark_call_ended(
                     state.call_sid,
                     rid_for_close,
                     confirmed=order_confirmed,
@@ -814,6 +813,22 @@ async def media_stream(websocket: WebSocket) -> None:
             except Exception:
                 logger.exception(
                     "call_sessions: mark_call_ended scheduling failed call_sid=%s",
+                    state.call_sid,
+                )
+        if state.recording_session is not None and rid_for_close:
+            try:
+                gs_url, duration = recordings.finalize_recording(state.recording_session)
+                if gs_url:
+                    call_sessions.mark_recording_ready(
+                        state.call_sid,
+                        rid_for_close,
+                        recording_url=gs_url,
+                        recording_sid=state.call_sid,
+                        duration_seconds=duration,
+                    )
+            except Exception:
+                logger.exception(
+                    "recording: finalize/mark failed call_sid=%s",
                     state.call_sid,
                 )
         if dg_conn is not None:

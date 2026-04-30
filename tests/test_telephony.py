@@ -379,6 +379,57 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
     assert (b"", b"\x00" * 8) in captured
 
 
+def test_media_stream_finalizes_recording_on_stop(monkeypatch):
+    """After the call ends, finalize_recording runs and mark_recording_ready
+    writes the resulting gs:// URL to Firestore."""
+    from app.storage import recordings as recordings_mod
+    from app.storage import call_sessions
+
+    fake_session = MagicMock(broken=False)
+    monkeypatch.setattr(
+        recordings_mod, "begin_recording",
+        lambda *, call_sid, restaurant_id, retention_days: fake_session,
+    )
+    monkeypatch.setattr(recordings_mod, "append_chunks", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        recordings_mod, "finalize_recording",
+        lambda session: ("gs://niko-recordings/niko-pizza-kitchen/CAtest123.mp3", 12),
+    )
+
+    fake_dg = AsyncMock()
+    fake_dg.send = AsyncMock()
+    fake_dg.finish = AsyncMock()
+
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
+        return fake_dg
+
+    monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
+    monkeypatch.setattr("app.telephony.router.speak", AsyncMock())
+    monkeypatch.setattr("app.telephony.router.stream_reply", _make_fake_stream_reply())
+
+    monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
+
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        call_sessions, "mark_recording_ready",
+        lambda call_sid, rid, **kw: captured.append({"call_sid": call_sid, "rid": rid, **kw}),
+    )
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert len(captured) == 1
+    assert captured[0]["call_sid"] == "CAtest123"
+    assert captured[0]["rid"] == "niko-pizza-kitchen"
+    assert captured[0]["recording_url"] == "gs://niko-recordings/niko-pizza-kitchen/CAtest123.mp3"
+    assert captured[0]["recording_sid"] == "CAtest123"
+    assert captured[0]["duration_seconds"] == 12
+
+
 # ---------------------------------------------------------------------------
 # AI greeting
 # ---------------------------------------------------------------------------
