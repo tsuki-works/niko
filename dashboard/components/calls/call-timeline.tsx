@@ -1,7 +1,11 @@
+'use client';
+
+import { useRef } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Copy,
   Mic,
   PhoneCall,
   PhoneOff,
@@ -11,17 +15,39 @@ import {
   Zap,
 } from 'lucide-react';
 import Link from 'next/link';
+import { toast } from 'sonner';
 
 import { TimelineExport } from '@/components/calls/timeline-export';
+import { Button } from '@/components/ui/button';
 import { LocalTime } from '@/components/shared/local-time';
 import type { CallEvent, CallTimeline } from '@/lib/api/calls';
 import { formatFirstAudioBreakdown } from '@/lib/formatters/call-timeline';
 import { cn } from '@/lib/utils';
 
+const TRANSCRIPT_KINDS = new Set(['transcript_final', 'agent_reply']);
+
 export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingUrl = timeline.recording_available
     ? `/api/calls/${timeline.call_sid}/recording`
     : null;
+
+  // Use the FIRST event's timestamp as the call-start anchor for
+  // computing per-turn offsets into the recording. Fallback to the
+  // earliest event if the explicit `start` event is missing.
+  const callStartMs = (() => {
+    const firstEvent = timeline.events[0];
+    return firstEvent ? new Date(firstEvent.timestamp).getTime() : 0;
+  })();
+
+  function seekTo(seconds: number) {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = Math.max(0, seconds);
+    void audioRef.current.play().catch(() => {
+      // play() can fail in browsers that require a user gesture per
+      // load — the seek still succeeded, the user can press play.
+    });
+  }
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-6">
@@ -53,6 +79,7 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
           </p>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <audio
+            ref={audioRef}
             controls
             src={recordingUrl}
             className="w-full"
@@ -63,38 +90,100 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
 
       <ol className="flex flex-col gap-2 rounded-xl border bg-card p-4">
         {timeline.events.map((event, i) => (
-          <TimelineRow key={i} event={event} />
+          <TimelineRow
+            key={i}
+            event={event}
+            onSeek={recordingUrl ? seekTo : undefined}
+            callStartMs={callStartMs}
+          />
         ))}
       </ol>
     </section>
   );
 }
 
-function TimelineRow({ event }: { event: CallEvent }) {
+function TimelineRow({
+  event,
+  onSeek,
+  callStartMs,
+}: {
+  event: CallEvent;
+  onSeek?: (seconds: number) => void;
+  callStartMs: number;
+}) {
   const ts = new Date(event.timestamp);
-  const { Icon, accent, label, body } = renderEvent(event);
+  const { Icon, accent, label, body, copyText } = renderEvent(event);
+
+  const isTranscript = TRANSCRIPT_KINDS.has(event.kind);
+  const offsetSec = Math.max(0, (ts.getTime() - callStartMs) / 1000);
+  const canSeek = isTranscript && onSeek !== undefined;
+
+  function handleSeek() {
+    if (canSeek) onSeek!(offsetSec);
+  }
+
+  function handleCopy() {
+    if (!copyText) return;
+    void navigator.clipboard.writeText(copyText).then(
+      () => toast.success('Turn copied'),
+      () => toast.error('Copy failed'),
+    );
+  }
+
+  const RowTag = canSeek ? 'button' : 'div';
 
   return (
-    <li className="flex items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-muted/40">
-      <div
+    <li className={cn(
+      'flex items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-muted/40',
+      canSeek && 'cursor-pointer',
+    )}>
+      <RowTag
+        type={canSeek ? 'button' : undefined}
+        onClick={canSeek ? handleSeek : undefined}
         className={cn(
-          'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
-          accent,
+          'flex flex-1 items-start gap-3 text-left bg-transparent p-0',
+          canSeek && 'cursor-pointer focus-visible:outline-2 focus-visible:outline-primary',
         )}
+        aria-label={canSeek ? `Seek to ${label} at ${formatOffset(offsetSec)}` : undefined}
       >
-        <Icon className="h-3.5 w-3.5" aria-hidden />
-      </div>
-      <div className="flex min-w-[5rem] shrink-0 flex-col text-xs text-muted-foreground tabular-nums">
-        <LocalTime date={ts} mode="absolute" />
-      </div>
-      <div className="flex flex-1 flex-col gap-0.5">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </p>
-        <p className="text-sm">{body}</p>
-      </div>
+        <div
+          className={cn(
+            'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
+            accent,
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" aria-hidden />
+        </div>
+        <div className="flex min-w-[5rem] shrink-0 flex-col text-xs text-muted-foreground tabular-nums">
+          <LocalTime date={ts} mode="absolute" />
+        </div>
+        <div className="flex flex-1 flex-col gap-0.5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {label}
+          </p>
+          <p className="text-sm">{body}</p>
+        </div>
+      </RowTag>
+      {copyText ? (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7 shrink-0"
+          aria-label={`Copy ${label} text`}
+          onClick={handleCopy}
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </Button>
+      ) : null}
     </li>
   );
+}
+
+function formatOffset(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
 type RenderedEvent = {
@@ -102,6 +191,8 @@ type RenderedEvent = {
   accent: string;
   label: string;
   body: React.ReactNode;
+  // Plain-text version for clipboard. Only set on transcript-style events.
+  copyText?: string;
 };
 
 function renderEvent(event: CallEvent): RenderedEvent {
@@ -134,6 +225,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
         accent: 'bg-foreground/10 text-foreground',
         label: 'caller',
         body: <span className="italic">“{text}”</span>,
+        copyText: text,
       };
     }
     case 'transcript_interim': {
@@ -161,6 +253,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
         accent: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
         label: 'agent',
         body: <span className="italic">“{reply}”</span>,
+        copyText: reply,
       };
     }
     case 'first_audio': {
