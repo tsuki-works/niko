@@ -56,6 +56,31 @@ HANGUP_GRACE_SECONDS = 5.0
 # instead of hanging open. Picked > typical mark round-trip (1-3s).
 MARK_ECHO_TIMEOUT_SECONDS = 8.0
 
+# Chunking thresholds for TTS handoff (#151). Sentence terminators
+# always flush; soft breaks (commas, semicolons, colons, em dashes)
+# only flush once the buffered chunk is ≥ _MIN_CHUNK_CHARS so that
+# fragments like "Got it," don't become their own Aura round-trip.
+# 20 chars ≈ "One Chicken Fried Rice coming up," length when the
+# 4/26 Twilight call's longest "over budget" turn would have hit.
+_HARD_BREAKS = (".", "?", "!")
+_SOFT_BREAKS = (",", ";", ":", "—")
+_MIN_CHUNK_CHARS = 20
+
+
+def _should_flush_chunk(delta: str, buffered_chars: int) -> bool:
+    """True if the current text-delta should close a TTS chunk.
+
+    ``delta`` is the latest streamed text fragment from Anthropic;
+    ``buffered_chars`` is the total length of all deltas accumulated
+    since the last flush (i.e. the chunk we'd ship if we flushed now).
+    """
+    if delta.endswith(_HARD_BREAKS):
+        return True
+    if delta.endswith(_SOFT_BREAKS) and buffered_chars >= _MIN_CHUNK_CHARS:
+        return True
+    return False
+
+
 # Phrases the model uses when wrapping up. Used as a fallback signal
 # for auto-hangup when Haiku says a goodbye but forgets to mark the
 # order status as confirmed via update_order (#79). Matched
@@ -416,7 +441,8 @@ async def _run_llm_tts_turn(
                     first_text_at = time.monotonic()
                 text_buffer.append(event.text_delta)
                 full_reply_parts.append(event.text_delta)
-                if event.text_delta.endswith((".", "?", "!")):
+                buffered_chars = sum(len(p) for p in text_buffer)
+                if _should_flush_chunk(event.text_delta, buffered_chars):
                     chunk = "".join(text_buffer).strip()
                     text_buffer.clear()
                     if chunk and state.stream_sid:
