@@ -224,7 +224,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
         Icon: Mic,
         accent: 'bg-foreground/10 text-foreground',
         label: 'caller',
-        body: <span className="italic">"{text}"</span>,
+        body: <span className="italic">“{text}”</span>,
         copyText: text,
       };
     }
@@ -234,7 +234,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
         Icon: Mic,
         accent: 'bg-muted text-muted-foreground',
         label: 'interim transcript',
-        body: <span className="text-muted-foreground italic">"{text}"</span>,
+        body: <span className="text-muted-foreground italic">“{text}”</span>,
       };
     }
     case 'llm_turn_start': {
@@ -252,7 +252,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
         Icon: Sparkles,
         accent: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
         label: 'agent',
-        body: <span className="italic">"{reply}"</span>,
+        body: <span className="italic">“{reply}”</span>,
         copyText: reply,
       };
     }
