@@ -146,14 +146,19 @@ def test_voice_passes_restaurant_id_as_stream_parameter(monkeypatch):
 
 def test_voice_stream_requests_both_tracks(monkeypatch):
     """Twilio sends both inbound and outbound audio over the same WS
-    only when we ask for ``tracks="both_tracks"`` on the <Stream>. This
-    is the foundation for the WS-side recording pipeline (#82)."""
+    only when we ask for ``track="both_tracks"`` on the <Stream>. The
+    attribute is singular ``track`` per Twilio's TwiML reference;
+    plural ``tracks`` is silently ignored and falls back to inbound
+    only — exactly the bug that left agent audio out of recordings."""
     monkeypatch.setattr(
         restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
     )
     response = client.post("/voice", data=_VOICE_FORM)
     body = response.text
-    assert 'tracks="both_tracks"' in body
+    assert 'track="both_tracks"' in body
+    # Defensive: catch a regression to the plural attribute that
+    # Twilio silently drops.
+    assert 'tracks="both_tracks"' not in body
 
 
 def test_voice_uses_firestore_lookup_when_present(monkeypatch):
