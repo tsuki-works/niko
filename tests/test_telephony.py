@@ -144,20 +144,21 @@ def test_voice_passes_restaurant_id_as_stream_parameter(monkeypatch):
     assert 'value="niko-pizza-kitchen"' in body
 
 
-def test_voice_stream_requests_both_tracks(monkeypatch):
-    """Twilio sends both inbound and outbound audio over the same WS
-    only when we ask for ``track="both_tracks"`` on the <Stream>. The
-    attribute is singular ``track`` per Twilio's TwiML reference;
-    plural ``tracks`` is silently ignored and falls back to inbound
-    only — exactly the bug that left agent audio out of recordings."""
+def test_voice_stream_omits_track_attribute(monkeypatch):
+    """``<Connect><Stream>`` only supports the default ``inbound_track``.
+    Passing ``track="both_tracks"`` (or any other non-default value)
+    makes Twilio reject the TwiML and drop the call right after the
+    trial-account interstitial. To get agent audio into the recording
+    we capture TTS bytes inside ``speak()`` instead — see the WS
+    handler in the same module."""
     monkeypatch.setattr(
         restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
     )
     response = client.post("/voice", data=_VOICE_FORM)
     body = response.text
-    assert 'track="both_tracks"' in body
-    # Defensive: catch a regression to the plural attribute that
-    # Twilio silently drops.
+    assert "<Stream " in body
+    # Regression guards for both spellings of the bug.
+    assert 'track="both_tracks"' not in body
     assert 'tracks="both_tracks"' not in body
 
 
