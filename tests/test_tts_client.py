@@ -214,3 +214,73 @@ async def test_speak_without_recording_session_skips_append(monkeypatch):
     await speak("Hello", ws, stream_sid="MZ123", client=client)
 
     assert called == []
+
+
+# ---------------------------------------------------------------------------
+# _get_client — module-level persistent httpx.AsyncClient (#151)
+# ---------------------------------------------------------------------------
+
+import app.tts.client as tts_module
+
+
+@pytest.fixture(autouse=True)
+def _reset_default_client():
+    """Reset the module-level singleton between tests so one test's
+    instance doesn't leak into another. The real process never needs
+    this — the singleton is intentionally long-lived."""
+    yield
+    tts_module._default_client = None
+
+
+def test_get_client_returns_same_instance_across_calls():
+    c1 = tts_module._get_client()
+    c2 = tts_module._get_client()
+    assert c1 is c2
+
+
+def test_get_client_constructs_with_expected_timeouts():
+    import httpx
+    c = tts_module._get_client()
+    assert isinstance(c, httpx.AsyncClient)
+    # httpx.Timeout exposes per-stage attributes; the values match what
+    # the per-call client used to set.
+    assert c.timeout.connect == 5.0
+    assert c.timeout.read == 10.0
+    assert c.timeout.write == 5.0
+    assert c.timeout.pool == 5.0
+
+
+@pytest.mark.asyncio
+async def test_speak_uses_default_client_when_none_passed(monkeypatch):
+    """When ``client`` is not passed, speak() must reuse the singleton —
+    NOT construct a fresh client per call (the whole point of this
+    change is to skip the TLS handshake)."""
+    chunks = [b"\xab"]
+    fake_default = make_mock_client(chunks)
+    ws = make_mock_websocket()
+
+    # Pre-populate the singleton with our mock so speak() picks it up.
+    tts_module._default_client = fake_default
+
+    await speak("Hello", ws, stream_sid="MZ123")
+
+    fake_default.stream.assert_called_once()
+    # And the singleton was NOT closed at the end of the call —
+    # persistent across speak() invocations is the whole point.
+    assert tts_module._default_client is fake_default
+
+
+@pytest.mark.asyncio
+async def test_speak_does_not_close_default_client(monkeypatch):
+    """The singleton lives for the process lifetime. ``aclose()`` must
+    not be called from inside speak(), even on the success path."""
+    chunks = [b"\xab"]
+    fake_default = make_mock_client(chunks)
+    fake_default.aclose = AsyncMock()
+    ws = make_mock_websocket()
+
+    tts_module._default_client = fake_default
+
+    await speak("Hello", ws, stream_sid="MZ123")
+
+    fake_default.aclose.assert_not_called()

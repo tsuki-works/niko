@@ -25,6 +25,23 @@ logger = logging.getLogger(__name__)
 
 _DEEPGRAM_BASE = "https://api.deepgram.com/v1"
 
+# Process-wide reusable client (#151). Constructing an httpx.AsyncClient
+# costs a TLS handshake on every speak() call; reusing one across the
+# whole process keeps the connection pool warm so subsequent sentence
+# chunks skip the handshake. Lazy-initialised so importing this module
+# never spins up sockets at startup. Tests reset this between cases via
+# a fixture; the real process never needs to.
+_default_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _default_client
+    if _default_client is None:
+        _default_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+        )
+    return _default_client
+
 
 def _api_key() -> str:
     key = settings.deepgram_api_key
@@ -84,59 +101,48 @@ async def speak(
     }
     body = {"text": text}
 
-    created_client = client is None
-    _client = client or httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
-    )
+    _client = client if client is not None else _get_client()
 
-    try:
-        async with _client.stream(
-            "POST", url, headers=headers, params=params, json=body
-        ) as response:
-            if response.status_code != 200:
-                error_body = await response.aread()
-                logger.error(
-                    "tts: Deepgram returned %d stream_sid=%s body=%s",
-                    response.status_code,
-                    stream_sid,
-                    error_body.decode(errors="replace")[:200],
-                )
-                raise RuntimeError(
-                    f"Deepgram returned {response.status_code}: "
-                    f"{error_body.decode(errors='replace')}"
-                )
+    async with _client.stream(
+        "POST", url, headers=headers, params=params, json=body
+    ) as response:
+        if response.status_code != 200:
+            error_body = await response.aread()
+            logger.error(
+                "tts: Deepgram returned %d stream_sid=%s body=%s",
+                response.status_code,
+                stream_sid,
+                error_body.decode(errors="replace")[:200],
+            )
+            raise RuntimeError(
+                f"Deepgram returned {response.status_code}: "
+                f"{error_body.decode(errors='replace')}"
+            )
 
-            async for chunk in response.aiter_bytes():
-                if not chunk:
-                    continue
-                payload = base64.b64encode(chunk).decode()
+        async for chunk in response.aiter_bytes():
+            if not chunk:
+                continue
+            payload = base64.b64encode(chunk).decode()
+            try:
+                await websocket.send_json(
+                    {
+                        "event": "media",
+                        "streamSid": stream_sid,
+                        "media": {"payload": payload},
+                    }
+                )
+            except WebSocketDisconnect:
+                logger.info("tts: websocket disconnected mid-stream stream_sid=%s", stream_sid)
+                return
+            if recording_session is not None:
                 try:
-                    await websocket.send_json(
-                        {
-                            "event": "media",
-                            "streamSid": stream_sid,
-                            "media": {"payload": payload},
-                        }
+                    from app.storage import recordings as _recordings
+                    _recordings.append_chunks(
+                        recording_session, b"", chunk
                     )
-                except WebSocketDisconnect:
-                    logger.info("tts: websocket disconnected mid-stream stream_sid=%s", stream_sid)
-                    return
-                # Also feed the chunk into the recording session's outbound
-                # side. Done after the WS send so a recording-pipeline
-                # failure can't delay the audio reaching Twilio. The
-                # storage module short-circuits on a broken session.
-                if recording_session is not None:
-                    try:
-                        from app.storage import recordings as _recordings
-                        _recordings.append_chunks(
-                            recording_session, b"", chunk
-                        )
-                    except Exception:
-                        logger.exception(
-                            "tts: failed to feed chunk into recording session "
-                            "stream_sid=%s",
-                            stream_sid,
-                        )
-    finally:
-        if created_client:
-            await _client.aclose()
+                except Exception:
+                    logger.exception(
+                        "tts: failed to feed chunk into recording session "
+                        "stream_sid=%s",
+                        stream_sid,
+                    )
