@@ -276,6 +276,36 @@ def delete_recording(*, call_sid: str, restaurant_id: str) -> None:
         )
 
 
+def upload_voicemail_from_twilio(
+    *,
+    call_sid: str,
+    restaurant_id: str,
+    twilio_recording_url: str,
+    auth: tuple[str, str],
+    retention_days: int = 90,
+) -> str:
+    """Download a voicemail recording from Twilio's REST and upload to
+    GCS. Returns the ``gs://`` URL.
+
+    Twilio appends ``.mp3`` to the recording URL when fetched as MP3.
+    HTTP Basic auth uses ``(account_sid, auth_token)``. The blob lives
+    under ``voicemail/{rid}/{call_sid}.mp3`` in the existing recordings
+    bucket — the same bucket the live-stream finalize helper writes to,
+    so the dashboard's signed-URL playback path works without changes.
+    """
+    import requests
+
+    resp = requests.get(twilio_recording_url + ".mp3", auth=auth, timeout=30)
+    resp.raise_for_status()
+
+    blob_name = f"voicemail/{restaurant_id}/{call_sid}.mp3"
+    bucket = _get_storage_client().bucket(settings.recordings_bucket)
+    blob = bucket.blob(blob_name)
+    blob.custom_time = datetime.now(timezone.utc) + timedelta(days=retention_days)
+    blob.upload_from_string(resp.content, content_type="audio/mpeg")
+    return f"gs://{settings.recordings_bucket}/{blob_name}"
+
+
 def generate_signed_url(
     *, call_sid: str, restaurant_id: str, ttl_minutes: int = 30
 ) -> str:

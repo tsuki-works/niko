@@ -30,6 +30,7 @@ from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
 from app.telephony.voicemail_twiml import voicemail_response
 
 from app.config import settings
+from app.restaurants.open_check import is_open_now
 from app.llm.client import stream_reply
 from app.llm.prompts import build_system_prompt
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
@@ -671,6 +672,31 @@ async def voice(request: Request) -> Response:
         twiml.hangup()
         return Response(content=str(twiml), media_type="application/xml")
 
+    if restaurant is not None and not is_open_now(restaurant):
+        # After-hours: skip the AI flow, drop straight to voicemail.
+        if not call_sid:
+            # Defensive: Twilio always posts CallSid. Without it, we
+            # can't key the recording or call_session — bail.
+            twiml = VoiceResponse()
+            twiml.say("Sorry, we're closed. Please call back during business hours.")
+            twiml.hangup()
+            return Response(
+                content=str(twiml),
+                media_type="application/xml",
+            )
+        try:
+            call_sessions.init_call_session(call_sid, restaurant.id)
+        except Exception:
+            logger.exception(
+                "voice: init_call_session failed call_sid=%s rid=%s",
+                call_sid,
+                restaurant.id,
+            )
+        return Response(
+            content=str(voicemail_response(call_sid, restaurant.id)),
+            media_type="application/xml",
+        )
+
     host = request.headers.get("host", "localhost:8000")
     connect = Connect(action="/voice/stream-ended", method="POST")
     # NOTE: <Connect><Stream> only supports the default ``inbound_track``;
@@ -804,6 +830,118 @@ async def transfer_result(
         content=str(voicemail_response(call_sid, rid)),
         media_type="application/xml",
     )
+
+
+@router.post("/voice/voicemail-recorded")
+async def voicemail_recorded(
+    request: Request,
+    call_sid: str,
+    rid: str,
+) -> Response:
+    """Twilio's <Record> action callback. Downloads the recording from
+    Twilio's REST and uploads to GCS, then writes metadata to the call
+    session. Returns empty TwiML — Twilio already hung up after <Record>.
+    """
+    form = await request.form()
+    recording_url = form.get("RecordingUrl", "")
+    recording_sid = form.get("RecordingSid", "")
+    duration_raw = form.get("RecordingDuration", "0")
+    try:
+        duration = int(duration_raw)
+    except (TypeError, ValueError):
+        duration = 0
+
+    if not recording_url or not recording_sid:
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    # Idempotency: Twilio retries this callback on timeout. If we've
+    # already processed this RecordingSid for this call, short-circuit.
+    try:
+        existing = call_sessions.get_session(call_sid, rid) or {}
+    except Exception:
+        existing = {}
+    if existing.get("voicemail_recording_sid") == recording_sid:
+        logger.info(
+            "voicemail-recorded: idempotent retry for call_sid=%s sid=%s — skipping",
+            call_sid,
+            recording_sid,
+        )
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    if not settings.twilio_account_sid or not settings.twilio_auth_token:
+        logger.error(
+            "voicemail upload: twilio creds missing call_sid=%s",
+            call_sid,
+        )
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    try:
+        gs_url = recordings.upload_voicemail_from_twilio(
+            call_sid=call_sid,
+            restaurant_id=rid,
+            twilio_recording_url=recording_url,
+            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
+        )
+    except Exception:
+        logger.exception(
+            "voicemail upload failed call_sid=%s sid=%s",
+            call_sid,
+            recording_sid,
+        )
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    try:
+        call_sessions.mark_voicemail_left(
+            call_sid,
+            rid,
+            recording_url=gs_url,
+            recording_sid=recording_sid,
+            duration_seconds=duration,
+            transcript=None,  # Filled in by /voice/voicemail-transcription
+        )
+    except Exception:
+        logger.exception(
+            "voicemail mark_voicemail_left failed call_sid=%s",
+            call_sid,
+        )
+
+    return Response(content=str(VoiceResponse()), media_type="application/xml")
+
+
+@router.post("/voice/voicemail-transcription")
+async def voicemail_transcription(
+    request: Request,
+    call_sid: str,
+    rid: str,
+) -> Response:
+    """Twilio's transcribeCallback. Patches the voicemail transcript on
+    the call session. Empty transcript (Twilio sometimes posts ""
+    when transcription fails) is silently skipped."""
+    form = await request.form()
+    transcript = form.get("TranscriptionText", "")
+    if transcript:
+        try:
+            call_sessions.update_voicemail_transcript(
+                call_sid, rid, transcript=transcript,
+            )
+        except Exception:
+            logger.exception(
+                "voicemail transcript patch failed call_sid=%s",
+                call_sid,
+            )
+    return Response(content="", media_type="text/plain")
 
 
 @router.websocket("/media-stream")
