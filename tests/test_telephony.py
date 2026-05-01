@@ -1882,10 +1882,11 @@ async def test_errored_turn_carries_transcript_forward(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch):
-    """#170 defense-in-depth — if some upstream change ever populates
-    in_flight_transcript with whitespace, the prepend must be skipped
-    so we don't inject leading spaces or trip Anthropic's empty-content
-    rejection in `_append_user_transcript`."""
+    """#170 regression sentinel — locks in the observable behavior that a
+    whitespace-only ``in_flight_transcript`` produces no leading whitespace
+    in the next turn's text. Today the trailing ``.strip()`` would clean
+    it up regardless, but if a future refactor moves or removes that
+    strip we want this test to catch the leak."""
     import app.telephony.router as router_mod
     from app.telephony.router import _CallState, _handle_final_transcript
 
