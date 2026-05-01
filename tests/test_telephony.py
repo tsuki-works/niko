@@ -773,3 +773,51 @@ async def test_clear_twilio_audio_swallows_websocket_disconnect():
     await clear_twilio_audio(ws, "MZtest456")
 
 
+# ---------------------------------------------------------------------------
+# _should_flush_chunk — TTS chunking logic
+# ---------------------------------------------------------------------------
+
+from app.telephony.router import _should_flush_chunk, _MIN_CHUNK_CHARS
+
+
+def test_flush_on_period_regardless_of_length():
+    """Sentence terminators always flush, even on a very short buffer."""
+    assert _should_flush_chunk(".", buffered_chars=3) is True
+    assert _should_flush_chunk("up.", buffered_chars=3) is True
+
+
+def test_flush_on_question_mark_and_exclamation():
+    assert _should_flush_chunk("?", buffered_chars=5) is True
+    assert _should_flush_chunk("!", buffered_chars=5) is True
+
+
+def test_no_flush_on_comma_below_min_length():
+    """Short comma-ended chunks (e.g. 'Got it,') keep buffering — we
+    don't want a TTS round-trip for two-word fragments."""
+    assert _should_flush_chunk(",", buffered_chars=7) is False
+    assert _should_flush_chunk("it,", buffered_chars=7) is False
+
+
+def test_flush_on_comma_at_or_above_min_length():
+    """Once the buffer crosses _MIN_CHUNK_CHARS, a comma flushes so the
+    caller hears the first half of a long sentence sooner."""
+    assert _MIN_CHUNK_CHARS == 20
+    assert _should_flush_chunk(",", buffered_chars=_MIN_CHUNK_CHARS) is True
+    assert _should_flush_chunk("up,", buffered_chars=33) is True
+
+
+def test_flush_on_other_soft_breaks():
+    """Semicolons, colons, and em dashes are also natural prosody
+    breaks — gated by the same min-length rule."""
+    assert _should_flush_chunk(";", buffered_chars=25) is True
+    assert _should_flush_chunk(":", buffered_chars=25) is True
+    assert _should_flush_chunk("—", buffered_chars=25) is True
+    assert _should_flush_chunk(";", buffered_chars=10) is False
+
+
+def test_no_flush_on_plain_text_delta():
+    """Mid-word deltas never flush, regardless of length."""
+    assert _should_flush_chunk(" coming", buffered_chars=100) is False
+    assert _should_flush_chunk("a", buffered_chars=5) is False
+
+
