@@ -113,7 +113,7 @@ Expected: 6 tests fail with `ImportError` on `_should_flush_chunk` / `_MIN_CHUNK
 Insert immediately after the existing module-level constants block (after `MARK_ECHO_TIMEOUT_SECONDS = 8.0` at router.py:57 and before the `_GOODBYE_PATTERNS` tuple):
 
 ```python
-# Chunking thresholds for TTS handoff (#XXX). Sentence terminators
+# Chunking thresholds for TTS handoff (#151). Sentence terminators
 # always flush; soft breaks (commas, semicolons, colons, em dashes)
 # only flush once the buffered chunk is ≥ _MIN_CHUNK_CHARS so that
 # fragments like "Got it," don't become their own Aura round-trip.
@@ -321,7 +321,7 @@ Add at the end of `tests/test_tts_client.py`:
 
 ```python
 # ---------------------------------------------------------------------------
-# _get_client — module-level persistent httpx.AsyncClient (#XXX)
+# _get_client — module-level persistent httpx.AsyncClient (#151)
 # ---------------------------------------------------------------------------
 
 import app.tts.client as tts_module
@@ -559,6 +559,6 @@ Expected: the original modifications restored under the in-flight branch.
 ## Self-review notes
 
 - **Spec coverage:** Both A (chunking) and B (persistent client) from the conversation design have a task. ✓
-- **Placeholder scan:** Two `(#XXX)` markers in code comments — these are placeholders for the eventual issue/PR number once the PR is opened. Replace with the actual PR number before merge, or drop the marker. Acceptable for a plan; flag it during review.
+- **Placeholder scan:** Two `(#151)` markers in code comments — these are placeholders for the eventual issue/PR number once the PR is opened. Replace with the actual PR number before merge, or drop the marker. Acceptable for a plan; flag it during review.
 - **Type consistency:** Helper signature `_should_flush_chunk(delta: str, buffered_chars: int) -> bool` is used identically in tests and call site. `_get_client()` returns `httpx.AsyncClient` and is referenced as such everywhere. ✓
 - **Threshold value:** `_MIN_CHUNK_CHARS = 20` is asserted in one test (`test_flush_on_comma_at_or_above_min_length`) so a future bump triggers a deliberate test update rather than a silent regression. ✓
