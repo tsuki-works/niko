@@ -21,7 +21,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
@@ -370,6 +370,13 @@ async def _run_llm_tts_turn(
     text_buffer: list[str] = []
     first_speak = True
     full_reply_parts: list[str] = []
+    # #146 — instrumentation. ``stream_reply`` yields one timing snapshot
+    # the moment the first text content block opens; we stash it and
+    # fold the breakdown into the first_audio Firestore event so the
+    # dashboard can show ttft/tool_prefix/cache without anyone needing
+    # GCP log access.
+    timing_snapshot: dict[str, Any] | None = None
+    first_text_at: float | None = None
 
     def _record_first_audio() -> None:
         latency = time.monotonic() - turn_start
@@ -378,11 +385,16 @@ async def _run_llm_tts_turn(
             latency,
             state.call_sid,
         )
+        detail: dict[str, Any] = {"latency_seconds": round(latency, 3)}
+        if first_text_at is not None:
+            detail["first_text_seconds"] = round(first_text_at - turn_start, 3)
+        if timing_snapshot is not None:
+            detail.update(timing_snapshot)
         _bg_call_event(
             state.call_sid,
             _state_rid(state),
             kind="first_audio",
-            detail={"latency_seconds": round(latency, 3)},
+            detail=detail,
         )
 
     try:
@@ -395,7 +407,13 @@ async def _run_llm_tts_turn(
             if asyncio.current_task().cancelled():
                 return
 
+            if event.timing is not None:
+                timing_snapshot = event.timing
+                continue
+
             if event.text_delta is not None:
+                if first_text_at is None:
+                    first_text_at = time.monotonic()
                 text_buffer.append(event.text_delta)
                 full_reply_parts.append(event.text_delta)
                 if event.text_delta.endswith((".", "?", "!")):

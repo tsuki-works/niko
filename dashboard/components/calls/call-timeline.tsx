@@ -15,6 +15,7 @@ import Link from 'next/link';
 import { TimelineExport } from '@/components/calls/timeline-export';
 import { LocalTime } from '@/components/shared/local-time';
 import type { CallEvent, CallTimeline } from '@/lib/api/calls';
+import { formatFirstAudioBreakdown } from '@/lib/formatters/call-timeline';
 import { cn } from '@/lib/utils';
 
 export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
@@ -165,16 +166,29 @@ function renderEvent(event: CallEvent): RenderedEvent {
     case 'first_audio': {
       const latency = event.detail.latency_seconds as number | undefined;
       const overBudget = typeof latency === 'number' && latency >= 1;
+      const breakdown = formatFirstAudioBreakdown(
+        event.detail as Record<string, unknown>,
+      );
+      const headline =
+        typeof latency === 'number'
+          ? `${(latency * 1000).toFixed(0)}ms${overBudget ? ' (over <1s budget)' : ''}`
+          : 'first audio bytes sent';
       return {
         Icon: Volume2,
         accent: overBudget
           ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
           : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
         label: 'first audio',
-        body:
-          typeof latency === 'number'
-            ? `${(latency * 1000).toFixed(0)}ms${overBudget ? ' (over <1s budget)' : ''}`
-            : 'first audio bytes sent',
+        body: breakdown ? (
+          <span>
+            {headline}{' '}
+            <span className="text-muted-foreground font-mono text-xs">
+              {breakdown}
+            </span>
+          </span>
+        ) : (
+          headline
+        ),
       };
     }
     case 'barge_in':

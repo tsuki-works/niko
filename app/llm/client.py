@@ -22,6 +22,7 @@ Two entry points:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Optional
 
@@ -114,15 +115,27 @@ class LLMResponse:
 class StreamEvent:
     """One event yielded by ``stream_reply``.
 
-    Exactly one of ``text_delta`` or ``final`` is set on any given
-    event. Text-delta events arrive incrementally as Haiku produces
-    output; the terminal ``final`` event carries the assembled
-    ``LLMResponse`` (full reply text, updated order, threaded history)
-    so the caller can persist state and prepare for the next turn.
+    Exactly one of ``text_delta``, ``timing``, or ``final`` is set on
+    any given event. Text-delta events arrive incrementally as Haiku
+    produces output; a single ``timing`` event lands the moment the
+    first text block opens (so the router can fold the latency
+    breakdown into its ``first_audio`` Firestore event before TTS
+    starts); the terminal ``final`` event carries the assembled
+    ``LLMResponse`` so the caller can persist state for the next turn.
+
+    The ``timing`` payload has the shape::
+
+        {
+            "ttft_seconds": float,        # request → first SDK event
+            "tool_prefix_seconds": float, # first event → first text block
+            "cache_read_tokens": int,
+            "cache_creation_tokens": int,
+        }
     """
 
     text_delta: Optional[str] = None
     final: Optional[LLMResponse] = None
+    timing: Optional[dict[str, Any]] = None
 
 
 def _missing_key_error() -> RuntimeError:
@@ -413,6 +426,31 @@ async def stream_reply(
     text_parts: list[str] = []
     tool_uses: list[dict[str, Any]] = []
 
+    # Latency instrumentation (#146). t_request_start anchors the whole
+    # turn — TTFT is the time to the first SDK event, tool_prefix is
+    # how long we wait between that first event and the moment a text
+    # content block opens (i.e. how much of the budget Haiku spent
+    # streaming a tool_use input before saying anything aloud).
+    t_request_start = time.monotonic()
+    t_first_event: Optional[float] = None
+    t_first_text_block: Optional[float] = None
+    cache_read_tokens = 0
+    cache_creation_tokens = 0
+    timing_emitted = False
+
+    def _make_timing_event() -> StreamEvent:
+        return StreamEvent(
+            timing={
+                "ttft_seconds": round((t_first_event or t_request_start) - t_request_start, 3),
+                "tool_prefix_seconds": round(
+                    (t_first_text_block - t_first_event) if (t_first_text_block and t_first_event) else 0.0,
+                    3,
+                ),
+                "cache_read_tokens": cache_read_tokens,
+                "cache_creation_tokens": cache_creation_tokens,
+            }
+        )
+
     async with api.messages.stream(
         model=MODEL,
         max_tokens=MAX_TOKENS,
@@ -420,9 +458,27 @@ async def stream_reply(
         tools=[UPDATE_ORDER_TOOL],
         messages=new_history,
     ) as stream:
-        async for delta in stream.text_stream:
-            text_parts.append(delta)
-            yield StreamEvent(text_delta=delta)
+        async for event in stream:
+            if t_first_event is None:
+                t_first_event = time.monotonic()
+            etype = getattr(event, "type", None)
+            if etype == "message_start":
+                msg = getattr(event, "message", None)
+                usage = getattr(msg, "usage", None) if msg is not None else None
+                if usage is not None:
+                    cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+                    cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            elif etype == "content_block_start":
+                block = getattr(event, "content_block", None)
+                if getattr(block, "type", None) == "text" and t_first_text_block is None:
+                    t_first_text_block = time.monotonic()
+                    yield _make_timing_event()
+                    timing_emitted = True
+            elif etype == "content_block_delta":
+                delta = getattr(event, "delta", None)
+                if getattr(delta, "type", None) == "text_delta":
+                    text_parts.append(delta.text)
+                    yield StreamEvent(text_delta=delta.text)
         first_message = await stream.get_final_message()
 
     for block in first_message.content:
@@ -460,15 +516,30 @@ async def stream_reply(
             tools=[UPDATE_ORDER_TOOL],
             messages=new_history,
         ) as followup_stream:
-            async for delta in followup_stream.text_stream:
-                text_parts.append(delta)
-                yield StreamEvent(text_delta=delta)
+            async for event in followup_stream:
+                etype = getattr(event, "type", None)
+                if etype == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    if getattr(block, "type", None) == "text" and t_first_text_block is None:
+                        t_first_text_block = time.monotonic()
+                        yield _make_timing_event()
+                        timing_emitted = True
+                elif etype == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    if getattr(delta, "type", None) == "text_delta":
+                        text_parts.append(delta.text)
+                        yield StreamEvent(text_delta=delta.text)
             followup_message = await followup_stream.get_final_message()
         followup_content = [_serialize_block(b) for b in followup_message.content]
         new_history = [
             *new_history,
             {"role": "assistant", "content": followup_content},
         ]
+
+    if not timing_emitted:
+        # Tool-only path with no follow-up text (rare); still emit a
+        # timing snapshot so consumers always see the breakdown.
+        yield _make_timing_event()
 
     yield StreamEvent(
         final=LLMResponse(
