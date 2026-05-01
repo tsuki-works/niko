@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ListOrdered, Menu, Phone, Settings } from 'lucide-react';
+import { BarChart3, ListOrdered, Menu, Phone, Settings } from 'lucide-react';
 
 import { NikoMark } from '@/components/shared/niko-mark';
 import {
@@ -34,6 +34,7 @@ const NAV: NavItem[] = [
   },
   { label: 'Calls', href: '/calls', icon: Phone },
   { label: 'Menu', href: '/menu', icon: Menu },
+  { label: 'Analytics', href: '/analytics', icon: BarChart3 },
   { label: 'Settings', href: '/settings', icon: Settings },
 ];
 

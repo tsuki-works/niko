@@ -41,6 +41,7 @@ from app.orders.lifecycle import (
 )
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import (
+    analytics,
     call_sessions,
     firestore as order_storage,
     recordings,
@@ -260,6 +261,14 @@ def post_menu_category(
         raise HTTPException(status_code=409, detail=str(exc))
     restaurants_storage.save_restaurant(updated)
     return updated.model_dump(mode="json")
+
+
+@app.get("/analytics/summary")
+def get_analytics_summary(tenant: Tenant = Depends(current_tenant)):
+    """Tile metrics for the dashboard's /analytics page. Tenant-scoped."""
+    return analytics.summarize_orders(
+        restaurant_id=tenant.restaurant_id,
+    ).model_dump()
 
 
 @app.get("/orders")
