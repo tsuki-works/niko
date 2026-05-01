@@ -29,6 +29,7 @@ export type CallEventKind =
   | 'stop'
   | 'order_confirmed'
   | 'recording_ready'
+  | 'transfer_requested'
   | 'error'
   | 'log';
 

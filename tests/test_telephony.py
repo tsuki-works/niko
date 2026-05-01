@@ -82,7 +82,7 @@ def mock_pipeline(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -125,7 +125,7 @@ def test_voice_twiml_contains_media_stream_no_say(monkeypatch):
     body = response.text
     assert "<Response>" in body
     assert "<Say" not in body          # greeting is now via ElevenLabs on start event
-    assert "<Connect>" in body
+    assert "<Connect" in body
     assert "<Stream" in body
     # TestClient sets Host: testserver
     assert "wss://testserver/media-stream" in body
@@ -310,7 +310,7 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -368,7 +368,7 @@ def test_media_stream_finalizes_recording_on_stop(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
@@ -412,7 +412,7 @@ def test_ai_greeting_spawned_on_start(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -452,7 +452,7 @@ def test_stop_event_persists_ready_order(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -496,7 +496,7 @@ def test_stop_event_skips_persist_if_order_not_ready(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -909,7 +909,7 @@ def test_first_tts_byte_event_emitted_on_turn(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     # A speak() stub that invokes on_first_byte so the callback fires
@@ -952,4 +952,142 @@ def test_first_tts_byte_event_emitted_on_turn(monkeypatch):
     # first_audio must still be emitted — backwards compatibility
     first_audio_events = [e for e in recorded_events if e.get("kind") == "first_audio"]
     assert len(first_audio_events) >= 1, "first_audio event must not be removed"
+
+
+# ---------------------------------------------------------------------------
+# Transfer trigger accumulation (#7 Sprint 2.4 Track 2)
+# ---------------------------------------------------------------------------
+
+
+def test_call_state_has_transfer_trigger_fields():
+    """The new fields on _CallState are needed by the trigger detector."""
+    from app.telephony.router import _CallState
+
+    state = _CallState()
+    assert state.consecutive_low_confidence_turns == 0
+    assert state.last_caller_transcript == ""
+    assert state.llm_error_occurred is False
+
+
+def test_voice_twiml_includes_stream_ended_action():
+    """The <Connect> in /voice TwiML must point its action callback at
+    /voice/stream-ended so Phase C can dispatch transfer or hangup."""
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.restaurants.models import Restaurant
+    from app.storage import restaurants as r_storage
+
+    fake = Restaurant(
+        id="r1",
+        name="R",
+        display_phone="+15551234567",
+        twilio_phone="+16479058093",
+        address="1 Main",
+        hours="Mon-Sun 11-22",
+        menu={},
+    )
+
+    with patch.object(
+        r_storage,
+        "get_restaurant_by_twilio_phone",
+        return_value=fake,
+    ):
+        client = TestClient(app)
+        resp = client.post(
+            "/voice",
+            data={"To": "+16479058093", "CallSid": "CAtest"},
+            headers={"host": "test.example.com"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.text
+    assert '<Connect' in body
+    assert 'action="/voice/stream-ended"' in body
+    assert 'method="POST"' in body
+
+
+# ---------------------------------------------------------------------------
+# on_transcript confidence handling (Fix 1 regression guard)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_transcript_increments_misheard_counter_on_low_confidence(monkeypatch):
+    """Driving on_transcript with low-confidence finals must increment
+    state.consecutive_low_confidence_turns. Reset on a clear final."""
+    from unittest.mock import MagicMock
+
+    from app.telephony.router import _CallState, _open_deepgram_connection
+    import app.telephony.router as router_mod
+
+    # Satisfy the API-key guard without a real credential.
+    monkeypatch.setattr(router_mod.settings, "deepgram_api_key", "fake-key-for-test")
+    # Prevent _bg_call_event from spawning background threads that attempt
+    # real Firestore writes (no GCP in the test environment).
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+
+    state = _CallState()
+    captured: dict = {}
+
+    class FakeDeepgramConn:
+        def on(self, event_type, handler):
+            captured.setdefault(str(event_type), handler)
+
+        async def start(self, *_, **__):
+            return True
+
+        async def finish(self):
+            pass
+
+        async def send(self, *_):
+            pass
+
+        def keepalive(self):
+            pass
+
+    class FakeDeepgramClient:
+        def __init__(self, *_):
+            self.listen = MagicMock()
+            self.listen.asynclive.v.return_value = FakeDeepgramConn()
+
+    monkeypatch.setattr(router_mod, "DeepgramClient", FakeDeepgramClient)
+
+    async def on_final(text):
+        pass
+
+    await _open_deepgram_connection(
+        "CAtest",
+        "r1",
+        on_final,
+        state=state,
+    )
+
+    # LiveTranscriptionEvents.Transcript stringifies to "Results" (Deepgram SDK).
+    handler = captured["Results"]
+
+    def fake_result(text, confidence, is_final=True):
+        r = MagicMock()
+        alt = MagicMock()
+        alt.transcript = text
+        alt.confidence = confidence
+        r.channel.alternatives = [alt]
+        r.is_final = is_final
+        return r
+
+    # Three consecutive low-confidence finals.
+    await handler(None, fake_result("um", 0.2))
+    await handler(None, fake_result("uhh", 0.1))
+    # confidence=0.0 is the key regression: without Fix 1, `0.0 or 1.0`
+    # yields 1.0 and the counter would not advance on this third call.
+    await handler(None, fake_result("what", 0.0))
+
+    assert state.consecutive_low_confidence_turns == 3
+
+    # A clear final resets the counter.
+    await handler(None, fake_result("a large pepperoni pizza", 0.95))
+    assert state.consecutive_low_confidence_turns == 0
+    assert state.last_caller_transcript == "a large pepperoni pizza"
 

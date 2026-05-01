@@ -284,10 +284,19 @@ class _CallState:
     # further TwiML the call hangs up. Avoids the Twilio REST
     # Calls.update endpoint which 404s on <Connect>-state calls.
     websocket: "WebSocket | None" = None
+    # Transfer trigger accumulators (#7 Sprint 2.4 Track 2). Set by
+    # transcript / LLM-error handlers; read in the finally block to
+    # decide whether to write a transfer flag to the call session.
+    consecutive_low_confidence_turns: int = 0
+    last_caller_transcript: str = ""
+    llm_error_occurred: bool = False
 
 
 async def _open_deepgram_connection(
-    call_sid: str | None, restaurant_id: str | None, on_final: Callable
+    call_sid: str | None,
+    restaurant_id: str | None,
+    on_final: Callable,
+    state: "_CallState | None" = None,
 ):
     assert settings.deepgram_api_key, "DEEPGRAM_API_KEY is not set"
 
@@ -302,12 +311,23 @@ async def _open_deepgram_connection(
         label = "final" if result.is_final else "interim"
         logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
         if result.is_final:
+            # Track confidence for transfer-trigger detection (#7).
+            # Explicit None check — `or 1.0` would replace 0.0 (falsy)
+            # with 1.0, masking a legitimate worst-case misheard signal.
+            raw_confidence = getattr(alt, "confidence", 1.0)
+            confidence = 1.0 if raw_confidence is None else raw_confidence
+            if state is not None:
+                state.last_caller_transcript = text
+                if confidence < 0.5:
+                    state.consecutive_low_confidence_turns += 1
+                else:
+                    state.consecutive_low_confidence_turns = 0
             _bg_call_event(
                 call_sid,
                 restaurant_id,
                 kind="transcript_final",
                 text=text,
-                detail={"text": text},
+                detail={"text": text, "confidence": confidence},
             )
             asyncio.get_event_loop().create_task(on_final(text))
 
@@ -551,6 +571,8 @@ async def _run_llm_tts_turn(
         raise
     except Exception as exc:
         logger.exception("llm_turn errored call_sid=%s", state.call_sid)
+        # #7: signal the trigger detector at end-of-stream
+        state.llm_error_occurred = True
         _bg_call_event(
             state.call_sid,
             _state_rid(state),
@@ -648,7 +670,7 @@ async def voice(request: Request) -> Response:
         return Response(content=str(twiml), media_type="application/xml")
 
     host = request.headers.get("host", "localhost:8000")
-    connect = Connect()
+    connect = Connect(action="/voice/stream-ended", method="POST")
     # NOTE: <Connect><Stream> only supports the default ``inbound_track``;
     # passing ``track="both_tracks"`` makes Twilio reject the TwiML and
     # the call drops the moment the caller dismisses the trial-account
@@ -742,7 +764,7 @@ async def media_stream(websocket: WebSocket) -> None:
                         detail={"stream_sid": state.stream_sid or ""},
                     )
                 dg_conn = await _open_deepgram_connection(
-                    state.call_sid, state.restaurant.id, on_final
+                    state.call_sid, state.restaurant.id, on_final, state=state
                 )
                 if settings.testing_mode and settings.commit_sha and state.stream_sid:
                     await speak(
@@ -846,6 +868,35 @@ async def media_stream(websocket: WebSocket) -> None:
                     "call_sessions: mark_call_ended scheduling failed call_sid=%s",
                     state.call_sid,
                 )
+        # Sprint 2.4 Track 2: decide whether to flag this call for
+        # transfer in the /voice/stream-ended callback. Reads accumulated
+        # signals on _CallState; persists the verdict as a call_session
+        # event so the action callback can branch on it.
+        if state.call_sid and rid_for_close:
+            from app.telephony.transfer_triggers import should_trigger_transfer
+            transfer_reason = should_trigger_transfer(
+                consecutive_low_confidence_turns=state.consecutive_low_confidence_turns,
+                last_transcript=state.last_caller_transcript,
+                llm_error_occurred=state.llm_error_occurred,
+            )
+            if transfer_reason is not None:
+                logger.info(
+                    "transfer_requested call_sid=%s reason=%s",
+                    state.call_sid,
+                    transfer_reason.value,
+                )
+                try:
+                    call_sessions.record_event(
+                        state.call_sid,
+                        rid_for_close,
+                        kind="transfer_requested",
+                        text=transfer_reason.value,
+                    )
+                except Exception:
+                    logger.exception(
+                        "call_sessions: transfer_requested write failed call_sid=%s",
+                        state.call_sid,
+                    )
         if state.recording_session is not None and rid_for_close:
             try:
                 gs_url, duration = recordings.finalize_recording(state.recording_session)
