@@ -1581,3 +1581,110 @@ def test_voice_opens_stream_when_open(monkeypatch):
     assert "<Connect" in resp.text
     assert "<Record" not in resp.text
 
+
+def test_voicemail_recorded_is_idempotent_on_twilio_retry(monkeypatch):
+    """Twilio retries the <Record> action callback on timeout. The
+    second call must skip the upload + mark when the same RecordingSid
+    is already on the call session."""
+    from fastapi.testclient import TestClient
+    from app.config import settings
+    from app.main import app
+    from app.storage import call_sessions, recordings
+
+    monkeypatch.setattr(settings, "twilio_account_sid", "AC")
+    monkeypatch.setattr(settings, "twilio_auth_token", "tok")
+
+    # First call: no existing session record — upload runs.
+    # Second call: session already has the same RecordingSid — skip.
+    upload_calls = []
+    monkeypatch.setattr(
+        recordings,
+        "upload_voicemail_from_twilio",
+        lambda **kw: upload_calls.append(kw) or "gs://x/y",
+    )
+
+    mark_calls = []
+    monkeypatch.setattr(
+        call_sessions,
+        "mark_voicemail_left",
+        lambda *a, **kw: mark_calls.append(kw),
+    )
+
+    sessions = [
+        None,                                          # 1st call: no session yet
+        {"voicemail_recording_sid": "REabc"},          # 2nd call: already processed
+    ]
+    monkeypatch.setattr(
+        call_sessions,
+        "get_session",
+        lambda sid, rid: sessions.pop(0) if sessions else None,
+    )
+
+    client = TestClient(app)
+    payload = {
+        "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
+        "RecordingSid": "REabc",
+        "RecordingDuration": "42",
+    }
+    # First post — should upload + mark
+    r1 = client.post(
+        "/voice/voicemail-recorded",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data=payload,
+    )
+    assert r1.status_code == 200
+    # Second post (retry) — should skip
+    r2 = client.post(
+        "/voice/voicemail-recorded",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data=payload,
+    )
+    assert r2.status_code == 200
+
+    assert len(upload_calls) == 1, "upload should run exactly once"
+    assert len(mark_calls) == 1, "mark_voicemail_left should fire exactly once"
+
+
+def test_voice_after_hours_without_call_sid_bails_with_hangup(monkeypatch):
+    """Defensive — if CallSid is somehow missing on /voice (Twilio
+    contract violation), don't write voicemail/{rid}/unknown.mp3. Hang
+    up gracefully."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.restaurants import open_check
+    from app.restaurants.models import Restaurant
+    from app.storage import restaurants as r_storage
+    import app.telephony.router as router_mod
+
+    fake = Restaurant(
+        id="r1",
+        name="R",
+        display_phone="+15551234567",
+        twilio_phone="+16479058093",
+        address="1 Main",
+        hours="11-22",
+        menu={},
+    )
+    monkeypatch.setattr(
+        r_storage,
+        "get_restaurant_by_twilio_phone",
+        lambda phone: fake,
+    )
+    # Patch both the source module and the router's bound name so the
+    # check fires regardless of import-time binding.
+    monkeypatch.setattr(open_check, "is_open_now", lambda r, now=None: False)
+    monkeypatch.setattr(router_mod, "is_open_now", lambda r, now=None: False)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice",
+        data={"To": "+16479058093"},  # no CallSid
+        headers={"host": "test.example.com"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.text
+    assert "<Hangup" in body
+    assert "<Record" not in body
+    assert "unknown" not in body
+

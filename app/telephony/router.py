@@ -672,13 +672,20 @@ async def voice(request: Request) -> Response:
         twiml.hangup()
         return Response(content=str(twiml), media_type="application/xml")
 
-    if not is_open_now(restaurant):
+    if restaurant is not None and not is_open_now(restaurant):
         # After-hours: skip the AI flow, drop straight to voicemail.
-        # Initialize the call session so the dashboard surfaces the call;
-        # the voicemail event will land when /voice/voicemail-recorded fires.
+        if not call_sid:
+            # Defensive: Twilio always posts CallSid. Without it, we
+            # can't key the recording or call_session — bail.
+            twiml = VoiceResponse()
+            twiml.say("Sorry, we're closed. Please call back during business hours.")
+            twiml.hangup()
+            return Response(
+                content=str(twiml),
+                media_type="application/xml",
+            )
         try:
-            if call_sid:
-                call_sessions.init_call_session(call_sid, restaurant.id)
+            call_sessions.init_call_session(call_sid, restaurant.id)
         except Exception:
             logger.exception(
                 "voice: init_call_session failed call_sid=%s rid=%s",
@@ -686,7 +693,7 @@ async def voice(request: Request) -> Response:
                 restaurant.id,
             )
         return Response(
-            content=str(voicemail_response(call_sid or "unknown", restaurant.id)),
+            content=str(voicemail_response(call_sid, restaurant.id)),
             media_type="application/xml",
         )
 
@@ -845,6 +852,23 @@ async def voicemail_recorded(
         duration = 0
 
     if not recording_url or not recording_sid:
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    # Idempotency: Twilio retries this callback on timeout. If we've
+    # already processed this RecordingSid for this call, short-circuit.
+    try:
+        existing = call_sessions.get_session(call_sid, rid) or {}
+    except Exception:
+        existing = {}
+    if existing.get("voicemail_recording_sid") == recording_sid:
+        logger.info(
+            "voicemail-recorded: idempotent retry for call_sid=%s sid=%s — skipping",
+            call_sid,
+            recording_sid,
+        )
         return Response(
             content=str(VoiceResponse()),
             media_type="application/xml",
