@@ -119,3 +119,43 @@ def test_order_json_roundtrip_includes_computed_fields():
     assert dumped["items"][0]["line_total"] == 35.98
     assert dumped["order_type"] == "pickup"
     assert dumped["status"] == "in_progress"
+
+
+def test_order_has_sms_sent_field_defaulting_to_empty_dict():
+    """Order model carries an sms_sent record map, default empty.
+
+    Used by app.sms for idempotency: keys are template names
+    (e.g. "order_confirmation"), values record {sid, sent_at}.
+    """
+    from app.orders.models import Order, SmsSentRecord
+
+    order = Order(call_sid="CAtest")
+    assert order.sms_sent == {}
+
+
+def test_order_sms_sent_record_round_trips():
+    from datetime import datetime, timezone
+    from app.orders.models import Order, SmsSentRecord
+
+    sent_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
+    record = SmsSentRecord(sid="SMabc123", sent_at=sent_at)
+    order = Order(call_sid="CAtest", sms_sent={"order_confirmation": record})
+
+    dumped = order.model_dump(mode="python")
+    restored = Order.model_validate(dumped)
+    assert restored.sms_sent["order_confirmation"].sid == "SMabc123"
+    assert restored.sms_sent["order_confirmation"].sent_at == sent_at
+
+
+def test_order_sms_sent_back_compat_for_docs_without_field():
+    """Existing Firestore docs predate sms_sent — model_validate must
+    not blow up when the field is absent."""
+    from app.orders.models import Order
+
+    legacy_doc = {
+        "call_sid": "CAlegacy",
+        "items": [],
+        "status": "in_progress",
+    }
+    order = Order.model_validate(legacy_doc)
+    assert order.sms_sent == {}

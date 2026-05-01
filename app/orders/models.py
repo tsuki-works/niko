@@ -79,6 +79,16 @@ class LineItem(BaseModel):
         return round(self.unit_price * self.quantity, 2)
 
 
+class SmsSentRecord(BaseModel):
+    """Idempotency record for an outbound SMS — written to
+    ``orders/{call_sid}.sms_sent[template_name]`` after a successful
+    Twilio send. Presence of a record short-circuits future sends with
+    the same key (e.g. on persist_on_confirm retry)."""
+
+    sid: str  # Twilio Message SID, e.g. "SM..."
+    sent_at: datetime
+
+
 class Order(BaseModel):
     call_sid: str
     caller_phone: Optional[str] = None
@@ -98,6 +108,11 @@ class Order(BaseModel):
     ready_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
+    # Idempotency record map for outbound SMS. Keys are template names
+    # (e.g. "order_confirmation"); values are SmsSentRecord. Populated
+    # by app.sms.send_sms after each successful Twilio send. Default
+    # empty so legacy docs (pre-#7) and partially-built orders parse.
+    sms_sent: dict[str, SmsSentRecord] = Field(default_factory=dict)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
