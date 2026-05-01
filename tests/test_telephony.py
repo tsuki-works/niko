@@ -82,7 +82,7 @@ def mock_pipeline(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -125,7 +125,7 @@ def test_voice_twiml_contains_media_stream_no_say(monkeypatch):
     body = response.text
     assert "<Response>" in body
     assert "<Say" not in body          # greeting is now via ElevenLabs on start event
-    assert "<Connect>" in body
+    assert "<Connect" in body
     assert "<Stream" in body
     # TestClient sets Host: testserver
     assert "wss://testserver/media-stream" in body
@@ -310,7 +310,7 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -368,7 +368,7 @@ def test_media_stream_finalizes_recording_on_stop(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
@@ -412,7 +412,7 @@ def test_ai_greeting_spawned_on_start(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -452,7 +452,7 @@ def test_stop_event_persists_ready_order(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -496,7 +496,7 @@ def test_stop_event_skips_persist_if_order_not_ready(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     async def fake_speak(text, websocket, stream_sid, **kw):
@@ -909,7 +909,7 @@ def test_first_tts_byte_event_emitted_on_turn(monkeypatch):
     fake_dg.send = AsyncMock()
     fake_dg.finish = AsyncMock()
 
-    async def fake_open_dg(call_sid, restaurant_id, on_final):
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
         return fake_dg
 
     # A speak() stub that invokes on_first_byte so the callback fires
@@ -952,4 +952,59 @@ def test_first_tts_byte_event_emitted_on_turn(monkeypatch):
     # first_audio must still be emitted — backwards compatibility
     first_audio_events = [e for e in recorded_events if e.get("kind") == "first_audio"]
     assert len(first_audio_events) >= 1, "first_audio event must not be removed"
+
+
+# ---------------------------------------------------------------------------
+# Transfer trigger accumulation (#7 Sprint 2.4 Track 2)
+# ---------------------------------------------------------------------------
+
+
+def test_call_state_has_transfer_trigger_fields():
+    """The new fields on _CallState are needed by the trigger detector."""
+    from app.telephony.router import _CallState
+
+    state = _CallState()
+    assert state.consecutive_low_confidence_turns == 0
+    assert state.last_caller_transcript == ""
+    assert state.llm_error_occurred is False
+
+
+def test_voice_twiml_includes_stream_ended_action():
+    """The <Connect> in /voice TwiML must point its action callback at
+    /voice/stream-ended so Phase C can dispatch transfer or hangup."""
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.restaurants.models import Restaurant
+    from app.storage import restaurants as r_storage
+
+    fake = Restaurant(
+        id="r1",
+        name="R",
+        display_phone="+15551234567",
+        twilio_phone="+16479058093",
+        address="1 Main",
+        hours="Mon-Sun 11-22",
+        menu={},
+    )
+
+    with patch.object(
+        r_storage,
+        "get_restaurant_by_twilio_phone",
+        return_value=fake,
+    ):
+        client = TestClient(app)
+        resp = client.post(
+            "/voice",
+            data={"To": "+16479058093", "CallSid": "CAtest"},
+            headers={"host": "test.example.com"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.text
+    assert '<Connect' in body
+    assert 'action="/voice/stream-ended"' in body
+    assert 'method="POST"' in body
 
