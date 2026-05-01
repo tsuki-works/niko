@@ -134,6 +134,22 @@ def test_post_category_rejects_underscore_prefix(client: TestClient):
     assert resp.status_code == 422
 
 
+def test_patch_menu_item_409_on_rename_collision(client: TestClient):
+    """PATCH that renames to an existing item's name in the same
+    category must return 409."""
+    _wire({
+        "pizzas": [
+            {"name": "Margherita", "price": 12.99, "available": True},
+            {"name": "Pepperoni", "price": 15.99, "available": True},
+        ],
+    })
+    resp = client.patch(
+        "/restaurants/me/menu/items/pizzas/Margherita",
+        json={"new_name": "Pepperoni"},
+    )
+    assert resp.status_code == 409
+
+
 def test_post_menu_item_403_for_non_owner(client: TestClient, fake_tenant: Tenant):
     """Staff cannot add menu items — owner-only."""
     import dataclasses

@@ -137,7 +137,7 @@ class MenuItemCreate(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    category: str = Field(min_length=1)
+    category: str = Field(min_length=1, pattern=r"^[a-z0-9][a-z0-9_]*$")
     name: str = Field(min_length=1)
     description: Optional[str] = None
     price: Optional[float] = Field(default=None, ge=0)
@@ -169,7 +169,7 @@ class MenuItemUpdate(BaseModel):
     model_config = {"extra": "forbid"}
 
     new_name: Optional[str] = Field(default=None, min_length=1)
-    new_category: Optional[str] = Field(default=None, min_length=1)
+    new_category: Optional[str] = Field(default=None, min_length=1, pattern=r"^[a-z0-9][a-z0-9_]*$")
     description: Optional[str] = None
     price: Optional[float] = Field(default=None, ge=0)
     sizes: Optional[dict[str, float]] = Field(default=None, min_length=1)

@@ -146,3 +146,50 @@ def test_add_category_rejects_duplicate():
     r = _r()
     with pytest.raises(DuplicateMenuItem):
         add_category(r, CategoryCreate(key="pizzas"))
+
+
+def test_update_menu_item_rename_to_same_name_is_noop():
+    """Renaming Margherita → Margherita should NOT raise — the skip-self
+    check in update_menu_item must allow the no-op."""
+    r = _r()
+    out = update_menu_item(
+        r,
+        category="pizzas",
+        name="Margherita",
+        update=MenuItemUpdate(new_name="Margherita"),
+    )
+    assert out.menu["pizzas"][0]["name"] == "Margherita"
+
+
+def test_update_menu_item_rename_within_category_409_on_collision():
+    """Renaming Margherita → Pepperoni when both exist in pizzas should
+    raise DuplicateMenuItem."""
+    r = _r()
+    r = add_menu_item(
+        r,
+        MenuItemCreate(category="pizzas", name="Pepperoni", price=15.99),
+    )
+    with pytest.raises(DuplicateMenuItem):
+        update_menu_item(
+            r,
+            category="pizzas",
+            name="Margherita",
+            update=MenuItemUpdate(new_name="Pepperoni"),
+        )
+
+
+def test_update_menu_item_move_to_category_with_existing_name_409():
+    """Moving Margherita to sides where a 'Margherita' already exists
+    should raise DuplicateMenuItem."""
+    r = _r()
+    r = add_menu_item(
+        r,
+        MenuItemCreate(category="sides", name="Margherita", price=5.00),
+    )
+    with pytest.raises(DuplicateMenuItem):
+        update_menu_item(
+            r,
+            category="pizzas",
+            name="Margherita",
+            update=MenuItemUpdate(new_category="sides"),
+        )

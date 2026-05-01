@@ -81,25 +81,27 @@ def update_menu_item(
     idx = _find_item(menu, category, name)
     item = dict(menu[category][idx])
 
-    if update.new_name is not None:
-        target_cat = update.new_category or category
+    effective_name = update.new_name if update.new_name is not None else name
+    target_cat = update.new_category if update.new_category is not None else category
+    if update.new_name is not None or (update.new_category is not None and update.new_category != category):
         target_items = (
             menu.get(target_cat, [])
             if target_cat != category
             else menu[category]
         )
-        # Reject rename collision — but allow renaming to same value
-        # (no-op) by skipping the index of the item being modified.
+        # Reject collision in target — but allow same-name same-category
+        # no-op by skipping the index of the item being modified.
         for i_idx, i in enumerate(target_items):
             if not isinstance(i, dict):
                 continue
-            if i.get("name") != update.new_name:
+            if i.get("name") != effective_name:
                 continue
             if target_cat == category and i_idx == idx:
                 continue
             raise DuplicateMenuItem(
-                f"item {update.new_name!r} already exists in {target_cat!r}"
+                f"item {effective_name!r} already exists in {target_cat!r}"
             )
+    if update.new_name is not None:
         item["name"] = update.new_name
     if update.description is not None:
         item["description"] = update.description

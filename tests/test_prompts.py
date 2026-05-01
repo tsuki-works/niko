@@ -294,6 +294,76 @@ def test_prompt_renders_delivery_offered_branch():
     assert "pickup-only" not in lower
 
 
+def test_format_menu_skips_unavailable_items():
+    """Items with available=False must not appear in the LLM-readable
+    menu — the dashboard's 'out of stock' toggle is the load-bearing
+    feature that lets owners hide items from callers."""
+    from app.llm.prompts import _format_menu
+
+    restaurant = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+        menu={
+            "pizzas": [
+                {"name": "Margherita", "price": 12.99, "available": True},
+                {"name": "Pepperoni", "price": 15.99, "available": False},
+            ],
+        },
+    )
+    rendered = _format_menu(restaurant)
+    assert "Margherita" in rendered
+    assert "Pepperoni" not in rendered
+
+
+def test_format_menu_treats_missing_available_as_true():
+    """Legacy items without an `available` field default to available
+    (back-compat with pre-Sprint-2.4 menu docs)."""
+    from app.llm.prompts import _format_menu
+
+    restaurant = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+        menu={
+            "pizzas": [
+                {"name": "Margherita", "price": 12.99},  # no available field
+            ],
+        },
+    )
+    rendered = _format_menu(restaurant)
+    assert "Margherita" in rendered
+
+
+def test_format_menu_skips_category_when_all_items_unavailable():
+    """A category whose every item is unavailable should not appear as
+    a naked header in the prompt."""
+    from app.llm.prompts import _format_menu
+
+    restaurant = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+        menu={
+            "pizzas": [
+                {"name": "Pepperoni", "price": 15.99, "available": False},
+            ],
+        },
+    )
+    rendered = _format_menu(restaurant)
+    assert "Pizzas:" not in rendered
+    assert "Pepperoni" not in rendered
+
+
 def test_prompt_renders_pickup_only_branch():
     """Sprint 2.2 #105 — when offers_delivery=False, the prompt frames
     the restaurant as pickup-only and tells Haiku to soft-pivot when
