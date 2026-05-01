@@ -1330,3 +1330,254 @@ def test_transfer_result_failed_status_marks_internal_failed(monkeypatch):
     assert resp.status_code == 200
     assert mark_calls and mark_calls[0]["status"] == "failed"
 
+
+# ---------------------------------------------------------------------------
+# Phase D: voicemail recording + transcription webhooks + after-hours routing
+# ---------------------------------------------------------------------------
+
+
+def test_voicemail_recorded_uploads_and_marks_session(monkeypatch):
+    """Twilio recording URL → GCS upload → call_sessions.mark_voicemail_left."""
+    from fastapi.testclient import TestClient
+    from app.config import settings
+    from app.main import app
+    from app.storage import call_sessions, recordings
+
+    upload_calls: list[dict] = []
+    def fake_upload(**kwargs):
+        upload_calls.append(kwargs)
+        return f"gs://test/voicemail/{kwargs['restaurant_id']}/{kwargs['call_sid']}.mp3"
+
+    monkeypatch.setattr(
+        recordings, "upload_voicemail_from_twilio", fake_upload,
+    )
+    monkeypatch.setattr(settings, "twilio_account_sid", "ACfake")
+    monkeypatch.setattr(settings, "twilio_auth_token", "tokenfake")
+
+    mark_calls: list[dict] = []
+    monkeypatch.setattr(
+        call_sessions,
+        "mark_voicemail_left",
+        lambda *a, **kw: mark_calls.append(kw),
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice/voicemail-recorded",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={
+            "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
+            "RecordingSid": "REabc",
+            "RecordingDuration": "42",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert len(upload_calls) == 1
+    assert upload_calls[0]["call_sid"] == "CAtest"
+    assert upload_calls[0]["restaurant_id"] == "r1"
+    assert len(mark_calls) == 1
+    assert mark_calls[0]["recording_url"].startswith("gs://test/voicemail/")
+    assert mark_calls[0]["duration_seconds"] == 42
+
+
+def test_voicemail_recorded_handles_missing_twilio_creds_gracefully(monkeypatch):
+    """If TWILIO creds aren't set, log + return empty TwiML rather than 500."""
+    from fastapi.testclient import TestClient
+    from app.config import settings
+    from app.main import app
+    from app.storage import recordings
+
+    upload_calls = []
+    monkeypatch.setattr(
+        recordings,
+        "upload_voicemail_from_twilio",
+        lambda **kw: upload_calls.append(kw) or "gs://x/y",
+    )
+    monkeypatch.setattr(settings, "twilio_account_sid", None)
+    monkeypatch.setattr(settings, "twilio_auth_token", None)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice/voicemail-recorded",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={
+            "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
+            "RecordingSid": "REabc",
+            "RecordingDuration": "42",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert upload_calls == []  # Skipped
+
+
+def test_voicemail_recorded_handles_upload_failure_gracefully(monkeypatch):
+    """Twilio download or GCS upload failure → log + empty TwiML."""
+    from fastapi.testclient import TestClient
+    from app.config import settings
+    from app.main import app
+    from app.storage import call_sessions, recordings
+
+    def boom(**kw):
+        raise RuntimeError("gcs is angry")
+    monkeypatch.setattr(recordings, "upload_voicemail_from_twilio", boom)
+    monkeypatch.setattr(settings, "twilio_account_sid", "AC")
+    monkeypatch.setattr(settings, "twilio_auth_token", "tok")
+
+    mark_calls = []
+    monkeypatch.setattr(
+        call_sessions, "mark_voicemail_left", lambda *a, **kw: mark_calls.append(kw),
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice/voicemail-recorded",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={
+            "RecordingUrl": "https://api.twilio.com/2010-04-01/Recordings/REabc",
+            "RecordingSid": "REabc",
+            "RecordingDuration": "42",
+        },
+    )
+
+    assert resp.status_code == 200
+    # Upload failed → no mark call
+    assert mark_calls == []
+
+
+def test_voicemail_transcription_patches_call_session(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.storage import call_sessions
+
+    patches: list[dict] = []
+    monkeypatch.setattr(
+        call_sessions,
+        "update_voicemail_transcript",
+        lambda *a, **kw: patches.append(kw),
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice/voicemail-transcription",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={"TranscriptionText": "Hi, please call me back."},
+    )
+
+    assert resp.status_code == 200
+    assert patches == [{"transcript": "Hi, please call me back."}]
+
+
+def test_voicemail_transcription_skips_when_empty(monkeypatch):
+    """Twilio sometimes posts empty TranscriptionText (transcription
+    failed or audio too quiet). Skip the patch silently."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.storage import call_sessions
+
+    patches: list[dict] = []
+    monkeypatch.setattr(
+        call_sessions,
+        "update_voicemail_transcript",
+        lambda *a, **kw: patches.append(kw),
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice/voicemail-transcription",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={"TranscriptionText": ""},
+    )
+
+    assert resp.status_code == 200
+    assert patches == []
+
+
+def test_voice_routes_to_voicemail_when_after_hours(monkeypatch):
+    """When the restaurant's hours_structured says it's closed,
+    /voice returns voicemail TwiML directly instead of opening a
+    media stream."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.restaurants import open_check
+    from app.restaurants.models import (
+        DayHours, HoursStructured, Restaurant,
+    )
+    from app.storage import restaurants as r_storage, call_sessions
+
+    closed_day = DayHours(open="00:00", close="00:00", closed=True)
+    h = HoursStructured(
+        mon=closed_day, tue=closed_day, wed=closed_day, thu=closed_day,
+        fri=closed_day, sat=closed_day, sun=closed_day,
+    )
+    fake = Restaurant(
+        id="r1",
+        name="R",
+        display_phone="+15551234567",
+        twilio_phone="+16479058093",
+        address="1 Main",
+        hours="closed",
+        menu={},
+        hours_structured=h,
+    )
+
+    monkeypatch.setattr(
+        r_storage,
+        "get_restaurant_by_twilio_phone",
+        lambda phone: fake,
+    )
+    # Force is_open_now to return False regardless of clock state
+    monkeypatch.setattr(open_check, "is_open_now", lambda r, now=None: False)
+    monkeypatch.setattr(
+        call_sessions,
+        "init_call_session",
+        lambda *a, **kw: None,
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice",
+        data={"To": "+16479058093", "CallSid": "CAtest"},
+        headers={"host": "test.example.com"},
+    )
+
+    assert resp.status_code == 200
+    assert "<Record" in resp.text
+    assert "<Connect" not in resp.text
+
+
+def test_voice_opens_stream_when_open(monkeypatch):
+    """When is_open_now returns True (default for None hours_structured),
+    /voice still opens the AI media stream as before."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.restaurants.models import Restaurant
+    from app.storage import restaurants as r_storage
+
+    fake = Restaurant(
+        id="r1",
+        name="R",
+        display_phone="+15551234567",
+        twilio_phone="+16479058093",
+        address="1 Main",
+        hours="11-22",
+        menu={},
+    )
+    monkeypatch.setattr(
+        r_storage,
+        "get_restaurant_by_twilio_phone",
+        lambda phone: fake,
+    )
+
+    client = TestClient(app)
+    resp = client.post(
+        "/voice",
+        data={"To": "+16479058093", "CallSid": "CAtest"},
+        headers={"host": "test.example.com"},
+    )
+
+    assert resp.status_code == 200
+    assert "<Connect" in resp.text
+    assert "<Record" not in resp.text
+
