@@ -94,5 +94,8 @@ function toRow(c: CallSession) {
     transcript_count: c.transcript_count,
     has_error: c.has_error,
     status: c.status,
+    voicemail_left: Boolean(c.voicemail_recording_url),
+    transfer_attempted: c.transfer_attempted,
+    transfer_status: c.transfer_status,
   };
 }

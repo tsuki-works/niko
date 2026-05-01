@@ -30,6 +30,8 @@ export type CallEventKind =
   | 'order_confirmed'
   | 'recording_ready'
   | 'transfer_requested'
+  | 'transfer_attempted'
+  | 'voicemail_left'
   | 'error'
   | 'log';
 
@@ -40,6 +42,11 @@ export type CallSummary = {
   transcript_count: number;
   has_error: boolean;
   status: CallStatus;
+  // Sprint 2.4 Track 2 — surfacing voicemail + transfer outcomes on the
+  // calls list (only set on calls that hit those flows).
+  voicemail_left?: boolean;
+  transfer_attempted?: boolean;
+  transfer_status?: 'answered' | 'no_answer' | 'busy' | 'failed' | 'skipped';
 };
 
 export type CallEvent = {
