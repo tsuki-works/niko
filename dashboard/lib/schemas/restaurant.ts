@@ -14,6 +14,26 @@
  */
 import { z } from 'zod';
 
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export const DayHoursSchema = z.object({
+  open: z.string().regex(HHMM, 'must be HH:MM (24-hour)'),
+  close: z.string().regex(HHMM, 'must be HH:MM (24-hour)'),
+  closed: z.boolean(),
+});
+export type DayHours = z.infer<typeof DayHoursSchema>;
+
+export const HoursStructuredSchema = z.object({
+  mon: DayHoursSchema,
+  tue: DayHoursSchema,
+  wed: DayHoursSchema,
+  thu: DayHoursSchema,
+  fri: DayHoursSchema,
+  sat: DayHoursSchema,
+  sun: DayHoursSchema,
+});
+export type HoursStructured = z.infer<typeof HoursStructuredSchema>;
+
 export const RestaurantSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -21,6 +41,13 @@ export const RestaurantSchema = z.object({
   twilio_phone: z.string(),
   address: z.string(),
   hours: z.string(),
+  hours_structured: HoursStructuredSchema.nullable().default(null),
+  fallback_phone: z
+    .string()
+    .regex(/^\+\d{8,15}$/, 'must be E.164')
+    .nullable()
+    .default(null),
+  offers_delivery: z.boolean().default(true),
   menu: z.record(z.string(), z.unknown()).default({}),
   prompt_overrides: z.record(z.string(), z.string()).default({}),
   forwarding_mode: z.enum(['always', 'busy', 'noanswer']).default('always'),

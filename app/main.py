@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -8,9 +9,14 @@ from fastapi.responses import RedirectResponse
 logging.basicConfig(level=logging.INFO)
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field, field_validator
 
 from app.auth import Tenant, current_tenant
+from app.restaurants.hours import render_hours_text
+from app.restaurants.models import HoursStructured
+
 from app.config import settings
 from app.orders.lifecycle import (
     OrderTransitionError,
@@ -28,6 +34,8 @@ from app.storage import (
 )
 from app.storage.restaurants import DEMO_RID
 from app.telephony.router import router as telephony_router
+
+_E164 = re.compile(r"^\+\d{8,15}$")
 
 app = FastAPI(title="niko")
 app.include_router(telephony_router)
@@ -78,6 +86,74 @@ def restaurants_me(tenant: Tenant = Depends(current_tenant)):
     if restaurant is None:
         raise HTTPException(status_code=404, detail="restaurant not found")
     return restaurant.model_dump(mode="json")
+
+
+class RestaurantUpdate(BaseModel):
+    """Owner-editable fields for PATCH /restaurants/me. Strict-extra so
+    typos and security-sensitive fields (id, twilio_phone) are rejected
+    rather than silently dropped."""
+
+    model_config = {"extra": "forbid"}
+
+    name: Optional[str] = Field(default=None, min_length=1)
+    display_phone: Optional[str] = Field(default=None, min_length=1)
+    address: Optional[str] = Field(default=None, min_length=1)
+    hours_structured: Optional[HoursStructured] = None
+    fallback_phone: Optional[str] = None
+    offers_delivery: Optional[bool] = None
+
+    @field_validator("fallback_phone")
+    @classmethod
+    def _check_e164(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return v
+        if not _E164.match(v):
+            raise ValueError(
+                f"fallback_phone must be E.164 (+1...), got {v!r}"
+            )
+        return v
+
+
+@app.patch("/restaurants/me")
+def patch_restaurant(
+    update: RestaurantUpdate,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Apply an owner-driven update to the calling tenant's Restaurant
+    doc. Owner-editable fields only — id and twilio_phone are not
+    patchable here (provisioning concerns)."""
+    if tenant.role != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="owner role required to edit restaurant settings",
+        )
+    restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="restaurant not found")
+
+    # Dump scalar fields via model_dump; assign hours_structured manually
+    # so it stays a Pydantic object inside model_copy (avoids a
+    # serializer warning when nested models pass through as raw dicts).
+    patch = update.model_dump(exclude_unset=True, exclude={"hours_structured"})
+    if "hours_structured" in update.model_fields_set:
+        patch["hours_structured"] = update.hours_structured
+
+    updated = restaurant.model_copy(update=patch)
+
+    # If hours_structured was set, regenerate hours text so the prompt
+    # builder reflects the new schedule on the next call.
+    if "hours_structured" in update.model_fields_set:
+        if update.hours_structured is not None:
+            updated = updated.model_copy(
+                update={"hours": render_hours_text(update.hours_structured)},
+            )
+        # else: hours_structured was explicitly cleared. Leave hours: str
+        # alone for now — clearing structured hours doesn't necessarily
+        # mean the prompt-builder string should change. Revisit if a
+        # "clear hours" UX surfaces.
+
+    restaurants_storage.save_restaurant(updated)  # also refreshes the in-process cache for this rid
+    return updated.model_dump(mode="json")
 
 
 @app.get("/orders")
