@@ -55,7 +55,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _now_utc() -> datetime:
@@ -129,3 +129,59 @@ class Restaurant(BaseModel):
     fallback_phone: Optional[str] = None
     created_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)
+
+
+class MenuItemCreate(BaseModel):
+    """Body for POST /restaurants/me/menu/items. Exactly one of
+    ``price`` or ``sizes`` is required."""
+
+    model_config = {"extra": "forbid"}
+
+    category: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    description: Optional[str] = None
+    price: Optional[float] = Field(default=None, ge=0)
+    sizes: Optional[dict[str, float]] = None
+    available: bool = True
+
+    @model_validator(mode="after")
+    def _exactly_one_price(self):
+        has_price = self.price is not None
+        has_sizes = self.sizes is not None and len(self.sizes) > 0
+        if has_price and has_sizes:
+            raise ValueError("specify exactly one of price or sizes, not both")
+        if not has_price and not has_sizes:
+            raise ValueError("specify either price or sizes")
+        if has_sizes:
+            for size_name, price in (self.sizes or {}).items():
+                if price < 0:
+                    raise ValueError(
+                        f"size {size_name!r} price must be non-negative"
+                    )
+        return self
+
+
+class MenuItemUpdate(BaseModel):
+    """Body for PATCH /restaurants/me/menu/items/{category}/{name}.
+    All fields optional. Specifying both ``price`` and ``sizes``
+    together is an error; specifying one clears the other on save."""
+
+    model_config = {"extra": "forbid"}
+
+    new_name: Optional[str] = Field(default=None, min_length=1)
+    new_category: Optional[str] = Field(default=None, min_length=1)
+    description: Optional[str] = None
+    price: Optional[float] = Field(default=None, ge=0)
+    sizes: Optional[dict[str, float]] = None
+    available: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def _not_both_price_and_sizes(self):
+        if self.price is not None and self.sizes is not None:
+            raise ValueError("specify at most one of price or sizes")
+        return self
+
+
+class CategoryCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    key: str = Field(min_length=1, pattern=r"^[a-z0-9_]+$")
