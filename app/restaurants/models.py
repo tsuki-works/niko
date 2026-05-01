@@ -51,14 +51,55 @@ owns the menu CRUD UI and is the right time to tighten validation.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _validate_hhmm(value: str) -> str:
+    if not _HHMM.match(value):
+        raise ValueError(f"time must be HH:MM (24-hour), got {value!r}")
+    return value
+
+
+class DayHours(BaseModel):
+    """Open/close pair for a single day. Times are local to the
+    restaurant's timezone (Phase 1: America/Toronto for everyone;
+    multi-tz arrives with multi-location, deferred per
+    dashboard/CLAUDE.md)."""
+
+    open: str = Field(description="Local opening time, HH:MM 24-hour")
+    close: str = Field(description="Local closing time, HH:MM 24-hour")
+    closed: bool = False
+
+    @field_validator("open", "close")
+    @classmethod
+    def _check_format(cls, v: str) -> str:
+        return _validate_hhmm(v)
+
+
+class HoursStructured(BaseModel):
+    """Per-day open/close ranges. The dashboard's hours editor writes
+    this; the prompt builder reads ``Restaurant.hours`` (the str
+    rendering) so changing this without regenerating ``hours`` would
+    drift the LLM. ``RestaurantUpdate`` regenerates ``hours`` on save."""
+
+    mon: DayHours
+    tue: DayHours
+    wed: DayHours
+    thu: DayHours
+    fri: DayHours
+    sat: DayHours
+    sun: DayHours
 
 
 class Restaurant(BaseModel):
@@ -82,5 +123,9 @@ class Restaurant(BaseModel):
     # pickup-only restaurants — the system prompt branches accordingly.
     offers_delivery: bool = True
     recording_retention_days: int = Field(default=90, ge=1, le=3650)
+    hours_structured: Optional[HoursStructured] = None
+    # Used by Sprint 2.4 Track 2 (call transfer). E.164. None means
+    # the call falls through to voicemail without an attempted dial.
+    fallback_phone: Optional[str] = None
     created_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)

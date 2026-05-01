@@ -246,3 +246,52 @@ def test_restaurant_recording_retention_rejects_zero_or_negative():
             menu={"pizzas": [], "sides": [], "drinks": []},
             recording_retention_days=0,
         )
+
+
+def test_restaurant_has_optional_hours_structured_and_fallback_phone():
+    """New optional fields land additively — old Firestore docs without
+    them must still validate."""
+    from app.restaurants.models import (
+        DayHours,
+        HoursStructured,
+        Restaurant,
+    )
+
+    legacy_doc = {
+        "id": "demo",
+        "name": "Demo",
+        "display_phone": "+15551234567",
+        "twilio_phone": "+15551234567",
+        "address": "123 Main",
+        "hours": "Mon-Sun 11-22",
+    }
+    legacy = Restaurant.model_validate(legacy_doc)
+    assert legacy.hours_structured is None
+    assert legacy.fallback_phone is None
+
+    structured = HoursStructured(
+        mon=DayHours(open="11:00", close="22:00", closed=False),
+        tue=DayHours(open="11:00", close="22:00", closed=False),
+        wed=DayHours(open="11:00", close="22:00", closed=False),
+        thu=DayHours(open="11:00", close="22:00", closed=False),
+        fri=DayHours(open="11:00", close="23:00", closed=False),
+        sat=DayHours(open="11:00", close="23:00", closed=False),
+        sun=DayHours(open="11:00", close="22:00", closed=True),
+    )
+    full = Restaurant.model_validate(
+        {**legacy_doc, "hours_structured": structured.model_dump(), "fallback_phone": "+15559999999"},
+    )
+    assert full.hours_structured is not None
+    assert full.hours_structured.sun.closed is True
+    assert full.fallback_phone == "+15559999999"
+
+
+def test_day_hours_rejects_invalid_time_format():
+    from app.restaurants.models import DayHours
+
+    import pytest
+
+    with pytest.raises(Exception):
+        DayHours(open="11", close="22:00", closed=False)
+    with pytest.raises(Exception):
+        DayHours(open="25:00", close="22:00", closed=False)
