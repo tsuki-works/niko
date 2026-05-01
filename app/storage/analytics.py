@@ -14,11 +14,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from app.orders.models import Order, OrderStatus
 from app.storage import firestore as order_storage
+
+# Phase 1: hardcoded restaurant timezone, matching dashboard <LocalTime />
+# default. When multi-location lands, read from restaurants/{rid}.timezone.
+_LOCAL_TZ = ZoneInfo("America/Toronto")
 
 
 @dataclass(frozen=True)
@@ -29,9 +34,15 @@ class _Window:
 
 def _window(now: datetime | None = None) -> _Window:
     now = now or datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Compute "today" boundary in the restaurant's local timezone, then
+    # convert back to UTC for the Firestore query.
+    local_now = now.astimezone(_LOCAL_TZ)
+    local_today_start = local_now.replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    today_start_utc = local_today_start.astimezone(timezone.utc)
     return _Window(
-        today_start=today_start,
+        today_start=today_start_utc,
         seven_days_ago=now - timedelta(days=7),
     )
 
@@ -70,13 +81,31 @@ def summarize_orders(*, restaurant_id: str) -> OrderSummary:
             seven_day.append(o)
 
     if seven_day:
-        aov = round(sum(o.subtotal for o in seven_day) / len(seven_day), 2)
+        # AOV: average over orders that actually became real revenue
+        # opportunities — confirmed, preparing, ready, completed.
+        # Excludes IN_PROGRESS (call live) and CANCELLED (no revenue).
+        aov_orders = [
+            o for o in seven_day
+            if o.status in {
+                OrderStatus.CONFIRMED,
+                OrderStatus.PREPARING,
+                OrderStatus.READY,
+                OrderStatus.COMPLETED,
+            }
+        ]
+        if aov_orders:
+            aov = round(
+                sum(o.subtotal for o in aov_orders) / len(aov_orders), 2
+            )
+        else:
+            aov = 0.0
         completed = sum(
             1 for o in seven_day if o.status is OrderStatus.COMPLETED
         )
-        # Denominator: orders that reached confirmed (or beyond) — i.e.
-        # excluding still-in-progress and cancelled-before-confirm.
-        confirmed_or_later = sum(
+        # Denominator: orders that had a chance to complete — i.e. anything
+        # past the in-progress (call-live) state. Cancelled orders count
+        # against the rate.
+        had_chance_to_complete = sum(
             1
             for o in seven_day
             if o.status
@@ -85,10 +114,11 @@ def summarize_orders(*, restaurant_id: str) -> OrderSummary:
                 OrderStatus.PREPARING,
                 OrderStatus.READY,
                 OrderStatus.COMPLETED,
+                OrderStatus.CANCELLED,
             }
         )
         completion_rate = (
-            completed / confirmed_or_later if confirmed_or_later else 0.0
+            completed / had_chance_to_complete if had_chance_to_complete else 0.0
         )
     else:
         aov = 0.0

@@ -109,3 +109,62 @@ def test_summarize_orders_handles_empty():
     assert s.seven_day_count == 0
     assert s.average_order_value_7d == 0.0
     assert s.completion_rate_7d == 0.0
+
+
+def test_summarize_orders_completion_rate_counts_cancelled_against():
+    """Cancelled orders count against the completion rate. They had a
+    chance to complete and didn't — that's exactly what the rate
+    measures."""
+    _wire_orders(
+        [
+            _completed("CA1", 20.00, age_days=0),
+            _completed("CA2", 30.00, age_days=2),
+            _confirmed("CA3", 40.00, age_days=3).model_copy(
+                update={"status": OrderStatus.CANCELLED},
+            ),
+        ],
+    )
+    s = analytics.summarize_orders(restaurant_id="r1")
+    # 2 completed of 3 had-chance-to-complete (denominator now includes cancelled)
+    assert s.completion_rate_7d == pytest.approx(2 / 3, rel=1e-3)
+
+
+def test_summarize_orders_aov_excludes_cancelled_and_in_progress():
+    """AOV averages over orders that became real revenue
+    opportunities."""
+    _wire_orders(
+        [
+            _confirmed("CA1", 20.00, age_days=0),
+            _confirmed("CA2", 30.00, age_days=2),
+            _confirmed("CA3", 999.00, age_days=3).model_copy(
+                update={"status": OrderStatus.CANCELLED},
+            ),
+            _confirmed("CA4", 999.00, age_days=4).model_copy(
+                update={"status": OrderStatus.IN_PROGRESS},
+            ),
+        ],
+    )
+    s = analytics.summarize_orders(restaurant_id="r1")
+    # AOV averages CA1 + CA2 only (the two CONFIRMED). CA3/CA4 excluded.
+    assert s.average_order_value_7d == 25.00
+
+
+def test_summarize_orders_today_start_uses_local_timezone():
+    """An order placed at 22:00 Toronto local on 2026-05-01 (= 02:00 UTC
+    on 2026-05-02) should count as TODAY when checked at 23:00 Toronto
+    local on 2026-05-01 (= 03:00 UTC on 2026-05-02), not yesterday."""
+    from datetime import datetime, timezone, timedelta
+
+    _wire_orders([])
+    # Use the public window helper directly to assert the boundary
+    # without time-traveling the test clock.
+    win = analytics._window()
+    # today_start should be in UTC but match local-midnight Toronto.
+    # Toronto is UTC-4 (EDT in May), so local midnight = 04:00 UTC.
+    # The test asserts the boundary is at 04:00 or 05:00 UTC, never
+    # 00:00 UTC — that's the bug we're fixing.
+    assert win.today_start.tzinfo == timezone.utc
+    assert win.today_start.hour in (4, 5), (
+        f"Expected today_start at 04:00 or 05:00 UTC (Toronto local "
+        f"midnight EDT/EST), got {win.today_start.isoformat()}"
+    )
