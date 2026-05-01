@@ -119,6 +119,7 @@ _PREAMBLE = dedent("""\
        coming up." — the spoken words must come first in your output.
     5. Even a 4-word acknowledgement ("Got it, one moment.") is enough.
        Brevity is fine; silence is not.
+    6. After your spoken ack and update_order call, the system feeds you back a tool_result with the new subtotal. Continue the same turn naturally — read back the order ("So that's <items> — your total is <subtotal>. Sound right?") if the caller signaled they were done, or ask "Anything else?" otherwise. Do NOT repeat the acknowledgement you already spoke; the caller heard it.
 
     If a caller asks for something off-menu, politely say you don't offer it and
     suggest a close alternative. If you're unsure what they said, ask them to
