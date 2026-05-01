@@ -893,3 +893,63 @@ def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch, mock_pipeli
     # No chunk should be just "Got it,"
     assert "Got it," not in chunks_spoken
 
+
+# ---------------------------------------------------------------------------
+# first_tts_byte event (#152)
+# ---------------------------------------------------------------------------
+
+
+def test_first_tts_byte_event_emitted_on_turn(monkeypatch):
+    """A first_tts_byte Firestore event with a latency_seconds field is
+    emitted on the first speak() call of a turn. The existing first_audio
+    event must still be present — we ADD, not replace."""
+    from app.storage import call_sessions
+
+    fake_dg = AsyncMock()
+    fake_dg.send = AsyncMock()
+    fake_dg.finish = AsyncMock()
+
+    async def fake_open_dg(call_sid, restaurant_id, on_final):
+        return fake_dg
+
+    # A speak() stub that invokes on_first_byte so the callback fires
+    # as it would with a real TTS stream delivering its first chunk.
+    async def speak_with_callback(text, websocket, stream_sid, **kw):
+        cb = kw.get("on_first_byte")
+        if cb is not None:
+            cb()
+
+    recorded_events: list[dict] = []
+
+    def capture_bg_event(call_sid, restaurant_id, **kwargs):
+        recorded_events.append({"call_sid": call_sid, "rid": restaurant_id, **kwargs})
+
+    monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
+    monkeypatch.setattr("app.telephony.router.speak", speak_with_callback)
+    monkeypatch.setattr("app.telephony.router.stream_reply", _make_fake_stream_reply())
+    monkeypatch.setattr("app.telephony.router._bg_call_event", capture_bg_event)
+    monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    first_tts_events = [e for e in recorded_events if e.get("kind") == "first_tts_byte"]
+    assert len(first_tts_events) >= 1, (
+        f"expected at least one first_tts_byte event; got events: "
+        f"{[e.get('kind') for e in recorded_events]}"
+    )
+    evt = first_tts_events[0]
+    assert "detail" in evt
+    assert "latency_seconds" in evt["detail"], (
+        f"first_tts_byte event missing latency_seconds: {evt}"
+    )
+    assert isinstance(evt["detail"]["latency_seconds"], float)
+
+    # first_audio must still be emitted — backwards compatibility
+    first_audio_events = [e for e in recorded_events if e.get("kind") == "first_audio"]
+    assert len(first_audio_events) >= 1, "first_audio event must not be removed"
+

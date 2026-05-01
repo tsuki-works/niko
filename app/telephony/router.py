@@ -422,6 +422,23 @@ async def _run_llm_tts_turn(
             detail=detail,
         )
 
+    def _record_first_tts_byte() -> None:
+        # #152 — captures the actual moment the first audio byte arrives
+        # from Deepgram Aura, closing the gap that first_audio misses
+        # (first_audio fires before await speak(), hiding TTS network time).
+        latency = time.monotonic() - turn_start
+        logger.info(
+            "llm_turn first_tts_byte latency=%.3fs call_sid=%s",
+            latency,
+            state.call_sid,
+        )
+        _bg_call_event(
+            state.call_sid,
+            _state_rid(state),
+            kind="first_tts_byte",
+            detail={"latency_seconds": round(latency, 3)},
+        )
+
     try:
         async for event in stream_reply(
             transcript=transcript,
@@ -449,11 +466,15 @@ async def _run_llm_tts_turn(
                         if first_speak:
                             _record_first_audio()
                             first_speak = False
+                            on_first_byte = _record_first_tts_byte
+                        else:
+                            on_first_byte = None
                         await speak(
                             chunk,
                             websocket,
                             state.stream_sid,
                             recording_session=state.recording_session,
+                            on_first_byte=on_first_byte,
                         )
 
             elif event.final is not None:
@@ -462,11 +483,16 @@ async def _run_llm_tts_turn(
                 if remainder and state.stream_sid:
                     if first_speak:
                         _record_first_audio()
+                        first_speak = False
+                        on_first_byte = _record_first_tts_byte
+                    else:
+                        on_first_byte = None
                     await speak(
                         remainder,
                         websocket,
                         state.stream_sid,
                         recording_session=state.recording_session,
+                        on_first_byte=on_first_byte,
                     )
                 state.history = event.final.history
                 state.order = event.final.order

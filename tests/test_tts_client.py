@@ -283,3 +283,73 @@ async def test_speak_does_not_close_default_client(monkeypatch):
     await speak("Hello", ws, stream_sid="MZ123")
 
     fake_default.aclose.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# on_first_byte callback (#152)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_speak_invokes_on_first_byte_once(monkeypatch):
+    """on_first_byte fires exactly once when the first non-empty chunk
+    arrives, regardless of how many chunks follow."""
+    chunks = [b"\xab\xcd", b"\xef\x01", b"\x02"]
+    mock_client = make_mock_client(chunks)
+    ws = make_mock_websocket()
+
+    calls: list[float] = []
+
+    def cb():
+        calls.append(1.0)
+
+    await speak("Hello", ws, stream_sid="MZ123", client=mock_client, on_first_byte=cb)
+
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_speak_skips_on_first_byte_for_empty_chunks():
+    """Empty chunks must not trigger the callback — first non-empty
+    chunk wins. The existing aiter_bytes loop already skips empty
+    chunks before sending; verify the callback respects the same gate."""
+    chunks = [b"", b"", b"\xab", b"\xcd"]
+    mock_client = make_mock_client(chunks)
+    ws = make_mock_websocket()
+
+    calls: list[int] = []
+    await speak(
+        "Hello", ws, stream_sid="MZ123", client=mock_client,
+        on_first_byte=lambda: calls.append(1),
+    )
+    assert calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_speak_swallows_on_first_byte_exception():
+    """A buggy callback must not break the call. The chunk send still
+    happens; the exception is logged and discarded."""
+    chunks = [b"\xab"]
+    mock_client = make_mock_client(chunks)
+    ws = make_mock_websocket()
+
+    def bad_cb():
+        raise RuntimeError("boom")
+
+    # Should not raise
+    await speak(
+        "Hello", ws, stream_sid="MZ123", client=mock_client,
+        on_first_byte=bad_cb,
+    )
+    ws.send_json.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_speak_without_on_first_byte_works(monkeypatch):
+    """Callback is optional — omitting it is the existing behaviour."""
+    chunks = [b"\xab"]
+    mock_client = make_mock_client(chunks)
+    ws = make_mock_websocket()
+    # No on_first_byte kwarg
+    await speak("Hello", ws, stream_sid="MZ123", client=mock_client)
+    ws.send_json.assert_called_once()
