@@ -1,107 +1,298 @@
 """Unit tests for app.storage.recordings.
 
-Hot-path helpers (decode + interleave) are pure and need no mocking.
-Resumable-upload + signed-URL tests live further down and use mocks
-for google.cloud.storage.
+Hot-path helpers (mix + decode) are pure and need no mocking. The
+upload + signed-URL tests mock ``google.cloud.storage`` so no network
+call escapes.
 
 Note: stdlib ``audioop`` was removed in Python 3.13. Prod targets 3.12;
 locally we run 3.13, so tests use the module's own ``_ulaw2lin_16``
 helper for expected-value assertions instead of ``audioop.ulaw2lin``.
 """
 
-
-def test_compute_pcm_pair_sums_to_mono():
-    """Both sides are summed sample-wise into a single mono channel.
-    Output length = max(in, out) samples × 2 bytes per sample."""
-    import struct
-    from app.storage.recordings import _compute_pcm_pair, _ulaw2lin_16
-
-    inbound = b"\xff\xff"   # μ-law 0xFF ≈ silence (~0 PCM)
-    outbound = b"\x80\x80"  # mid-positive PCM
-    out = _compute_pcm_pair(inbound, outbound)
-
-    # 2 samples × 2 bytes (mono)
-    assert len(out) == 4
-    inbound_pcm = _ulaw2lin_16(inbound)
-    outbound_pcm = _ulaw2lin_16(outbound)
-    for i in range(2):
-        a = struct.unpack_from("<h", inbound_pcm, i * 2)[0]
-        b = struct.unpack_from("<h", outbound_pcm, i * 2)[0]
-        expected = max(-32768, min(32767, a + b))
-        actual = struct.unpack_from("<h", out, i * 2)[0]
-        assert actual == expected, f"sample {i}: expected {expected}, got {actual}"
+import struct
 
 
-def test_compute_pcm_pair_clips_on_overflow():
-    """When summed PCM overflows int16, the result clips at the boundary
-    instead of wrapping around (which would produce a nasty pop)."""
-    import struct
-    from app.storage.recordings import _compute_pcm_pair
-
-    # μ-law 0x80 decodes to a large positive PCM value; summing two of
-    # them overflows int16 → must clip at +32767.
-    inbound = b"\x80"
-    outbound = b"\x80"
-    out = _compute_pcm_pair(inbound, outbound)
-    assert len(out) == 2
-    sample = struct.unpack_from("<h", out, 0)[0]
-    assert sample == 32767
+# ---------------------------------------------------------------------------
+# _ulaw2lin_16 (forward-compat shim for audioop.ulaw2lin)
+# ---------------------------------------------------------------------------
 
 
-def test_compute_pcm_pair_pads_shorter_side_with_silence():
-    """Track-length skew: missing samples on one side become PCM silence
-    (zero) before the sum, so the longer side is preserved unchanged."""
-    import struct
-    from app.storage.recordings import _compute_pcm_pair, _ulaw2lin_16
+def test_ulaw2lin_16_decodes_two_bytes():
+    """Sanity: lookup-table decode produces 2 bytes per μ-law byte."""
+    from app.storage.recordings import _ulaw2lin_16
 
-    inbound = b"\xff" * 100    # 100 samples on caller side
-    outbound = b"\x40" * 500   # 500 samples on agent side, non-zero PCM
-    out = _compute_pcm_pair(inbound, outbound)
-
-    # Mono PCM-16: 500 samples × 2 bytes
-    assert len(out) == 500 * 2
-    # Past the 100-sample mark, output is just outbound (caller padded with 0).
-    outbound_pcm = _ulaw2lin_16(outbound)
-    for i in range(100, 500):
-        expected = struct.unpack_from("<h", outbound_pcm, i * 2)[0]
-        actual = struct.unpack_from("<h", out, i * 2)[0]
-        assert actual == expected, f"sample {i}: expected outbound={expected}, got {actual}"
+    assert len(_ulaw2lin_16(b"\xff\xff")) == 4   # 2 samples × 2 bytes
+    assert len(_ulaw2lin_16(b"")) == 0
 
 
-def test_compute_pcm_pair_handles_empty_chunks():
-    from app.storage.recordings import _compute_pcm_pair
+# ---------------------------------------------------------------------------
+# _mix_pcm_streams (pure mix at finalize)
+# ---------------------------------------------------------------------------
 
-    assert _compute_pcm_pair(b"", b"") == b""
+
+def test_mix_pcm_streams_sums_aligned_samples():
+    """Two PCM streams of equal length: each output sample is the
+    int16-clipped sum of the two input samples."""
+    from app.storage.recordings import _mix_pcm_streams
+
+    a = struct.pack("<hh", 100, 200)
+    b = struct.pack("<hh", 50, -25)
+    out = _mix_pcm_streams(a, b)
+
+    assert struct.unpack("<hh", out) == (150, 175)
+
+
+def test_mix_pcm_streams_clips_overflow():
+    """Sums above int16 max clip to 32767; sums below int16 min clip to -32768.
+    Prevents wrap-around pops when both speakers are loud at once."""
+    from app.storage.recordings import _mix_pcm_streams
+
+    a = struct.pack("<h", 30000)
+    b = struct.pack("<h", 30000)
+    assert struct.unpack("<h", _mix_pcm_streams(a, b))[0] == 32767
+
+    a = struct.pack("<h", -30000)
+    b = struct.pack("<h", -30000)
+    assert struct.unpack("<h", _mix_pcm_streams(a, b))[0] == -32768
+
+
+def test_mix_pcm_streams_pads_shorter_side_with_silence():
+    """Outbound is bursty (only during agent speech) while inbound is
+    continuous. Mixing pads the shorter side with zero PCM so the
+    longer side is preserved unchanged past the overlap."""
+    from app.storage.recordings import _mix_pcm_streams
+
+    inbound = struct.pack("<hhh", 100, 200, 300)
+    outbound = struct.pack("<h", 50)
+    out = _mix_pcm_streams(inbound, outbound)
+
+    assert struct.unpack("<hhh", out) == (150, 200, 300)
+
+
+def test_mix_pcm_streams_handles_empty():
+    from app.storage.recordings import _mix_pcm_streams
+
+    assert _mix_pcm_streams(b"", b"") == b""
+    a = struct.pack("<h", 42)
+    assert struct.unpack("<h", _mix_pcm_streams(a, b""))[0] == 42
+    assert struct.unpack("<h", _mix_pcm_streams(b"", a))[0] == 42
+
+
+# ---------------------------------------------------------------------------
+# Encoder
+# ---------------------------------------------------------------------------
 
 
 def test_make_encoder_is_mono():
     """Encoder is configured for mono input — the mix produced by
-    ``_compute_pcm_pair`` is a single channel."""
+    ``_mix_pcm_streams`` is a single channel."""
     from app.storage.recordings import _make_encoder
 
     enc = _make_encoder()
-    # 1 second of mono PCM silence: 8000 samples × 1 channel × 2 bytes
-    pcm = b"\x00" * (8000 * 2)
+    pcm = b"\x00" * (8000 * 2)   # 1 second of mono PCM silence
     mp3 = enc.encode(pcm)
     mp3 += enc.flush()
 
-    # Valid MP3 frame sync (11-bit 0x7FF). Second byte top 3 bits = 110/111.
     assert len(mp3) >= 2 and mp3[0] == 0xFF and (mp3[1] & 0xE0) == 0xE0, (
         f"no MP3 frame sync found in {bytes(mp3[:32])!r}"
     )
-    # 1 s at 32 kbps mono ≈ 4 KB; allow a wide range to keep stable.
     assert 500 < len(mp3) < 10000
 
 
-def test_begin_recording_creates_session_and_sets_custom_time(monkeypatch):
+# ---------------------------------------------------------------------------
+# begin_recording — pure-Python now, no GCS I/O
+# ---------------------------------------------------------------------------
+
+
+def test_begin_recording_creates_session_with_blob_name_and_retention():
+    """Session is created with the right blob path and retention.
+    No GCS calls at begin — the upload happens at finalize."""
+    from app.storage import recordings
+
+    session = recordings.begin_recording(
+        call_sid="CAtest", restaurant_id="rid1", retention_days=7
+    )
+
+    assert session.call_sid == "CAtest"
+    assert session.restaurant_id == "rid1"
+    assert session.blob_name == "rid1/CAtest.mp3"
+    assert session.retention_days == 7
+    assert session.broken is False
+    assert session.inbound_pcm == bytearray()
+    assert session.outbound_pcm == bytearray()
+
+
+# ---------------------------------------------------------------------------
+# append_chunks — buffers each side separately, with outbound alignment
+# ---------------------------------------------------------------------------
+
+
+def test_append_chunks_extends_inbound_buffer():
+    from app.storage import recordings
+
+    session = recordings.begin_recording(
+        call_sid="CAt", restaurant_id="rid", retention_days=90
+    )
+    recordings.append_chunks(session, b"\xff" * 8, b"")
+
+    # 8 μ-law bytes → 16 PCM bytes (2 bytes per sample)
+    assert len(session.inbound_pcm) == 16
+    assert len(session.outbound_pcm) == 0
+
+
+def test_append_chunks_pads_outbound_to_inbound_position():
+    """When an outbound (TTS) chunk arrives, it gets positioned at the
+    current inbound length first — that's how we keep the agent's voice
+    aligned to wall-clock time without per-chunk timestamps."""
+    from app.storage import recordings
+
+    session = recordings.begin_recording(
+        call_sid="CAt", restaurant_id="rid", retention_days=90
+    )
+    # Caller silence for "100 samples" arrives first.
+    recordings.append_chunks(session, b"\xff" * 100, b"")
+    assert len(session.inbound_pcm) == 200   # 100 samples × 2 bytes
+    assert len(session.outbound_pcm) == 0
+
+    # Now the agent says something — outbound chunk = 5 samples of TTS.
+    recordings.append_chunks(session, b"", b"\x80" * 5)
+
+    # Outbound buffer should now be: 100 samples of silence + 5 samples of TTS.
+    assert len(session.outbound_pcm) == (100 + 5) * 2
+    # First 100 samples are PCM silence (0).
+    for i in range(100):
+        assert struct.unpack_from("<h", session.outbound_pcm, i * 2)[0] == 0
+
+
+def test_append_chunks_skips_when_session_broken():
+    from app.storage import recordings
+
+    session = recordings.begin_recording(
+        call_sid="CAt", restaurant_id="rid", retention_days=90
+    )
+    session.broken = True
+    recordings.append_chunks(session, b"\xff" * 100, b"\x80" * 100)
+
+    assert session.inbound_pcm == bytearray()
+    assert session.outbound_pcm == bytearray()
+
+
+def test_append_chunks_handles_empty_payloads():
+    from app.storage import recordings
+
+    session = recordings.begin_recording(
+        call_sid="CAt", restaurant_id="rid", retention_days=90
+    )
+    recordings.append_chunks(session, b"", b"")
+
+    assert session.inbound_pcm == bytearray()
+    assert session.outbound_pcm == bytearray()
+
+
+# ---------------------------------------------------------------------------
+# finalize_recording — mix, encode, single-blob upload
+# ---------------------------------------------------------------------------
+
+
+def test_finalize_recording_mixes_encodes_and_uploads(monkeypatch):
+    """Happy path: buffers contain audio, finalize mixes them, encodes
+    once, uploads as a single blob, returns gs:// URL + duration."""
     from datetime import datetime, timedelta, timezone
     from app.storage import recordings
 
+    captured: dict = {}
+
     fake_blob = type("FakeBlob", (), {})()
-    fake_blob.create_resumable_upload_session = lambda content_type: (
-        "https://storage.googleapis.com/upload/session/fake"
-    )
     fake_blob.custom_time = None
+    def fake_upload(data, content_type):
+        captured["data"] = data
+        captured["content_type"] = content_type
+    fake_blob.upload_from_string = fake_upload
+
+    fake_bucket = type("FakeBucket", (), {})()
+    def get_blob(name):
+        captured["blob_name"] = name
+        return fake_blob
+    fake_bucket.blob = get_blob
+
+    fake_client = type("FakeClient", (), {})()
+    fake_client.bucket = lambda name: fake_bucket
+
+    monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
+
+    session = recordings.begin_recording(
+        call_sid="CAt", restaurant_id="rid", retention_days=7
+    )
+    # Simulate 1 second of overlapping audio: feed the agent (outbound)
+    # chunk *first*, while inbound is still empty, so the alignment
+    # logic doesn't shift it. Then feed 1 second of caller audio.
+    recordings.append_chunks(session, b"", b"\x80" * 8000)
+    recordings.append_chunks(session, b"\xff" * 8000, b"")
+
+    before = datetime.now(timezone.utc)
+    url, duration = recordings.finalize_recording(session)
+    after = datetime.now(timezone.utc)
+
+    assert url == "gs://niko-recordings/rid/CAt.mp3"
+    # 1 second of audio at 8 kHz mono.
+    assert duration == 1
+    assert captured["blob_name"] == "rid/CAt.mp3"
+    assert captured["content_type"] == "audio/mpeg"
+    # Output is real MP3 bytes
+    assert captured["data"][0] == 0xFF and (captured["data"][1] & 0xE0) == 0xE0
+    # custom_time is set to now() + retention_days
+    assert before + timedelta(days=7) - timedelta(seconds=2) <= fake_blob.custom_time <= after + timedelta(days=7)
+
+
+def test_finalize_recording_returns_empty_when_no_audio(monkeypatch):
+    """A session with no audio (call dropped before any media event)
+    returns ("", 0) without touching GCS."""
+    from app.storage import recordings
+
+    monkeypatch.setattr(
+        recordings, "_get_storage_client",
+        lambda: (_ for _ in ()).throw(AssertionError("must not touch GCS")),
+    )
+
+    session = recordings.begin_recording(
+        call_sid="CAt", restaurant_id="rid", retention_days=90
+    )
+    url, duration = recordings.finalize_recording(session)
+
+    assert url == ""
+    assert duration == 0
+
+
+def test_finalize_recording_skips_when_broken(monkeypatch):
+    from app.storage import recordings
+
+    monkeypatch.setattr(
+        recordings, "_get_storage_client",
+        lambda: (_ for _ in ()).throw(AssertionError("must not touch GCS on broken")),
+    )
+
+    session = recordings.begin_recording(
+        call_sid="CAt", restaurant_id="rid", retention_days=90
+    )
+    session.inbound_pcm.extend(b"\x00" * 100)
+    session.broken = True
+
+    url, duration = recordings.finalize_recording(session)
+    assert url == ""
+    assert duration == 0
+
+
+def test_finalize_recording_swallows_upload_failure(monkeypatch):
+    """If the upload fails, finalize logs and returns empty rather than
+    raising — the call lifecycle has already completed and we don't
+    want to crash the WS finally."""
+    from app.storage import recordings
+
+    fake_blob = type("FakeBlob", (), {})()
+    fake_blob.custom_time = None
+    def fake_upload(data, content_type):
+        raise RuntimeError("upload exploded")
+    fake_blob.upload_from_string = fake_upload
 
     fake_bucket = type("FakeBucket", (), {})()
     fake_bucket.blob = lambda name: fake_blob
@@ -111,209 +302,21 @@ def test_begin_recording_creates_session_and_sets_custom_time(monkeypatch):
 
     monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
 
-    before = datetime.now(timezone.utc)
     session = recordings.begin_recording(
-        call_sid="CAtest", restaurant_id="rid1", retention_days=7
+        call_sid="CAt", restaurant_id="rid", retention_days=90
     )
-    after = datetime.now(timezone.utc)
-
-    assert session.call_sid == "CAtest"
-    assert session.restaurant_id == "rid1"
-    assert session.blob_name == "rid1/CAtest.mp3"
-    assert session.upload_url == "https://storage.googleapis.com/upload/session/fake"
-    assert session.total_bytes_uploaded == 0
-    assert session.broken is False
-    assert before + timedelta(days=7) - timedelta(seconds=2) <= fake_blob.custom_time <= after + timedelta(days=7)
-
-
-def test_append_chunks_buffers_below_threshold(monkeypatch):
-    from app.storage import recordings
-
-    put_count = {"n": 0}
-
-    def fake_put(session, chunk_bytes, *, is_final, total):
-        put_count["n"] += 1
-
-    monkeypatch.setattr(recordings, "_put_chunk", fake_put)
-
-    session = recordings.RecordingUploadSession(
-        call_sid="CAt", restaurant_id="rid",
-        blob_name="rid/CAt.mp3", upload_url="https://fake",
-        encoder=recordings._make_encoder(),
-    )
-
-    # 50 ms of audio per side, repeated 10 times — well under 256 KB MP3.
-    inbound = b"\xff" * 400  # 50 ms at 8 kHz
-    outbound = b"\x00" * 400
-    for _ in range(10):
-        recordings.append_chunks(session, inbound, outbound)
-
-    assert put_count["n"] == 0
-    assert session.total_bytes_uploaded == 0
-    assert session.total_pcm_samples == 400 * 10
-    # encoder may or may not produce output for short bursts (LAME buffers
-    # internally before emitting frames); accept >= 0.
-    assert len(session.pending_mp3) >= 0
-
-
-def test_put_chunk_sends_content_range_open_for_non_final(monkeypatch):
-    from app.storage import recordings
-
-    calls: list[dict] = []
-
-    def fake_put(url, data, headers, timeout):
-        calls.append({"url": url, "data_len": len(data), "headers": headers})
-        return type("R", (), {"status_code": 200, "text": ""})()
-
-    monkeypatch.setattr(recordings.requests, "put", fake_put)
-
-    session = recordings.RecordingUploadSession(
-        call_sid="CAt", restaurant_id="rid",
-        blob_name="rid/CAt.mp3", upload_url="https://fake",
-        encoder=recordings._make_encoder(),
-    )
-
-    chunk = b"x" * 256 * 1024
-    recordings._put_chunk(session, chunk, is_final=False, total=None)
-
-    assert len(calls) == 1
-    assert calls[0]["url"] == "https://fake"
-    assert calls[0]["data_len"] == 256 * 1024
-    assert calls[0]["headers"]["Content-Range"] == "bytes 0-262143/*"
-    assert session.total_bytes_uploaded == 256 * 1024
-
-
-def test_put_chunk_retries_once_on_5xx(monkeypatch):
-    from app.storage import recordings
-
-    responses = iter([
-        type("R", (), {"status_code": 503, "text": "transient"})(),
-        type("R", (), {"status_code": 200, "text": ""})(),
-    ])
-    sleeps: list[float] = []
-    monkeypatch.setattr(recordings.time, "sleep", lambda s: sleeps.append(s))
-    monkeypatch.setattr(recordings.requests, "put", lambda *a, **kw: next(responses))
-
-    session = recordings.RecordingUploadSession(
-        call_sid="CAt", restaurant_id="rid",
-        blob_name="rid/CAt.mp3", upload_url="https://fake",
-        encoder=recordings._make_encoder(),
-    )
-
-    recordings._put_chunk(session, b"x" * 256 * 1024, is_final=False, total=None)
-
-    assert sleeps == [0.5]
-    assert session.broken is False
-    assert session.total_bytes_uploaded == 256 * 1024
-
-
-def test_put_chunk_marks_broken_after_two_5xx(monkeypatch):
-    from app.storage import recordings
-
-    monkeypatch.setattr(recordings.time, "sleep", lambda _s: None)
-    monkeypatch.setattr(
-        recordings.requests, "put",
-        lambda *a, **kw: type("R", (), {"status_code": 503, "text": "fail"})(),
-    )
-
-    session = recordings.RecordingUploadSession(
-        call_sid="CAt", restaurant_id="rid",
-        blob_name="rid/CAt.mp3", upload_url="https://fake",
-        encoder=recordings._make_encoder(),
-    )
-
-    recordings._put_chunk(session, b"x" * 256 * 1024, is_final=False, total=None)
-    assert session.broken is True
-    assert session.total_bytes_uploaded == 0
-
-
-def test_append_chunks_flushes_one_chunk_when_threshold_hit(monkeypatch):
-    from app.storage import recordings
-
-    chunks: list[tuple[int, bool]] = []
-
-    def fake_put(session, chunk, *, is_final, total):
-        chunks.append((len(chunk), is_final))
-        session.total_bytes_uploaded += len(chunk)
-
-    monkeypatch.setattr(recordings, "_put_chunk", fake_put)
-
-    session = recordings.RecordingUploadSession(
-        call_sid="CAt", restaurant_id="rid",
-        blob_name="rid/CAt.mp3", upload_url="https://fake",
-        encoder=recordings._make_encoder(),
-    )
-
-    # Force the pending buffer to cross 256 KB by pre-loading it; then a
-    # single small append triggers the flush loop.
-    session.pending_mp3.extend(b"x" * (256 * 1024 + 100))
-    recordings.append_chunks(session, b"\xff" * 8, b"\x00" * 8)
-
-    # Exactly one chunk of size 256 KB must have been PUT.
-    assert chunks == [(256 * 1024, False)]
-    assert len(session.pending_mp3) > 0  # leftover stays for next chunk
-
-
-def test_finalize_recording_sends_final_chunk_with_total_and_returns_url(monkeypatch):
-    from app.storage import recordings
-
-    captured: list[dict] = []
-
-    def fake_put(session, chunk, *, is_final, total):
-        captured.append({"len": len(chunk), "is_final": is_final, "total": total})
-        session.total_bytes_uploaded += len(chunk)
-
-    monkeypatch.setattr(recordings, "_put_chunk", fake_put)
-
-    session = recordings.RecordingUploadSession(
-        call_sid="CAt", restaurant_id="rid",
-        blob_name="rid/CAt.mp3", upload_url="https://fake",
-        encoder=recordings._make_encoder(),
-    )
-
-    # Simulate one prior chunk already uploaded.
-    session.total_bytes_uploaded = 256 * 1024
-    # Simulate 2 seconds of stereo audio captured.
-    session.total_pcm_samples = 2 * 8000
-    # Some bytes still pending for the final flush.
-    session.pending_mp3.extend(b"x" * 1234)
-
-    url, duration = recordings.finalize_recording(session)
-
-    assert len(captured) == 1
-    final = captured[0]
-    assert final["is_final"] is True
-    assert final["total"] is not None
-    assert duration == 2
-    assert url == "gs://niko-recordings/rid/CAt.mp3"
-
-
-def test_finalize_recording_with_zero_pcm_cancels_session(monkeypatch):
-    from app.storage import recordings
-
-    deleted: list[str] = []
-    monkeypatch.setattr(
-        recordings.requests, "delete",
-        lambda url, timeout: deleted.append(url) or type("R", (), {"status_code": 204})(),
-    )
-    # _put_chunk should NOT be called.
-    monkeypatch.setattr(
-        recordings, "_put_chunk",
-        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not PUT on empty session")),
-    )
-
-    session = recordings.RecordingUploadSession(
-        call_sid="CAt", restaurant_id="rid",
-        blob_name="rid/CAt.mp3",
-        upload_url="https://upload.googleapis.com/session/abc",
-        encoder=recordings._make_encoder(),
-    )
+    session.inbound_pcm.extend(b"\x00" * 1000)
 
     url, duration = recordings.finalize_recording(session)
 
     assert url == ""
     assert duration == 0
-    assert deleted == ["https://upload.googleapis.com/session/abc"]
+    assert session.broken is True
+
+
+# ---------------------------------------------------------------------------
+# delete_recording (unchanged from prior PRs)
+# ---------------------------------------------------------------------------
 
 
 def test_delete_recording_calls_blob_delete(monkeypatch):
@@ -358,6 +361,11 @@ def test_delete_recording_idempotent_on_404(monkeypatch):
     recordings.delete_recording(call_sid="CAt", restaurant_id="rid")
 
 
+# ---------------------------------------------------------------------------
+# generate_signed_url (unchanged from PR #138)
+# ---------------------------------------------------------------------------
+
+
 def test_generate_signed_url_uses_v4_get_30min_and_iam_signblob(monkeypatch):
     """Cloud Run runtime credentials (compute_engine.Credentials) lack a
     private key, so V4 signing must route through IAM signBlob. We pass
@@ -387,8 +395,6 @@ def test_generate_signed_url_uses_v4_get_30min_and_iam_signblob(monkeypatch):
 
     monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
 
-    # Stub google.auth.default + transport.requests.Request so the test
-    # never touches the metadata server.
     fake_creds = SimpleNamespace(
         service_account_email="runtime-sa@niko-tsuki.iam.gserviceaccount.com",
         token="oauth-access-token-fake",
@@ -406,8 +412,5 @@ def test_generate_signed_url_uses_v4_get_30min_and_iam_signblob(monkeypatch):
     assert captured["version"] == "v4"
     assert captured["method"] == "GET"
     assert captured["expiration"] == timedelta(minutes=30)
-    # IAM signBlob path
     assert captured["service_account_email"] == "runtime-sa@niko-tsuki.iam.gserviceaccount.com"
     assert captured["access_token"] == "oauth-access-token-fake"
-
-

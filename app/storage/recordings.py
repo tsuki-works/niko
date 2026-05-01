@@ -14,9 +14,6 @@ from __future__ import annotations
 
 import logging
 import struct
-import time
-
-import requests
 
 logger = logging.getLogger(__name__)
 
@@ -64,48 +61,6 @@ def _ulaw2lin_16(mu_law_bytes: bytes) -> bytes:
     return struct.pack(f"<{len(mu_law_bytes)}h", *(_ULAW_TABLE[b] for b in mu_law_bytes))
 
 
-def _compute_pcm_pair(inbound_mu_law: bytes, outbound_mu_law: bytes) -> bytes:
-    """Decode each μ-law track to 16-bit PCM, pad the shorter side with
-    PCM silence, and **mix** to a single mono channel by summing the
-    two streams sample-wise (clipped to int16 range). Returns mono
-    16-bit little-endian PCM ready to feed the MP3 encoder.
-
-    Mono mix is what restaurant operators actually want: one playback
-    that "sounds like a normal phone call." Stereo (caller=L, agent=R)
-    sounds disorienting and confuses operators who expect a single
-    speaker waveform. File size is also halved.
-
-    Pure function; no I/O. Keeps the hot-path math testable in isolation.
-    """
-    if not inbound_mu_law and not outbound_mu_law:
-        return b""
-
-    inbound_pcm = _ulaw2lin_16(inbound_mu_law)
-    outbound_pcm = _ulaw2lin_16(outbound_mu_law)
-
-    n_in = len(inbound_pcm) // 2
-    n_out = len(outbound_pcm) // 2
-    n = max(n_in, n_out)
-
-    inbound_pcm = inbound_pcm + b"\x00\x00" * (n - n_in)
-    outbound_pcm = outbound_pcm + b"\x00\x00" * (n - n_out)
-
-    # Sum each pair of int16 samples; clip to the int16 range so we
-    # never wrap around. Both sides talking simultaneously may clip
-    # briefly — acceptable for QA-grade phone audio.
-    out = bytearray(n * 2)
-    for i in range(n):
-        a = struct.unpack_from("<h", inbound_pcm, i * 2)[0]
-        b = struct.unpack_from("<h", outbound_pcm, i * 2)[0]
-        s = a + b
-        if s > 32767:
-            s = 32767
-        elif s < -32768:
-            s = -32768
-        struct.pack_into("<h", out, i * 2, s)
-    return bytes(out)
-
-
 import lameenc
 
 # Encoder constants. LAME quality levels are 0-9 (0 best, 9 worst).
@@ -114,7 +69,7 @@ import lameenc
 _MP3_BITRATE_KBPS = 32
 _MP3_QUALITY = 2
 _PCM_SAMPLE_RATE = 8000  # Twilio media is 8 kHz μ-law
-_PCM_CHANNELS = 1        # caller + agent summed to mono in _compute_pcm_pair
+_PCM_CHANNELS = 1        # caller + agent summed to mono in _mix_pcm_streams
 
 
 def _make_encoder() -> "lameenc.Encoder":
@@ -143,20 +98,27 @@ from app.config import settings
 
 @dataclass
 class RecordingUploadSession:
-    """Per-call state for a resumable GCS upload of an MP3 stream."""
+    """Per-call state for buffering raw PCM until finalize.
+
+    Inbound and outbound bytes arrive in *separate* ``append_chunks``
+    calls (one per WS media event for inbound; one per TTS chunk for
+    outbound). Encoding mid-call would force a time-multiplexed
+    concat — caller-bytes-then-agent-bytes — which sounds choppy
+    because it isn't a real overlap. Instead we buffer raw PCM for
+    each side, mix at finalize, then encode + upload in one shot.
+
+    Trade-off: one big PUT at the end vs streaming chunks. Lose
+    cross-pod-death durability (recording for that call is gone if
+    the pod dies before finalize). Acceptable for v1 since instance
+    death during a live WS is rare.
+    """
     call_sid: str
     restaurant_id: str
     blob_name: str
-    upload_url: str
-    encoder: "lameenc.Encoder"
-    pending_mp3: bytearray = field(default_factory=bytearray)
-    total_bytes_uploaded: int = 0
-    total_pcm_samples: int = 0  # per-channel sample count; drives duration
+    retention_days: int
+    inbound_pcm: bytearray = field(default_factory=bytearray)
+    outbound_pcm: bytearray = field(default_factory=bytearray)
     broken: bool = False
-
-
-# 256 KB — minimum non-final chunk size for GCS resumable uploads.
-_GCS_CHUNK_BYTES = 256 * 1024
 
 
 _storage_client_singleton: gcs.Client | None = None
@@ -173,25 +135,17 @@ def _get_storage_client() -> gcs.Client:
 def begin_recording(
     *, call_sid: str, restaurant_id: str, retention_days: int
 ) -> RecordingUploadSession:
-    """Create a new GCS resumable upload session for this call.
+    """Create a new buffering session for this call.
 
-    Sets the blob's ``custom_time`` to ``now() + retention_days`` so the
-    bucket lifecycle rule (``daysSinceCustomTime: 0``) deletes the blob
-    on its scheduled date — per-tenant retention without per-tenant
-    bucket rules.
+    No GCS I/O yet — the upload happens at finalize when the encoded
+    MP3 is ready. ``retention_days`` is stored on the session and
+    applied to the blob's ``custom_time`` at upload.
     """
-    blob_name = f"{restaurant_id}/{call_sid}.mp3"
-    bucket = _get_storage_client().bucket(settings.recordings_bucket)
-    blob = bucket.blob(blob_name)
-    upload_url = blob.create_resumable_upload_session(content_type="audio/mpeg")
-    blob.custom_time = datetime.now(timezone.utc) + timedelta(days=retention_days)
-
     return RecordingUploadSession(
         call_sid=call_sid,
         restaurant_id=restaurant_id,
-        blob_name=blob_name,
-        upload_url=upload_url,
-        encoder=_make_encoder(),
+        blob_name=f"{restaurant_id}/{call_sid}.mp3",
+        retention_days=retention_days,
     )
 
 
@@ -200,126 +154,105 @@ def append_chunks(
     inbound_mu_law: bytes,
     outbound_mu_law: bytes,
 ) -> None:
-    """Decode + interleave + encode + buffer; flush a chunk when the
-    pending MP3 buffer reaches the 256 KB GCS-minimum.
+    """Buffer raw PCM bytes for each side independently.
 
-    No-op once ``session.broken`` is True (set by `_put_chunk` after two
-    consecutive failures).
+    Inbound bytes flow continuously from the WS (~1 chunk per 20 ms);
+    outbound bytes only arrive while the agent is speaking. To keep
+    them aligned in time, every outbound chunk is preceded by silence
+    padding up to the current inbound length — so when we mix at
+    finalize, sample N on each side corresponds to ~the same wall-clock
+    moment.
     """
     if session.broken:
         return
 
-    pcm = _compute_pcm_pair(inbound_mu_law, outbound_mu_law)
-    if not pcm:
-        return
+    if inbound_mu_law:
+        session.inbound_pcm.extend(_ulaw2lin_16(inbound_mu_law))
 
-    # Track per-channel sample count for duration calc.
-    # Stereo PCM-16 = 4 bytes per (per-channel) sample-pair.
-    # Mono PCM-16 = 2 bytes per sample.
-    session.total_pcm_samples += len(pcm) // 2
-
-    mp3 = session.encoder.encode(pcm)
-    if mp3:
-        session.pending_mp3.extend(mp3)
-
-    while len(session.pending_mp3) >= _GCS_CHUNK_BYTES:
-        n = (len(session.pending_mp3) // _GCS_CHUNK_BYTES) * _GCS_CHUNK_BYTES
-        chunk = bytes(session.pending_mp3[:n])
-        del session.pending_mp3[:n]
-        _put_chunk(session, chunk, is_final=False, total=None)
+    if outbound_mu_law:
+        # Pad outbound to current inbound position so the agent's voice
+        # lands at roughly the wall-clock moment it was generated.
+        gap_bytes = len(session.inbound_pcm) - len(session.outbound_pcm)
+        if gap_bytes > 0:
+            session.outbound_pcm.extend(b"\x00\x00" * (gap_bytes // 2))
+        session.outbound_pcm.extend(_ulaw2lin_16(outbound_mu_law))
 
 
-def _put_chunk(
-    session: RecordingUploadSession,
-    chunk: bytes,
-    *,
-    is_final: bool,
-    total: int | None,
-) -> None:
-    """PUT one resumable-upload chunk to the session URL.
+def _mix_pcm_streams(inbound: bytes, outbound: bytes) -> bytes:
+    """Sample-wise sum of two int16 PCM streams, clipped to int16.
 
-    Builds the ``Content-Range`` header from the session's current
-    ``total_bytes_uploaded``. Retries once on 5xx with a 0.5 s pause; on
-    second failure, marks the session broken and stops further uploads.
-    GCS returns 308 ("Resume Incomplete") for a successful non-final
-    chunk and 200/201 for the final, so accept all three.
+    Pads the shorter side with PCM silence first so the result is the
+    full length of the longer side — important because the inbound
+    stream is continuous (Twilio sends silence frames too) but the
+    outbound stream is bursty (only present during agent speech).
     """
-    start = session.total_bytes_uploaded
-    end = start + len(chunk) - 1
-    total_str = str(total) if (is_final and total is not None) else "*"
-    headers = {"Content-Range": f"bytes {start}-{end}/{total_str}"}
+    n_in = len(inbound) // 2
+    n_out = len(outbound) // 2
+    n = max(n_in, n_out)
+    if n == 0:
+        return b""
+    inbound = inbound + b"\x00\x00" * (n - n_in)
+    outbound = outbound + b"\x00\x00" * (n - n_out)
 
-    for attempt in range(2):
-        try:
-            resp = requests.put(
-                session.upload_url, data=chunk, headers=headers, timeout=30.0
-            )
-        except Exception:
-            logger.exception(
-                "recording: chunk PUT raised call_sid=%s attempt=%d",
-                session.call_sid, attempt,
-            )
-            resp = None
+    out = bytearray(n * 2)
+    for i in range(n):
+        a = struct.unpack_from("<h", inbound, i * 2)[0]
+        b = struct.unpack_from("<h", outbound, i * 2)[0]
+        s = a + b
+        if s > 32767:
+            s = 32767
+        elif s < -32768:
+            s = -32768
+        struct.pack_into("<h", out, i * 2, s)
+    return bytes(out)
 
-        ok = resp is not None and resp.status_code in (200, 201, 308)
-        if ok:
-            session.total_bytes_uploaded += len(chunk)
-            return
-        if attempt == 0:
-            time.sleep(0.5)
-            continue
-        session.broken = True
-        logger.error(
-            "recording: chunk PUT failed twice — session broken call_sid=%s status=%s",
-            session.call_sid,
-            resp.status_code if resp else "(no response)",
-        )
-        return
+
+def _upload_blob(
+    *, blob_name: str, mp3_bytes: bytes, retention_days: int
+) -> None:
+    """One-shot blob upload with custom_time set for per-tenant retention."""
+    bucket = _get_storage_client().bucket(settings.recordings_bucket)
+    blob = bucket.blob(blob_name)
+    blob.custom_time = datetime.now(timezone.utc) + timedelta(days=retention_days)
+    blob.upload_from_string(mp3_bytes, content_type="audio/mpeg")
 
 
 def finalize_recording(
     session: RecordingUploadSession,
 ) -> tuple[str, int]:
-    """Flush the encoder + send the final chunk with a known total length.
+    """Mix the two PCM buffers, encode to MP3, upload as a single blob.
 
-    Returns ``(gs:// URL, duration_seconds)``. If the session never had
-    any audio (zero PCM samples), DELETEs the resumable session URL and
-    returns ``("", 0)`` so the caller can skip the Firestore write.
-    Returns ``("", 0)`` on a broken session too.
+    Returns ``(gs:// URL, duration_seconds)``. If no audio was captured
+    (empty session) or anything fails, returns ``("", 0)`` so the
+    caller can skip the Firestore write.
     """
     if session.broken:
         return ("", 0)
 
-    if session.total_pcm_samples == 0:
-        # No data — cancel the resumable session so GCS doesn't keep an
-        # orphan around for 7 days.
-        try:
-            requests.delete(session.upload_url, timeout=10.0)
-        except Exception:
-            logger.exception(
-                "recording: failed to cancel empty session call_sid=%s",
-                session.call_sid,
-            )
+    if not session.inbound_pcm and not session.outbound_pcm:
         return ("", 0)
 
-    # Flush the encoder tail. lameenc raises RuntimeError if flush() is
-    # called before any encode() call, so guard against that.
     try:
-        tail = session.encoder.flush()
-    except RuntimeError:
-        tail = b""
-    if tail:
-        session.pending_mp3.extend(tail)
+        mixed = _mix_pcm_streams(bytes(session.inbound_pcm), bytes(session.outbound_pcm))
+        if not mixed:
+            return ("", 0)
 
-    final_chunk = bytes(session.pending_mp3)
-    session.pending_mp3.clear()
-    total = session.total_bytes_uploaded + len(final_chunk)
+        encoder = _make_encoder()
+        mp3 = encoder.encode(mixed) + encoder.flush()
 
-    _put_chunk(session, final_chunk, is_final=True, total=total)
-    if session.broken:
+        _upload_blob(
+            blob_name=session.blob_name,
+            mp3_bytes=mp3,
+            retention_days=session.retention_days,
+        )
+    except Exception:
+        logger.exception(
+            "recording: finalize/upload failed call_sid=%s", session.call_sid
+        )
+        session.broken = True
         return ("", 0)
 
-    duration_seconds = session.total_pcm_samples // _PCM_SAMPLE_RATE
+    duration_seconds = (len(mixed) // 2) // _PCM_SAMPLE_RATE
     return (
         f"gs://{settings.recordings_bucket}/{session.blob_name}",
         duration_seconds,
