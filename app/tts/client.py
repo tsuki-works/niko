@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from fastapi import WebSocket
@@ -60,6 +60,7 @@ async def speak(
     *,
     client: Optional[httpx.AsyncClient] = None,
     recording_session: Optional[Any] = None,
+    on_first_byte: Optional[Callable[[], None]] = None,
 ) -> None:
     """Stream Deepgram Aura TTS audio back into the Twilio call.
 
@@ -81,6 +82,11 @@ async def speak(
                            inbound audio from Twilio, so the only way
                            to get the agent's voice into the recording is
                            to capture the bytes we generate ourselves.
+        on_first_byte:     Optional zero-arg sync callable fired exactly once
+                           when the first non-empty chunk arrives from
+                           Deepgram. Used by the router to measure actual
+                           TTS network latency (#152). Exceptions are
+                           swallowed so a buggy callback never breaks a call.
     """
     if not text.strip():
         return
@@ -102,6 +108,7 @@ async def speak(
     body = {"text": text}
 
     _client = client if client is not None else _get_client()
+    first_byte_fired = False
 
     async with _client.stream(
         "POST", url, headers=headers, params=params, json=body
@@ -122,6 +129,14 @@ async def speak(
         async for chunk in response.aiter_bytes():
             if not chunk:
                 continue
+            if not first_byte_fired and on_first_byte is not None:
+                first_byte_fired = True
+                try:
+                    on_first_byte()
+                except Exception:
+                    logger.exception(
+                        "tts: on_first_byte callback raised stream_sid=%s", stream_sid
+                    )
             payload = base64.b64encode(chunk).decode()
             try:
                 await websocket.send_json(
