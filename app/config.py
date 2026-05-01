@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None
 
+    # Twilio Messaging Service SID for outbound SMS. Shared 10DLC pool
+    # for pilot; per-tenant brand registration deferred until pilot ramp.
+    # Required when wiring outbound SMS in Sprint 2.4 (#7) — None elsewhere
+    # so importing this module doesn't crash environments that don't
+    # send SMS yet.
+    twilio_messaging_service_sid: Optional[str] = None
+
     # Public HTTPS base URL of this service (e.g. "https://niko-xyz.run.app"
     # or an ngrok URL locally). Required for Twilio recording callbacks:
     # the URL we hand Twilio when starting a recording must equal the URL
