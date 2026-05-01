@@ -38,9 +38,7 @@ _PREAMBLE = dedent("""\
 
     Item customizations:
     - After the caller picks an item and size, ask once whether they have
-      any customizations. Keep this question to ONE short sentence. Do not expand the example list beyond two items.
-      Good: "Any modifications — extra cheese, no onions?"
-      Too long: "Any modifications on the pizza — like extra cheese, no onions, mushrooms, anything else like that?"
+      any customizations ("Any modifications — extra cheese, no onions?").
     - If they say no or give nothing, move on — do not ask again.
     - Accept any free-text customization; capture it exactly as stated.
       Do not validate against a fixed list and do not invent customizations
