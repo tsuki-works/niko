@@ -1,0 +1,81 @@
+%% niko voice recording feature — current master (regenerate with mmdc -i voice-recording.mmd -o voice-recording.svg)
+flowchart TB
+  subgraph Capture["1) Capture during the call (two sources, separate paths)"]
+    direction TB
+    twilio["Twilio &lt;Connect&gt;&lt;Stream&gt; (default = inbound_track only)<br/>NOTE: &lt;Connect&gt; rejects tracks=both_tracks (PR #140)"]
+    router["telephony/router.py — WS /media-stream<br/>media event {track: 'inbound'}"]
+    speak["app/tts/client.py — speak()<br/>iterates Deepgram Aura mulaw chunks"]
+    state["_CallState.recording_session<br/>(begin_recording on 'start')"]
+
+    twilio -- "caller mulaw" --> router
+    router -- "append_chunks(session, payload, b'')" --> rec_in
+    speak -- "for each agent chunk:<br/>append_chunks(session, b'', chunk)" --> rec_out
+  end
+
+  subgraph Buffer["2) Buffer raw PCM (app/storage/recordings.py)"]
+    direction TB
+    rec_in["append_chunks — inbound branch<br/>μ-law → PCM-16 → session.inbound_pcm"]
+    rec_out["append_chunks — outbound branch<br/>silence-pad to len(inbound_pcm),<br/>then μ-law → PCM-16 → session.outbound_pcm"]
+    note["NO mid-call encoding or upload<br/>(mixing was choppy when interleaved live — PR #142)"]
+    rec_in --- note
+    rec_out --- note
+  end
+
+  subgraph Finalize["3) Mix + encode + upload (one shot at WS stop)"]
+    direction TB
+    mix["_mix_pcm_streams<br/>sample-wise sum, clip to int16 → MONO PCM"]
+    enc["_make_encoder + encoder.encode + .flush<br/>lameenc, MP3 32 kbps, 1 ch, 8 kHz"]
+    upload["_upload_blob → blob.upload_from_string<br/>custom_time = now + retention_days"]
+    gcs[("GCS bucket — {rid}/{sid}.mp3")]
+    final["finalize_recording → (gs://…, duration_s)"]
+
+    mix --> enc --> upload --> gcs
+    upload --> final
+  end
+
+  router -- "stop / WebSocketDisconnect / exception<br/>(finally block)" --> mix
+
+  subgraph Persist["4) Mark ready"]
+    cs[("Firestore call_sessions/{sid}<br/>recording_url=gs://…, duration_seconds")]
+    ev["events subcollection<br/>kind=recording_ready"]
+    cs --> ev
+  end
+  final -- "call_sessions.mark_recording_ready" --> cs
+
+  subgraph Playback["5) Playback in dashboard call detail page"]
+    direction TB
+    page["dashboard/app/(dashboard)/<br/>calls/[call_sid]/page.tsx"]
+    live["CallTimelineLive — onSnapshot(events)<br/>recording_available = true"]
+    audio["&lt;audio src='/api/calls/{sid}/recording'&gt;"]
+    nextroute["Next.js route handler<br/>app/api/calls/[call_sid]/recording/route.ts<br/>(forwards session cookie)"]
+    fastapi["FastAPI GET /calls/{sid}/recording<br/>current_tenant + cross-tenant 404"]
+    sign["recordings.generate_signed_url<br/>V4 GET, 30 min, via IAM signBlob<br/>(runtime SA needs serviceAccountTokenCreator on itself)"]
+    redirect{{"302 → storage.googleapis.com/…?X-Goog-Signature=…"}}
+  end
+
+  page --> live
+  ev -. "drives UI to mount &lt;audio&gt;" .-> live
+  live --> audio
+  audio -- "GET" --> nextroute --> fastapi --> sign --> redirect
+  redirect -- "browser follows 302" --> gcs
+  gcs -- "MP3 byte stream<br/>(supports Range)" --> audio
+
+  subgraph Delete["DELETE /calls/{sid}/recording (owner-only)"]
+    direction LR
+    del["FastAPI DELETE handler"]
+    delgcs["recordings.delete_recording<br/>(idempotent blob delete)"]
+    delcs["call_sessions.mark_recording_deleted<br/>clears recording_url, emits<br/>recording_deleted event"]
+    del --> delgcs --> gcs
+    del --> delcs --> cs
+  end
+
+  classDef ext fill:#fef3c7,stroke:#a16207,color:#1f2937;
+  classDef be  fill:#dbeafe,stroke:#1d4ed8,color:#0f172a;
+  classDef fe  fill:#dcfce7,stroke:#15803d,color:#0f172a;
+  classDef gcp fill:#ede9fe,stroke:#6d28d9,color:#0f172a;
+  classDef note fill:#fee2e2,stroke:#b91c1c,color:#0f172a;
+  class twilio ext;
+  class router,speak,state,rec_in,rec_out,mix,enc,upload,final,fastapi,sign,del,delgcs,delcs be;
+  class page,live,audio,nextroute fe;
+  class gcs,cs,ev gcp;
+  class redirect,note note;
