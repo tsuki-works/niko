@@ -419,3 +419,52 @@ def test_cancel_order_is_idempotent():
 
     assert updated.cancelled_at == original_ts
     _order_doc(client).set.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# SMS hook tests (Sprint 2.4 Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_persist_on_confirm_sends_order_confirmation_sms():
+    """After Firestore write, persist_on_confirm fires the SMS."""
+    from unittest.mock import patch
+    _fake_client()
+    order = _ready_pickup_order(caller_phone="+15551234567")
+
+    with patch("app.orders.lifecycle.send_sms") as fake_send:
+        persist_on_confirm(order)
+
+    fake_send.assert_called_once()
+    kwargs = fake_send.call_args.kwargs
+    assert kwargs["to"] == "+15551234567"
+    assert kwargs["idempotency_key"] == f"{order.call_sid}:order_confirmation"
+    assert kwargs["tenant_id"] == order.restaurant_id
+    assert "Pepperoni" in kwargs["body"]
+
+
+def test_persist_on_confirm_skips_sms_when_no_caller_phone():
+    """An order without caller_phone (rare — the call had bad caller ID)
+    is still confirmable; we just don't send a confirmation SMS."""
+    from unittest.mock import patch
+    _fake_client()
+    order = _ready_pickup_order(caller_phone=None)
+
+    with patch("app.orders.lifecycle.send_sms") as fake_send:
+        persist_on_confirm(order)
+
+    fake_send.assert_not_called()
+
+
+def test_persist_on_confirm_swallows_sms_errors():
+    """SMS is best-effort: a Twilio failure must not block the order
+    from persisting as confirmed."""
+    from unittest.mock import patch
+    from app.sms.exceptions import SmsError
+    _fake_client()
+    order = _ready_pickup_order(caller_phone="+15551234567")
+
+    with patch("app.orders.lifecycle.send_sms", side_effect=SmsError("boom")):
+        confirmed = persist_on_confirm(order)
+
+    assert confirmed.status is OrderStatus.CONFIRMED

@@ -80,3 +80,14 @@ def test_order_confirmation_under_sms_segment_limit():
     blowing past two segments."""
     body = order_confirmation(_sample_pickup_order())
     assert len(body) <= 320
+
+
+def test_order_confirmation_delivery_without_address_uses_safe_fallback():
+    """Defensive branch — if delivery_address is None (shouldn't happen
+    in practice given is_ready_to_confirm gate), render a safe fallback
+    rather than 'Delivery to None.'"""
+    order = _sample_delivery_order()
+    order.delivery_address = None
+    body = order_confirmation(order)
+    assert "None" not in body
+    assert "address on file" in body.lower()

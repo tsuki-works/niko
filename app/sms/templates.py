@@ -30,7 +30,13 @@ def order_confirmation(order: Order) -> str:
     lines.append(f"Total: ${order.subtotal:.2f}")
 
     if order.order_type is OrderType.DELIVERY:
-        lines.append(f"Delivery to {order.delivery_address}.")
+        if order.delivery_address:
+            lines.append(f"Delivery to {order.delivery_address}.")
+        else:
+            # Defensive: ``Order.is_ready_to_confirm`` already requires
+            # delivery_address for delivery orders. This guards against
+            # future caller paths that skip that gate.
+            lines.append("Delivery — address on file.")
     else:
         lines.append("Pickup at the restaurant.")
 

@@ -15,10 +15,15 @@ the Phase 1 demo.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from app.orders.models import Order, OrderStatus
+from app.sms import SmsError, send_sms
+from app.sms.templates import order_confirmation as render_order_confirmation
 from app.storage import firestore as order_storage
+
+_log = logging.getLogger(__name__)
 
 
 class OrderNotReadyError(ValueError):
@@ -63,6 +68,25 @@ def persist_on_confirm(order: Order) -> Order:
     )
 
     order_storage.save_order(confirmed_order)
+
+    if confirmed_order.caller_phone:
+        try:
+            send_sms(
+                to=confirmed_order.caller_phone,
+                body=render_order_confirmation(confirmed_order),
+                idempotency_key=f"{confirmed_order.call_sid}:order_confirmation",
+                tenant_id=confirmed_order.restaurant_id,
+            )
+        except SmsError as exc:
+            # Best-effort: SMS failure must not roll back the order.
+            # Tablet UX still shows the order; owner can resend manually
+            # post-pilot if it matters.
+            _log.warning(
+                "order_confirmation SMS failed for %s: %s",
+                confirmed_order.call_sid,
+                exc,
+            )
+
     return confirmed_order
 
 
