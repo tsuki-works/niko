@@ -238,6 +238,11 @@ def test_finalize_recording_mixes_encodes_and_uploads(monkeypatch):
     assert duration == 1
     assert captured["blob_name"] == "rid/CAt.mp3"
     assert captured["content_type"] == "audio/mpeg"
+    # google-cloud-storage's upload_from_string rejects bytearray
+    # ("could not be converted to bytes") so finalize MUST cast to bytes
+    # before handing off. Catching that here would have prevented the
+    # bug shipped in the first cut of this PR.
+    assert isinstance(captured["data"], bytes)
     # Output is real MP3 bytes
     assert captured["data"][0] == 0xFF and (captured["data"][1] & 0xE0) == 0xE0
     # custom_time is set to now() + retention_days
