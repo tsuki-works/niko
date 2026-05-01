@@ -130,3 +130,27 @@ def test_patch_restaurant_validates_fallback_phone_format(client: TestClient):
     # rejected.
     resp = client.patch("/restaurants/me", json={"fallback_phone": "abc"})
     assert resp.status_code == 422
+
+
+def test_patch_restaurant_403_for_non_owner(client: TestClient, fake_tenant: Tenant):
+    """Staff and other non-owner roles cannot edit settings."""
+    import dataclasses
+
+    from app.auth.dependency import current_tenant
+
+    staff = dataclasses.replace(fake_tenant, role="staff")
+    app.dependency_overrides[current_tenant] = lambda: staff
+
+    _wire_storage(_existing_doc())
+    resp = client.patch("/restaurants/me", json={"name": "X"})
+    assert resp.status_code == 403
+
+
+def test_patch_restaurant_rejects_empty_strings(client: TestClient):
+    """Setting name/address/display_phone to empty string via PATCH must
+    fail validation rather than break the LLM prompt."""
+    _wire_storage(_existing_doc())
+
+    for field in ("name", "address", "display_phone"):
+        resp = client.patch("/restaurants/me", json={field: ""})
+        assert resp.status_code == 422, f"{field} empty should 422"

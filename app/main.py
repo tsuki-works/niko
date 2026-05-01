@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.auth import Tenant, current_tenant
 from app.restaurants.hours import render_hours_text
@@ -95,9 +95,9 @@ class RestaurantUpdate(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    name: Optional[str] = None
-    display_phone: Optional[str] = None
-    address: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1)
+    display_phone: Optional[str] = Field(default=None, min_length=1)
+    address: Optional[str] = Field(default=None, min_length=1)
     hours_structured: Optional[HoursStructured] = None
     fallback_phone: Optional[str] = None
     offers_delivery: Optional[bool] = None
@@ -122,6 +122,11 @@ def patch_restaurant(
     """Apply an owner-driven update to the calling tenant's Restaurant
     doc. Owner-editable fields only — id and twilio_phone are not
     patchable here (provisioning concerns)."""
+    if tenant.role != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="owner role required to edit restaurant settings",
+        )
     restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
     if restaurant is None:
         raise HTTPException(status_code=404, detail="restaurant not found")
@@ -137,13 +142,17 @@ def patch_restaurant(
 
     # If hours_structured was set, regenerate hours text so the prompt
     # builder reflects the new schedule on the next call.
-    if update.hours_structured is not None:
-        updated = updated.model_copy(
-            update={"hours": render_hours_text(update.hours_structured)},
-        )
+    if "hours_structured" in update.model_fields_set:
+        if update.hours_structured is not None:
+            updated = updated.model_copy(
+                update={"hours": render_hours_text(update.hours_structured)},
+            )
+        # else: hours_structured was explicitly cleared. Leave hours: str
+        # alone for now — clearing structured hours doesn't necessarily
+        # mean the prompt-builder string should change. Revisit if a
+        # "clear hours" UX surfaces.
 
-    restaurants_storage.save_restaurant(updated)
-    restaurants_storage.clear_cache()
+    restaurants_storage.save_restaurant(updated)  # also refreshes the in-process cache for this rid
     return updated.model_dump(mode="json")
 
 
