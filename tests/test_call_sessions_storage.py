@@ -11,6 +11,7 @@ arbitrary path segments so tests can assert both writes landed.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -369,3 +370,80 @@ def test_mark_recording_deleted_clears_url_and_emits_event(monkeypatch):
     assert len(events) == 2
     for ev in events:
         assert ev["kind"] == "recording_deleted"
+
+
+def test_mark_transfer_attempted_writes_status_to_both_paths():
+    """Transfer status patches the call session and emits an event."""
+    fs = MagicMock()
+    call_sessions.set_client(fs)
+
+    call_sessions.mark_transfer_attempted(
+        "CAxfer",
+        "r1",
+        status="answered",
+        fallback_phone="+15551234567",
+    )
+
+    legacy_update = fs.collection.return_value.document.return_value.update
+    nested_update = (
+        fs.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .document.return_value
+        .update
+    )
+    assert legacy_update.called
+    assert nested_update.called
+    payload = legacy_update.call_args.args[0]
+    assert payload["transfer_attempted"] is True
+    assert payload["transfer_status"] == "answered"
+
+
+def test_mark_voicemail_left_sets_recording_url_and_transcript():
+    fs = MagicMock()
+    call_sessions.set_client(fs)
+
+    call_sessions.mark_voicemail_left(
+        "CAvm",
+        "r1",
+        recording_url="gs://bucket/path.mp3",
+        recording_sid="REabc",
+        duration_seconds=42,
+        transcript=None,
+    )
+
+    nested_update = (
+        fs.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .document.return_value
+        .update
+    )
+    payload = nested_update.call_args.args[0]
+    assert payload["voicemail_recording_url"] == "gs://bucket/path.mp3"
+    assert payload["voicemail_recording_sid"] == "REabc"
+    assert payload["voicemail_duration_seconds"] == 42
+
+
+def test_update_voicemail_transcript_patches_transcript():
+    fs = MagicMock()
+    call_sessions.set_client(fs)
+
+    call_sessions.update_voicemail_transcript(
+        "CAvm",
+        "r1",
+        transcript="Hi please call me back",
+    )
+
+    legacy_update = fs.collection.return_value.document.return_value.update
+    nested_update = (
+        fs.collection.return_value
+        .document.return_value
+        .collection.return_value
+        .document.return_value
+        .update
+    )
+    assert legacy_update.called
+    assert nested_update.called
+    legacy_payload = legacy_update.call_args.args[0]
+    assert legacy_payload["voicemail_transcript"] == "Hi please call me back"

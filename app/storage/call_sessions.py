@@ -292,6 +292,114 @@ def mark_recording_deleted(call_sid: str, restaurant_id: str) -> None:
         )
 
 
+def mark_transfer_attempted(
+    call_sid: str,
+    restaurant_id: str,
+    *,
+    status: str,  # "answered" | "no_answer" | "busy" | "failed" | "skipped"
+    fallback_phone: Optional[str] = None,
+) -> None:
+    """Stamp the call session with transfer outcome + emit a
+    ``transfer_attempted`` event. Mirrors ``mark_recording_ready``'s
+    dual-write shape."""
+    ts = _now()
+    patch = {
+        "transfer_attempted": True,
+        "transfer_status": status,
+        "transfer_initiated_at": ts,
+        "last_event_at": ts,
+    }
+    event = {
+        "timestamp": ts,
+        "kind": "transfer_attempted",
+        "text": "",
+        "detail": {"status": status, "fallback_phone": fallback_phone},
+    }
+    try:
+        client = _get_client()
+        legacy = _legacy_parent(client, call_sid)
+        legacy.update(patch)
+        legacy.collection(_EVENTS_SUBCOLLECTION).add(event)
+
+        nested = _nested_parent(client, restaurant_id, call_sid)
+        nested.update(patch)
+        nested.collection(_EVENTS_SUBCOLLECTION).add(event)
+    except Exception:
+        logger.exception(
+            "call_sessions: mark_transfer_attempted failed call_sid=%s",
+            call_sid,
+        )
+
+
+def mark_voicemail_left(
+    call_sid: str,
+    restaurant_id: str,
+    *,
+    recording_url: str,
+    recording_sid: str,
+    duration_seconds: int,
+    transcript: Optional[str],
+) -> None:
+    """Stamp the call session with voicemail recording metadata + emit
+    a ``voicemail_left`` event."""
+    ts = _now()
+    patch = {
+        "voicemail_recording_url": recording_url,
+        "voicemail_recording_sid": recording_sid,
+        "voicemail_duration_seconds": duration_seconds,
+        "voicemail_transcript": transcript,
+        "voicemail_recorded_at": ts,
+        "last_event_at": ts,
+    }
+    event = {
+        "timestamp": ts,
+        "kind": "voicemail_left",
+        "text": transcript or "",
+        "detail": {
+            "recording_sid": recording_sid,
+            "duration_seconds": duration_seconds,
+        },
+    }
+    try:
+        client = _get_client()
+        legacy = _legacy_parent(client, call_sid)
+        legacy.update(patch)
+        legacy.collection(_EVENTS_SUBCOLLECTION).add(event)
+
+        nested = _nested_parent(client, restaurant_id, call_sid)
+        nested.update(patch)
+        nested.collection(_EVENTS_SUBCOLLECTION).add(event)
+    except Exception:
+        logger.exception(
+            "call_sessions: mark_voicemail_left failed call_sid=%s",
+            call_sid,
+        )
+
+
+def update_voicemail_transcript(
+    call_sid: str,
+    restaurant_id: str,
+    *,
+    transcript: str,
+) -> None:
+    """Patch the voicemail transcript after Twilio's transcribeCallback
+    fires (out-of-band from the recording-ready callback)."""
+    ts = _now()
+    patch = {
+        "voicemail_transcript": transcript,
+        "last_event_at": ts,
+    }
+    try:
+        client = _get_client()
+        _legacy_parent(client, call_sid).update(patch)
+        _nested_parent(client, restaurant_id, call_sid).update(patch)
+    except Exception:
+        logger.exception(
+            "call_sessions: update_voicemail_transcript failed call_sid=%s",
+            call_sid,
+        )
+
+
 def get_session(
     call_sid: str, restaurant_id: str
 ) -> Optional[dict[str, Any]]:
