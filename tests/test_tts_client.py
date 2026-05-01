@@ -158,3 +158,59 @@ async def test_speak_uses_configured_model_and_mulaw_format():
     assert kwargs["params"]["container"] == "none"
     assert kwargs["headers"]["Authorization"] == "Token test-key"
     assert kwargs["json"] == {"text": "Hello"}
+
+
+@pytest.mark.asyncio
+async def test_speak_feeds_recording_session_each_chunk(monkeypatch):
+    """When ``recording_session`` is passed, each TTS chunk is also fed
+    into the recording's outbound side via ``append_chunks``. This is
+    how the agent's voice gets into the recording — Twilio's
+    ``<Connect><Stream>`` only sends us inbound audio, so we capture
+    the bytes we generate ourselves."""
+    chunks = [b"\xab\xcd", b"\xef\x01\x02", b"\x03"]
+    client = make_mock_client(chunks)
+    ws = make_mock_websocket()
+    fake_session = MagicMock(broken=False)
+
+    captured: list[tuple] = []
+
+    def fake_append(session, inbound, outbound):
+        captured.append((session, inbound, outbound))
+
+    monkeypatch.setattr("app.storage.recordings.append_chunks", fake_append)
+
+    await speak(
+        "Hello",
+        ws,
+        stream_sid="MZ123",
+        client=client,
+        recording_session=fake_session,
+    )
+
+    # One append_chunks call per TTS chunk. inbound side is always
+    # empty (caller side is captured separately by the WS handler).
+    assert len(captured) == 3
+    for (session, inbound, outbound), expected_chunk in zip(captured, chunks):
+        assert session is fake_session
+        assert inbound == b""
+        assert outbound == expected_chunk
+
+
+@pytest.mark.asyncio
+async def test_speak_without_recording_session_skips_append(monkeypatch):
+    """If no recording session is passed, append_chunks is never called.
+    Defensive: the storage module's import should not be required when
+    recording is disabled or unavailable."""
+    chunks = [b"\xab", b"\xcd"]
+    client = make_mock_client(chunks)
+    ws = make_mock_websocket()
+
+    called: list = []
+    monkeypatch.setattr(
+        "app.storage.recordings.append_chunks",
+        lambda *a, **kw: called.append(a),
+    )
+
+    await speak("Hello", ws, stream_sid="MZ123", client=client)
+
+    assert called == []

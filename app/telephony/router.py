@@ -330,7 +330,12 @@ async def _silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
         logger.info("silence timeout call_sid=%s", state.call_sid)
         _bg_call_event(state.call_sid, _state_rid(state), kind="silence_timeout")
         if state.stream_sid:
-            await speak(SILENCE_PROMPT, websocket, state.stream_sid)
+            await speak(
+                SILENCE_PROMPT,
+                websocket,
+                state.stream_sid,
+                recording_session=state.recording_session,
+            )
     except asyncio.CancelledError:
         pass
 
@@ -400,7 +405,12 @@ async def _run_llm_tts_turn(
                         if first_speak:
                             _record_first_audio()
                             first_speak = False
-                        await speak(chunk, websocket, state.stream_sid)
+                        await speak(
+                            chunk,
+                            websocket,
+                            state.stream_sid,
+                            recording_session=state.recording_session,
+                        )
 
             elif event.final is not None:
                 remainder = "".join(text_buffer).strip()
@@ -408,7 +418,12 @@ async def _run_llm_tts_turn(
                 if remainder and state.stream_sid:
                     if first_speak:
                         _record_first_audio()
-                    await speak(remainder, websocket, state.stream_sid)
+                    await speak(
+                        remainder,
+                        websocket,
+                        state.stream_sid,
+                        recording_session=state.recording_session,
+                    )
                 state.history = event.final.history
                 state.order = event.final.order
                 full_reply = "".join(full_reply_parts).strip()
@@ -664,6 +679,7 @@ async def media_stream(websocket: WebSocket) -> None:
                         f"Test build {settings.commit_sha[:7]}.",
                         websocket,
                         state.stream_sid,
+                        recording_session=state.recording_session,
                     )
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)

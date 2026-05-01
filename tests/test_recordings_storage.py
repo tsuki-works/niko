@@ -10,41 +10,62 @@ helper for expected-value assertions instead of ``audioop.ulaw2lin``.
 """
 
 
-def test_compute_pcm_pair_interleaves_lr():
+def test_compute_pcm_pair_sums_to_mono():
+    """Both sides are summed sample-wise into a single mono channel.
+    Output length = max(in, out) samples × 2 bytes per sample."""
+    import struct
     from app.storage.recordings import _compute_pcm_pair, _ulaw2lin_16
 
-    # 2 μ-law samples per side. μ-law 0xFF = silence ≈ 0 PCM; 0x00 = max negative.
-    inbound = b"\xff\xff"
-    outbound = b"\x00\x00"
+    inbound = b"\xff\xff"   # μ-law 0xFF ≈ silence (~0 PCM)
+    outbound = b"\x80\x80"  # mid-positive PCM
     out = _compute_pcm_pair(inbound, outbound)
 
-    # 2 samples × 2 channels × 2 bytes = 8 bytes, L then R per sample.
-    assert len(out) == 8
+    # 2 samples × 2 bytes (mono)
+    assert len(out) == 4
     inbound_pcm = _ulaw2lin_16(inbound)
     outbound_pcm = _ulaw2lin_16(outbound)
-    # Sample 0: L = inbound[0:2], R = outbound[0:2]
-    assert out[0:2] == inbound_pcm[0:2]
-    assert out[2:4] == outbound_pcm[0:2]
-    # Sample 1: L = inbound[2:4], R = outbound[2:4]
-    assert out[4:6] == inbound_pcm[2:4]
-    assert out[6:8] == outbound_pcm[2:4]
+    for i in range(2):
+        a = struct.unpack_from("<h", inbound_pcm, i * 2)[0]
+        b = struct.unpack_from("<h", outbound_pcm, i * 2)[0]
+        expected = max(-32768, min(32767, a + b))
+        actual = struct.unpack_from("<h", out, i * 2)[0]
+        assert actual == expected, f"sample {i}: expected {expected}, got {actual}"
+
+
+def test_compute_pcm_pair_clips_on_overflow():
+    """When summed PCM overflows int16, the result clips at the boundary
+    instead of wrapping around (which would produce a nasty pop)."""
+    import struct
+    from app.storage.recordings import _compute_pcm_pair
+
+    # μ-law 0x80 decodes to a large positive PCM value; summing two of
+    # them overflows int16 → must clip at +32767.
+    inbound = b"\x80"
+    outbound = b"\x80"
+    out = _compute_pcm_pair(inbound, outbound)
+    assert len(out) == 2
+    sample = struct.unpack_from("<h", out, 0)[0]
+    assert sample == 32767
 
 
 def test_compute_pcm_pair_pads_shorter_side_with_silence():
-    from app.storage.recordings import _compute_pcm_pair
+    """Track-length skew: missing samples on one side become PCM silence
+    (zero) before the sum, so the longer side is preserved unchanged."""
+    import struct
+    from app.storage.recordings import _compute_pcm_pair, _ulaw2lin_16
 
-    inbound = b"\xff" * 100   # 100 μ-law samples
-    outbound = b"\x00" * 500  # 500 μ-law samples
+    inbound = b"\xff" * 100    # 100 samples on caller side
+    outbound = b"\x40" * 500   # 500 samples on agent side, non-zero PCM
     out = _compute_pcm_pair(inbound, outbound)
 
-    # 500 samples × 2 channels × 2 bytes
-    assert len(out) == 500 * 2 * 2
-    # Past the inbound's 100-sample mark, the L channel is PCM silence (\x00\x00).
+    # Mono PCM-16: 500 samples × 2 bytes
+    assert len(out) == 500 * 2
+    # Past the 100-sample mark, output is just outbound (caller padded with 0).
+    outbound_pcm = _ulaw2lin_16(outbound)
     for i in range(100, 500):
-        l_offset = i * 4
-        assert out[l_offset:l_offset + 2] == b"\x00\x00", (
-            f"L sample {i} not silent"
-        )
+        expected = struct.unpack_from("<h", outbound_pcm, i * 2)[0]
+        actual = struct.unpack_from("<h", out, i * 2)[0]
+        assert actual == expected, f"sample {i}: expected outbound={expected}, got {actual}"
 
 
 def test_compute_pcm_pair_handles_empty_chunks():
@@ -53,23 +74,23 @@ def test_compute_pcm_pair_handles_empty_chunks():
     assert _compute_pcm_pair(b"", b"") == b""
 
 
-def test_make_encoder_returns_lame_encoder_at_32kbps():
+def test_make_encoder_is_mono():
+    """Encoder is configured for mono input — the mix produced by
+    ``_compute_pcm_pair`` is a single channel."""
     from app.storage.recordings import _make_encoder
 
     enc = _make_encoder()
-    # Encode 1 second of stereo PCM silence — 16000 samples × 2 channels × 2 bytes.
-    pcm = b"\x00" * (16000 * 2 * 2)
+    # 1 second of mono PCM silence: 8000 samples × 1 channel × 2 bytes
+    pcm = b"\x00" * (8000 * 2)
     mp3 = enc.encode(pcm)
     mp3 += enc.flush()
 
-    # Output must start with an MP3 frame sync word (11-bit 0x7FF sync).
-    # The second byte's top 3 bits must be 110 or 111, so the second byte
-    # is in range 0xE0-0xFF. lameenc may emit MPEG-1 (0xFF 0xFx) or
-    # MPEG-2 (0xFF 0xEx) depending on sample rate; both are valid MP3.
+    # Valid MP3 frame sync (11-bit 0x7FF). Second byte top 3 bits = 110/111.
     assert len(mp3) >= 2 and mp3[0] == 0xFF and (mp3[1] & 0xE0) == 0xE0, (
         f"no MP3 frame sync found in {bytes(mp3[:32])!r}"
     )
-    assert 1000 < len(mp3) < 10000
+    # 1 s at 32 kbps mono ≈ 4 KB; allow a wide range to keep stable.
+    assert 500 < len(mp3) < 10000
 
 
 def test_begin_recording_creates_session_and_sets_custom_time(monkeypatch):

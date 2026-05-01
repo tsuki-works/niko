@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from fastapi import WebSocket
@@ -42,6 +42,7 @@ async def speak(
     stream_sid: str,
     *,
     client: Optional[httpx.AsyncClient] = None,
+    recording_session: Optional[Any] = None,
 ) -> None:
     """Stream Deepgram Aura TTS audio back into the Twilio call.
 
@@ -51,10 +52,18 @@ async def speak(
     immediately, keeping latency low.
 
     Args:
-        text:       LLM reply text to synthesize.
-        websocket:  Active Twilio Media Streams WebSocket.
-        stream_sid: Twilio streamSid from the ``start`` event.
-        client:     Optional injected httpx.AsyncClient (for unit tests).
+        text:              LLM reply text to synthesize.
+        websocket:         Active Twilio Media Streams WebSocket.
+        stream_sid:        Twilio streamSid from the ``start`` event.
+        client:            Optional injected httpx.AsyncClient (for unit tests).
+        recording_session: Optional ``RecordingUploadSession`` from
+                           ``app.storage.recordings``. When set, each TTS
+                           chunk is also fed into the recording's
+                           outbound side via ``append_chunks(session, b"",
+                           chunk)``. ``<Connect><Stream>`` only sends us
+                           inbound audio from Twilio, so the only way
+                           to get the agent's voice into the recording is
+                           to capture the bytes we generate ourselves.
     """
     if not text.strip():
         return
@@ -112,6 +121,22 @@ async def speak(
                 except WebSocketDisconnect:
                     logger.info("tts: websocket disconnected mid-stream stream_sid=%s", stream_sid)
                     return
+                # Also feed the chunk into the recording session's outbound
+                # side. Done after the WS send so a recording-pipeline
+                # failure can't delay the audio reaching Twilio. The
+                # storage module short-circuits on a broken session.
+                if recording_session is not None:
+                    try:
+                        from app.storage import recordings as _recordings
+                        _recordings.append_chunks(
+                            recording_session, b"", chunk
+                        )
+                    except Exception:
+                        logger.exception(
+                            "tts: failed to feed chunk into recording session "
+                            "stream_sid=%s",
+                            stream_sid,
+                        )
     finally:
         if created_client:
             await _client.aclose()
