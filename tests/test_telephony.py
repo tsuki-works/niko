@@ -10,6 +10,7 @@ The mock_pipeline fixture patches all three network-bound callables
 offline and deterministic.
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1687,4 +1688,138 @@ def test_voice_after_hours_without_call_sid_bails_with_hangup(monkeypatch):
     assert "<Hangup" in body
     assert "<Record" not in body
     assert "unknown" not in body
+
+
+# ---------------------------------------------------------------------------
+# Barge-in transcript carry-forward (#170)
+# ---------------------------------------------------------------------------
+
+
+def test_call_state_has_in_flight_transcript_field():
+    """#170 — _CallState carries the cancelled-turn transcript forward
+    so the next turn can prepend it to the new utterance."""
+    from app.telephony.router import _CallState
+
+    state = _CallState()
+    assert state.in_flight_transcript == ""
+
+
+@pytest.mark.asyncio
+async def test_cancelled_turn_transcript_carried_forward(monkeypatch):
+    """#170 — when a final transcript arrives while an LLM turn is still
+    in flight, the cancelled turn's transcript must be prepended to the
+    new one so Haiku sees the complete caller intent.
+
+    Real-world hit: call CAb1db16747ce2abb65d04c498e2b371ae lost a $12.25
+    chicken fried rice because turn 1 was cancelled by turn 2 1s later
+    and only "and a coke" reached the model.
+    """
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _handle_final_transcript
+
+    captured: list[str] = []
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        captured.append(transcript)
+        # Stay in flight long enough to be cancelled by the next call.
+        await asyncio.sleep(10.0)
+
+    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    # Suppress the silence watchdog — its done_callback would otherwise
+    # arm a real watchdog that tries to call the real speak() later.
+    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    # T1 — caller's first utterance. Spawns turn 1.
+    await _handle_final_transcript("i'll get one chicken fried rice", state, ws)
+    # Yield so the task body actually starts and reaches its sleep.
+    await asyncio.sleep(0)
+
+    # T2 — caller's second utterance, while turn 1 is still in flight.
+    await _handle_final_transcript("and a coke", state, ws)
+    await asyncio.sleep(0)
+
+    # Cleanup: cancel the second turn so the test exits cleanly.
+    if state.llm_task and not state.llm_task.done():
+        state.llm_task.cancel()
+        try:
+            await state.llm_task
+        except (asyncio.CancelledError, BaseException):
+            pass
+
+    assert captured == [
+        "i'll get one chicken fried rice",
+        "i'll get one chicken fried rice and a coke",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chained_cancels_accumulate_transcripts(monkeypatch):
+    """#170 — a rapid burst of three finals should accumulate. Turn 3
+    must see all three concatenated as one combined caller intent."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _handle_final_transcript
+
+    captured: list[str] = []
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        captured.append(transcript)
+        await asyncio.sleep(10.0)
+
+    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _handle_final_transcript("chicken fried rice", state, ws)
+    await asyncio.sleep(0)
+    await _handle_final_transcript("and a coke", state, ws)
+    await asyncio.sleep(0)
+    await _handle_final_transcript("and fries", state, ws)
+    await asyncio.sleep(0)
+
+    if state.llm_task and not state.llm_task.done():
+        state.llm_task.cancel()
+        try:
+            await state.llm_task
+        except (asyncio.CancelledError, BaseException):
+            pass
+
+    assert captured == [
+        "chicken fried rice",
+        "chicken fried rice and a coke",
+        "chicken fried rice and a coke and fries",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_llm_tts_turn_clears_in_flight_transcript_on_final(monkeypatch):
+    """#170 — once a turn completes successfully (yields event.final),
+    the carry-forward field must be cleared. The user message is now in
+    state.history, so prepending it to the next turn would duplicate it."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _run_llm_tts_turn
+
+    async def fake_stream_reply(*, transcript, history, order, **kw):
+        yield StreamEvent(
+            final=LLMResponse(reply_text="ok", order=order, history=history)
+        )
+
+    async def fake_speak(*a, **kw):
+        pass
+
+    monkeypatch.setattr(router_mod, "stream_reply", fake_stream_reply)
+    monkeypatch.setattr(router_mod, "speak", fake_speak)
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    state.in_flight_transcript = "chicken fried rice and a coke"
+
+    ws = AsyncMock()
+    await _run_llm_tts_turn("chicken fried rice and a coke", state, ws)
+
+    assert state.in_flight_transcript == ""
 

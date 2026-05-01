@@ -293,6 +293,13 @@ class _CallState:
     consecutive_low_confidence_turns: int = 0
     last_caller_transcript: str = ""
     llm_error_occurred: bool = False
+    # Carry-forward of the most recent transcript fed to an LLM turn
+    # that has not yet been persisted to ``history``. When a new final
+    # transcript arrives mid-turn, ``_handle_final_transcript`` cancels
+    # the in-flight task and prepends this string so the cancelled
+    # turn's user words aren't lost (#170). Cleared by ``_run_llm_tts_turn``
+    # the moment ``event.final`` writes ``state.history``.
+    in_flight_transcript: str = ""
 
 
 async def _open_deepgram_connection(
@@ -519,6 +526,9 @@ async def _run_llm_tts_turn(
                     )
                 state.history = event.final.history
                 state.order = event.final.order
+                # Transcript is now durably in history — no need to carry
+                # it forward if a future turn is cancelled (#170).
+                state.in_flight_transcript = ""
                 full_reply = "".join(full_reply_parts).strip()
                 if full_reply:
                     _bg_call_event(
@@ -590,8 +600,13 @@ async def _handle_final_transcript(
     text: str, state: _CallState, websocket: WebSocket
 ) -> None:
     interrupted = bool(state.llm_task and not state.llm_task.done())
-    if state.llm_task and not state.llm_task.done():
+    if interrupted:
         state.llm_task.cancel()
+        # Carry forward — the cancelled turn never wrote its user
+        # message to history, so prepend it onto the new transcript
+        # so Haiku sees the full caller intent in the next turn (#170).
+        if state.in_flight_transcript:
+            text = f"{state.in_flight_transcript} {text}".strip()
     silence_was_active = bool(
         state.silence_task and not state.silence_task.done()
     )
@@ -604,6 +619,7 @@ async def _handle_final_transcript(
         # Drop Twilio's pending audio buffer so the caller actually hears
         # us pause instead of getting talked over (#74).
         await clear_twilio_audio(websocket, state.stream_sid)
+    state.in_flight_transcript = text
     state.llm_task = asyncio.create_task(
         _run_llm_tts_turn(text, state, websocket)
     )
