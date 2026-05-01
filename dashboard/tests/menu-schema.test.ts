@@ -19,7 +19,7 @@ describe('MenuItemSchema', () => {
       name: 'French Fries',
       price: 7.25,
     });
-    expect(parsed).toEqual({ name: 'French Fries', price: 7.25 });
+    expect(parsed).toEqual({ name: 'French Fries', available: true, price: 7.25 });
     expect(isSizedItem(parsed)).toBe(false);
   });
 
@@ -171,7 +171,7 @@ describe('humanizeCategoryKey', () => {
 
 describe('itemPriceRange', () => {
   it('returns the same min/max for a single-priced item', () => {
-    expect(itemPriceRange({ name: 'X', price: 9.5 })).toEqual({
+    expect(itemPriceRange({ name: 'X', available: true, price: 9.5 })).toEqual({
       min: 9.5,
       max: 9.5,
     });
@@ -179,7 +179,7 @@ describe('itemPriceRange', () => {
 
   it('returns min and max across sizes', () => {
     expect(
-      itemPriceRange({ name: 'X', sizes: { small: 10, medium: 14, large: 18 } }),
+      itemPriceRange({ name: 'X', available: true, sizes: { small: 10, medium: 14, large: 18 } }),
     ).toEqual({ min: 10, max: 18 });
   });
 });

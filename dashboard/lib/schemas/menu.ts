@@ -33,6 +33,7 @@ const CATEGORY_ORDER_KEY = '_category_order';
 export const SizedItemSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
+  available: z.boolean().default(true),
   sizes: z
     .record(z.string().min(1), z.number().nonnegative())
     .refine((s) => Object.keys(s).length > 0, {
@@ -44,6 +45,7 @@ export type SizedItem = z.infer<typeof SizedItemSchema>;
 export const SinglePriceItemSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
+  available: z.boolean().default(true),
   price: z.number().nonnegative(),
 });
 export type SinglePriceItem = z.infer<typeof SinglePriceItemSchema>;
