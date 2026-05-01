@@ -332,18 +332,37 @@ def generate_signed_url(
     to 30 minutes — long enough for a typical playback session, short
     enough that a leaked URL ages out fast.
 
-    Cloud Run's runtime SA can sign V4 URLs without a private key file
-    by using the IAM ``signBlob`` API; the SA must hold
-    ``roles/iam.serviceAccountTokenCreator`` on itself. See
+    On Cloud Run the runtime credentials are
+    ``compute_engine.Credentials`` — they only carry an OAuth token, no
+    private key, so V4 signing must be routed through the IAM
+    ``signBlob`` API. We pass ``service_account_email`` and
+    ``access_token`` to ``generate_signed_url``; google-cloud-storage
+    detects them and routes the signing call to ``iam.googleapis.com``.
+    The runtime SA must hold ``roles/iam.serviceAccountTokenCreator``
+    on itself for that to work — granted by
     ``scripts/setup-recordings-bucket.sh``.
+
+    Local dev with an ADC service-account JSON file (which DOES carry a
+    private key) still works: ``ServiceAccountCredentials`` exposes
+    ``service_account_email`` too, and ``generate_signed_url`` prefers
+    local signing when a key is available.
     """
+    import google.auth
+    from google.auth.transport import requests as _gauth_requests
+
     blob_name = f"{restaurant_id}/{call_sid}.mp3"
     bucket = _get_storage_client().bucket(settings.recordings_bucket)
     blob = bucket.blob(blob_name)
+
+    credentials, _project = google.auth.default()
+    credentials.refresh(_gauth_requests.Request())
+
     return blob.generate_signed_url(
         version="v4",
         method="GET",
         expiration=timedelta(minutes=ttl_minutes),
+        service_account_email=getattr(credentials, "service_account_email", None),
+        access_token=getattr(credentials, "token", None),
     )
 
 

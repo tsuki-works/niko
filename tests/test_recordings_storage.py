@@ -337,17 +337,21 @@ def test_delete_recording_idempotent_on_404(monkeypatch):
     recordings.delete_recording(call_sid="CAt", restaurant_id="rid")
 
 
-def test_generate_signed_url_uses_v4_get_30min(monkeypatch):
+def test_generate_signed_url_uses_v4_get_30min_and_iam_signblob(monkeypatch):
+    """Cloud Run runtime credentials (compute_engine.Credentials) lack a
+    private key, so V4 signing must route through IAM signBlob. We pass
+    ``service_account_email`` and ``access_token`` to
+    ``generate_signed_url``; google-cloud-storage uses them to call
+    iam.googleapis.com instead of trying to sign locally."""
     from datetime import timedelta
+    from types import SimpleNamespace
     from app.storage import recordings
 
     captured: dict = {}
 
     fake_blob = type("FakeBlob", (), {})()
-    def fake_signed(*, version, method, expiration):
-        captured["version"] = version
-        captured["method"] = method
-        captured["expiration"] = expiration
+    def fake_signed(**kwargs):
+        captured.update(kwargs)
         return "https://signed.googleapis.com/?sig=fake"
     fake_blob.generate_signed_url = fake_signed
 
@@ -362,6 +366,18 @@ def test_generate_signed_url_uses_v4_get_30min(monkeypatch):
 
     monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
 
+    # Stub google.auth.default + transport.requests.Request so the test
+    # never touches the metadata server.
+    fake_creds = SimpleNamespace(
+        service_account_email="runtime-sa@niko-tsuki.iam.gserviceaccount.com",
+        token="oauth-access-token-fake",
+        refresh=lambda _request: None,
+    )
+    import google.auth as gauth_mod
+    monkeypatch.setattr(gauth_mod, "default", lambda: (fake_creds, "niko-tsuki"))
+    from google.auth.transport import requests as _gauth_req
+    monkeypatch.setattr(_gauth_req, "Request", lambda: object())
+
     url = recordings.generate_signed_url(call_sid="CAt", restaurant_id="rid")
 
     assert url == "https://signed.googleapis.com/?sig=fake"
@@ -369,5 +385,8 @@ def test_generate_signed_url_uses_v4_get_30min(monkeypatch):
     assert captured["version"] == "v4"
     assert captured["method"] == "GET"
     assert captured["expiration"] == timedelta(minutes=30)
+    # IAM signBlob path
+    assert captured["service_account_email"] == "runtime-sa@niko-tsuki.iam.gserviceaccount.com"
+    assert captured["access_token"] == "oauth-access-token-fake"
 
 
