@@ -38,13 +38,46 @@ def test_prompt_warns_against_reciting_address_on_pickup_wrapup():
 
 
 def test_prompt_requires_text_before_tool_use():
-    """Regression for #76 — Haiku must speak first then call update_order,
-    so audio starts streaming within the <1s budget on commit turns."""
+    """Regression for #76 and #155 — Haiku must speak first then call update_order,
+    so audio starts streaming within the <1s budget on commit turns. In #155 the
+    rule was strengthened from a soft bullet to a numbered CRITICAL block after
+    Haiku was observed ignoring the soft form (1192ms tool_prefix on 18:33 call)."""
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
     assert "when you call the update_order tool" in lower
     assert "first" in lower
-    assert "never emit update_order before any spoken words" in lower
+    # Updated for #155 — the rule was strengthened to a numbered CRITICAL block.
+    # The "do not do this" string is the new equivalent assertion that the
+    # rule still forbids tool-first turns.
+    assert "do not do this" in lower
+
+
+def test_prompt_speak_first_rule_is_critical_and_numbered():
+    """Regression for #155 — the speak-first rule was strengthened
+    from a soft bullet to a numbered CRITICAL section after Haiku
+    was observed ignoring the soft form (1192ms tool_prefix on the
+    18:33 test call). Don't soften this back without filing a fresh
+    observability run that proves Haiku now obeys the soft form."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    # The block must read as a non-negotiable directive, not a hint.
+    assert "ordering is critical" in lower
+    assert "non-negotiable" in lower
+    # Concrete WRONG example so the model has something to pattern-match against.
+    assert "do not do this" in lower
+    # Existing requirements still hold (regression for #76).
+    assert "always speak a short acknowledgement first" in lower
+
+
+def test_prompt_caps_modification_question_length():
+    """Regression for #155 — the modification ack was too long on the
+    18:43 test call (~6s spoken, induced barge-in). Prompt now caps
+    the question to one sentence and forbids expanding the example
+    list beyond two items."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    assert "keep this question to one short sentence" in lower
+    assert "do not expand the example list beyond two items" in lower
 
 
 def test_prompt_makes_confirmation_goodbyes_terminal():
