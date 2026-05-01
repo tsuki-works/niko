@@ -312,7 +312,10 @@ async def _open_deepgram_connection(
         logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
         if result.is_final:
             # Track confidence for transfer-trigger detection (#7).
-            confidence = getattr(alt, "confidence", 1.0) or 1.0
+            # Explicit None check — `or 1.0` would replace 0.0 (falsy)
+            # with 1.0, masking a legitimate worst-case misheard signal.
+            raw_confidence = getattr(alt, "confidence", 1.0)
+            confidence = 1.0 if raw_confidence is None else raw_confidence
             if state is not None:
                 state.last_caller_transcript = text
                 if confidence < 0.5:

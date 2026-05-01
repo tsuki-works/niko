@@ -1008,3 +1008,86 @@ def test_voice_twiml_includes_stream_ended_action():
     assert 'action="/voice/stream-ended"' in body
     assert 'method="POST"' in body
 
+
+# ---------------------------------------------------------------------------
+# on_transcript confidence handling (Fix 1 regression guard)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_transcript_increments_misheard_counter_on_low_confidence(monkeypatch):
+    """Driving on_transcript with low-confidence finals must increment
+    state.consecutive_low_confidence_turns. Reset on a clear final."""
+    from unittest.mock import MagicMock
+
+    from app.telephony.router import _CallState, _open_deepgram_connection
+    import app.telephony.router as router_mod
+
+    # Satisfy the API-key guard without a real credential.
+    monkeypatch.setattr(router_mod.settings, "deepgram_api_key", "fake-key-for-test")
+    # Prevent _bg_call_event from spawning background threads that attempt
+    # real Firestore writes (no GCP in the test environment).
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+
+    state = _CallState()
+    captured: dict = {}
+
+    class FakeDeepgramConn:
+        def on(self, event_type, handler):
+            captured.setdefault(str(event_type), handler)
+
+        async def start(self, *_, **__):
+            return True
+
+        async def finish(self):
+            pass
+
+        async def send(self, *_):
+            pass
+
+        def keepalive(self):
+            pass
+
+    class FakeDeepgramClient:
+        def __init__(self, *_):
+            self.listen = MagicMock()
+            self.listen.asynclive.v.return_value = FakeDeepgramConn()
+
+    monkeypatch.setattr(router_mod, "DeepgramClient", FakeDeepgramClient)
+
+    async def on_final(text):
+        pass
+
+    await _open_deepgram_connection(
+        "CAtest",
+        "r1",
+        on_final,
+        state=state,
+    )
+
+    # LiveTranscriptionEvents.Transcript stringifies to "Results" (Deepgram SDK).
+    handler = captured["Results"]
+
+    def fake_result(text, confidence, is_final=True):
+        r = MagicMock()
+        alt = MagicMock()
+        alt.transcript = text
+        alt.confidence = confidence
+        r.channel.alternatives = [alt]
+        r.is_final = is_final
+        return r
+
+    # Three consecutive low-confidence finals.
+    await handler(None, fake_result("um", 0.2))
+    await handler(None, fake_result("uhh", 0.1))
+    # confidence=0.0 is the key regression: without Fix 1, `0.0 or 1.0`
+    # yields 1.0 and the counter would not advance on this third call.
+    await handler(None, fake_result("what", 0.0))
+
+    assert state.consecutive_low_confidence_turns == 3
+
+    # A clear final resets the counter.
+    await handler(None, fake_result("a large pepperoni pizza", 0.95))
+    assert state.consecutive_low_confidence_turns == 0
+    assert state.last_caller_transcript == "a large pepperoni pizza"
+
