@@ -55,6 +55,10 @@ function normalizeSession(raw: Record<string, unknown>): Record<string, unknown>
     started_at: unwrapTimestamp(raw.started_at),
     ended_at: unwrapTimestamp(raw.ended_at),
     last_event_at: unwrapTimestamp(raw.last_event_at),
+    // Sprint 2.4 Track 2 — new timestamp fields written by
+    // mark_voicemail_left and mark_transfer_attempted.
+    voicemail_recorded_at: unwrapTimestamp(raw.voicemail_recorded_at),
+    transfer_initiated_at: unwrapTimestamp(raw.transfer_initiated_at),
   };
 }
 

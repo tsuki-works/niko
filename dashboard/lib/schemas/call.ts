@@ -32,6 +32,8 @@ export const CallEventKindSchema = z.enum([
   'order_confirmed',
   'recording_ready',
   'transfer_requested',
+  'transfer_attempted',
+  'voicemail_left',
   'error',
   'log',
 ]);
@@ -53,6 +55,19 @@ export const CallSessionSchema = z.object({
   // calls that have no recording yet. Frontend never sees the raw URL —
   // it proxies playback through GET /calls/{call_sid}/recording.
   recording_url: z.string().optional(),
+
+  // Sprint 2.4 Track 2 — voicemail + transfer surface fields written by
+  // app.storage.call_sessions.mark_voicemail_left + mark_transfer_attempted.
+  // All optional / default-false because legacy and pre-2.4 calls
+  // predate them.
+  voicemail_recording_url: z.string().optional(),
+  voicemail_recording_sid: z.string().optional(),
+  voicemail_duration_seconds: z.number().int().nonnegative().optional(),
+  voicemail_transcript: z.string().nullable().optional(),
+  voicemail_recorded_at: z.coerce.date().nullish(),
+  transfer_attempted: z.boolean().default(false),
+  transfer_status: z.enum(['answered', 'no_answer', 'busy', 'failed', 'skipped']).optional(),
+  transfer_initiated_at: z.coerce.date().nullish(),
 });
 export type CallSession = z.infer<typeof CallSessionSchema>;
 

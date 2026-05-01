@@ -8,9 +8,11 @@ import {
   Copy,
   Mic,
   PhoneCall,
+  PhoneForwarded,
   PhoneOff,
   Radio,
   Sparkles,
+  Voicemail,
   Volume2,
   Zap,
 } from 'lucide-react';
@@ -161,7 +163,7 @@ function TimelineRow({
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             {label}
           </p>
-          <p className="text-sm">{body}</p>
+          <div className="text-sm">{body}</div>
         </div>
       </RowTag>
       {copyText ? (
@@ -305,6 +307,54 @@ function renderEvent(event: CallEvent): RenderedEvent {
         accent: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
         label: 'recording ready',
         body: typeof duration === 'number' ? `${duration}s recording available` : 'recording available',
+      };
+    }
+    case 'transfer_attempted': {
+      const status = (event.detail.status as string | undefined) ?? 'attempted';
+      const phone = event.detail.fallback_phone as string | undefined;
+      const labelByStatus: Record<string, string> = {
+        answered: 'Transfer connected',
+        no_answer: 'Transfer — no answer',
+        busy: 'Transfer — busy',
+        failed: 'Transfer — failed',
+        skipped: 'Transfer skipped',
+      };
+      const accentByStatus: Record<string, string> = {
+        answered: 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
+        no_answer: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+        busy: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+        failed: 'bg-destructive/15 text-destructive',
+        skipped: 'bg-muted text-muted-foreground',
+      };
+      return {
+        Icon: PhoneForwarded,
+        accent: accentByStatus[status] ?? 'bg-muted text-muted-foreground',
+        label: labelByStatus[status] ?? 'transfer',
+        body: phone ? <span>to {phone}</span> : <span>{status}</span>,
+      };
+    }
+    case 'voicemail_left': {
+      const transcript = (event.text as string) || '';
+      const duration = event.detail.duration_seconds as number | undefined;
+      return {
+        Icon: Voicemail,
+        accent: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+        label: 'voicemail',
+        body: (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground">
+              {typeof duration === 'number' ? `${duration}s` : 'recording available'}
+            </span>
+            {transcript ? (
+              <span className="italic">"{transcript}"</span>
+            ) : (
+              <span className="text-xs italic text-muted-foreground">
+                Transcript pending…
+              </span>
+            )}
+          </div>
+        ),
+        copyText: transcript || undefined,
       };
     }
     case 'error':

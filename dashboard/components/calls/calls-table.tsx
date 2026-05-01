@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { AlertTriangle, CheckCircle2, PhoneIncoming, Radio } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, PhoneForwarded, PhoneIncoming, Radio, Voicemail } from 'lucide-react';
 
 import { LocalTime } from '@/components/shared/local-time';
 import type { CallStatus, CallSummary } from '@/lib/api/calls';
@@ -64,7 +64,31 @@ function CallRow({ call }: { call: CallSummary }) {
       <Td className="text-right tabular-nums">{formatDuration(durationSec)}</Td>
       <Td className="text-right tabular-nums">{call.transcript_count}</Td>
       <Td>
-        <CallStatusBadge status={call.status} hasError={call.has_error} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <CallStatusBadge status={call.status} hasError={call.has_error} />
+          {call.voicemail_left ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400"
+              aria-label="Voicemail left"
+            >
+              <Voicemail className="h-3 w-3" aria-hidden /> voicemail
+            </span>
+          ) : null}
+          {call.transfer_attempted ? (
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium',
+                call.transfer_status === 'answered'
+                  ? 'bg-sky-500/15 text-sky-700 dark:text-sky-400'
+                  : 'bg-muted text-muted-foreground',
+              )}
+              aria-label={`Transfer ${call.transfer_status ?? 'attempted'}`}
+            >
+              <PhoneForwarded className="h-3 w-3" aria-hidden />{' '}
+              {call.transfer_status === 'answered' ? 'transferred' : 'transfer ' + (call.transfer_status ?? 'attempted')}
+            </span>
+          ) : null}
+        </div>
       </Td>
     </tr>
   );

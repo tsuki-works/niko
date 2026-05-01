@@ -80,3 +80,67 @@ describe('CallTimelineView', () => {
     expect(screen.queryByRole('button', { name: /Seek to caller/i })).not.toBeInTheDocument();
   });
 });
+
+describe('CallTimelineView voicemail + transfer events', () => {
+  it('renders a transfer_attempted event with the resolved status', () => {
+    render(
+      <CallTimelineView
+        timeline={{
+          call_sid: 'CAtest',
+          recording_available: false,
+          events: [
+            {
+              timestamp: '2026-05-01T18:00:00Z',
+              kind: 'transfer_attempted',
+              text: '',
+              detail: { status: 'answered', fallback_phone: '+15551234567' },
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText(/Transfer connected/i)).toBeInTheDocument();
+    expect(screen.getByText(/\+15551234567/)).toBeInTheDocument();
+  });
+
+  it('renders a voicemail_left event with duration + transcript', () => {
+    render(
+      <CallTimelineView
+        timeline={{
+          call_sid: 'CAtest',
+          recording_available: false,
+          events: [
+            {
+              timestamp: '2026-05-01T18:00:00Z',
+              kind: 'voicemail_left',
+              text: 'Hi please call me back',
+              detail: { duration_seconds: 18, recording_sid: 'REabc' },
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText(/18s/)).toBeInTheDocument();
+    expect(screen.getByText(/Hi please call me back/)).toBeInTheDocument();
+  });
+
+  it('renders "Transcript pending" when voicemail has no transcript yet', () => {
+    render(
+      <CallTimelineView
+        timeline={{
+          call_sid: 'CAtest',
+          recording_available: false,
+          events: [
+            {
+              timestamp: '2026-05-01T18:00:00Z',
+              kind: 'voicemail_left',
+              text: '',
+              detail: { duration_seconds: 12 },
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText(/Transcript pending/i)).toBeInTheDocument();
+  });
+});
