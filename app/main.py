@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re as _re
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -8,9 +9,15 @@ from fastapi.responses import RedirectResponse
 logging.basicConfig(level=logging.INFO)
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+
+from pydantic import BaseModel, field_validator
 
 from app.auth import Tenant, current_tenant
+from app.restaurants.hours import render_hours_text
+from app.restaurants.models import HoursStructured
+
+_E164 = _re.compile(r"^\+\d{8,15}$")
 from app.config import settings
 from app.orders.lifecycle import (
     OrderTransitionError,
@@ -78,6 +85,75 @@ def restaurants_me(tenant: Tenant = Depends(current_tenant)):
     if restaurant is None:
         raise HTTPException(status_code=404, detail="restaurant not found")
     return restaurant.model_dump(mode="json")
+
+
+class RestaurantUpdate(BaseModel):
+    """Owner-editable fields for PATCH /restaurants/me. Strict-extra so
+    typos and security-sensitive fields (id, twilio_phone) are rejected
+    rather than silently dropped."""
+
+    model_config = {"extra": "forbid"}
+
+    name: Optional[str] = None
+    display_phone: Optional[str] = None
+    address: Optional[str] = None
+    hours_structured: Optional[HoursStructured] = None
+    fallback_phone: Optional[str] = None
+    offers_delivery: Optional[bool] = None
+
+    @field_validator("fallback_phone")
+    @classmethod
+    def _check_e164(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return v
+        if not _E164.match(v):
+            raise ValueError(
+                f"fallback_phone must be E.164 (+1...), got {v!r}"
+            )
+        return v
+
+
+@app.patch("/restaurants/me")
+def patch_restaurant(
+    update: RestaurantUpdate,
+    tenant: Tenant = Depends(current_tenant),
+):
+    """Apply an owner-driven update to the calling tenant's Restaurant
+    doc. Owner-editable fields only — id and twilio_phone are not
+    patchable here (provisioning concerns)."""
+    restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="restaurant not found")
+
+    # Build a typed patch dict so nested models stay as Pydantic objects
+    # (avoids a Pydantic serializer warning when hours_structured is a
+    # plain dict inside model_copy).
+    patch: dict = {}
+    if "name" in update.model_fields_set:
+        patch["name"] = update.name
+    if "display_phone" in update.model_fields_set:
+        patch["display_phone"] = update.display_phone
+    if "address" in update.model_fields_set:
+        patch["address"] = update.address
+    if "hours_structured" in update.model_fields_set:
+        patch["hours_structured"] = update.hours_structured
+    if "fallback_phone" in update.model_fields_set:
+        patch["fallback_phone"] = update.fallback_phone
+    if "offers_delivery" in update.model_fields_set:
+        patch["offers_delivery"] = update.offers_delivery
+
+    updated = restaurant.model_copy(update=patch)
+
+    # If hours_structured was set, regenerate hours text so the prompt
+    # builder reflects the new schedule on the next call.
+    if update.hours_structured is not None:
+        updated = updated.model_copy(
+            update={"hours": render_hours_text(update.hours_structured)},
+        )
+
+    restaurants_storage.save_restaurant(updated)
+    restaurants_storage.clear_cache()
+    return updated.model_dump(mode="json")
 
 
 @app.get("/orders")
