@@ -1,15 +1,13 @@
 import { redirect } from 'next/navigation';
 
+import { MenuEditor } from '@/components/menu/menu-editor';
 import { MenuEmptyState } from '@/components/menu/menu-empty-state';
 import { MenuParseError } from '@/components/menu/menu-parse-error';
-import { MenuView } from '@/components/menu/menu-view';
 import { getMyRestaurant } from '@/lib/api/restaurant';
 import { getServerSession } from '@/lib/auth/session';
 import { humanizeRestaurantId } from '@/lib/formatters/restaurant';
 import { parseMenu } from '@/lib/schemas/menu';
 
-// Menu config is admin-driven — Firestore writes are rare and we want the
-// page to always reflect the latest doc, not a cached render.
 export const dynamic = 'force-dynamic';
 
 export default async function MenuPage() {
@@ -41,7 +39,7 @@ export default async function MenuPage() {
   }
 
   return (
-    <MenuView
+    <MenuEditor
       categories={result.categories}
       itemCount={result.itemCount}
       restaurantName={restaurantName}
