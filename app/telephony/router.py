@@ -441,7 +441,8 @@ async def _run_llm_tts_turn(
                     first_text_at = time.monotonic()
                 text_buffer.append(event.text_delta)
                 full_reply_parts.append(event.text_delta)
-                if event.text_delta.endswith((".", "?", "!")):
+                buffered_chars = sum(len(p) for p in text_buffer)
+                if _should_flush_chunk(event.text_delta, buffered_chars):
                     chunk = "".join(text_buffer).strip()
                     text_buffer.clear()
                     if chunk and state.stream_sid:

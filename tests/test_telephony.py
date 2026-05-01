@@ -821,3 +821,76 @@ def test_no_flush_on_plain_text_delta():
     assert _should_flush_chunk("a", buffered_chars=5) is False
 
 
+# ---------------------------------------------------------------------------
+# _run_llm_tts_turn — comma-chunking integration (uses the WS pipeline)
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_stream_reply_deltas(*deltas: str, final_text: str = ""):
+    """Yield each delta string as a separate StreamEvent — lets us
+    drive the chunking logic with realistic multi-event streams."""
+    final = final_text or "".join(deltas)
+
+    async def fake(*, transcript, history, order, **kw):
+        for d in deltas:
+            yield StreamEvent(text_delta=d)
+        yield StreamEvent(
+            final=LLMResponse(reply_text=final, order=order, history=history)
+        )
+
+    return fake
+
+
+def test_run_llm_tts_turn_flushes_at_long_comma_clause(monkeypatch, mock_pipeline):
+    """A delta sequence that builds up to 'One Chicken Fried Rice coming up,'
+    should flush at the comma (≥20 chars buffered), then ship the rest at
+    the period — total 2 chunks."""
+    chunks_spoken: list[str] = []
+
+    async def capture_speak(text, websocket, stream_sid, **kw):
+        chunks_spoken.append(text)
+
+    monkeypatch.setattr("app.telephony.router.speak", capture_speak)
+    monkeypatch.setattr(
+        "app.telephony.router.stream_reply",
+        _make_fake_stream_reply_deltas(
+            "One Chicken Fried Rice coming up,",
+            " what size would you like?",
+        ),
+    )
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_json(_START_MSG)
+        ws.send_json(_STOP_MSG)
+
+    # Greeting turn ships once (single delta no terminators in the test
+    # fake — flushed at end-of-stream as remainder). Caller turn here
+    # produces 2 chunks: comma flush + period flush.
+    assert "One Chicken Fried Rice coming up," in chunks_spoken
+    assert "what size would you like?" in chunks_spoken
+
+
+def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch, mock_pipeline):
+    """'Got it,' is below the 20-char threshold — it must keep buffering
+    until the period and ship as a single chunk."""
+    chunks_spoken: list[str] = []
+
+    async def capture_speak(text, websocket, stream_sid, **kw):
+        chunks_spoken.append(text)
+
+    monkeypatch.setattr("app.telephony.router.speak", capture_speak)
+    monkeypatch.setattr(
+        "app.telephony.router.stream_reply",
+        _make_fake_stream_reply_deltas("Got it,", " moving on."),
+    )
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_json(_START_MSG)
+        ws.send_json(_STOP_MSG)
+
+    # Single chunk — comma did NOT flush, period did.
+    combined = " ".join(chunks_spoken)
+    assert "Got it, moving on." in combined
+    # No chunk should be just "Got it,"
+    assert "Got it," not in chunks_spoken
+
