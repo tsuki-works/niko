@@ -1,69 +1,27 @@
-%% niko system overview — current master (regenerate with mmdc -i system-overview.mmd -o system-overview.svg)
+%% niko system overview — what happens when someone calls a restaurant
+%% regenerate: npx -p @mermaid-js/mermaid-cli mmdc -i system-overview.mmd -o system-overview.svg -b transparent
 flowchart LR
-  caller["Caller<br/>(PSTN phone)"]
+  customer(["📞 Customer<br/>on the phone"])
+  twilio["Twilio<br/>(phone network)"]
+  backend["Our backend<br/>(FastAPI on Cloud Run)"]
+  ai["AI pipeline<br/><br/>Deepgram — speech to text<br/>Claude Haiku — conversation<br/>Deepgram Aura — text to speech"]
+  firestore[("Firestore<br/>(orders, calls, events)")]
+  dashboard["Restaurant dashboard<br/>(Next.js)"]
+  staff(["👩‍🍳 Restaurant staff"])
 
-  subgraph Twilio["Twilio Voice"]
-    twilio_pstn["PSTN ingress"]
-    twilio_stream["&lt;Connect&gt;&lt;Stream&gt; — inbound_track only<br/>&lt;Parameter name=restaurant_id&gt;"]
-  end
+  customer <==>|phone call| twilio
+  twilio <==>|live audio<br/>over WebSocket| backend
+  backend <-->|listen → think → speak| ai
+  backend -->|save order +<br/>call events| firestore
+  firestore -.->|live updates| dashboard
+  dashboard --- staff
 
-  subgraph CloudRun["Cloud Run — FastAPI (app/)"]
-    voice["POST /voice<br/>TwiML, resolves tenant by To"]
-    ws["WS /media-stream<br/>telephony/router.py"]
-    tts["app/tts/client.py — speak()<br/>Deepgram Aura mulaw chunks"]
-    rest["REST /orders, /calls,<br/>/restaurants/me, /me"]
-    auth["auth/firebase.py<br/>session cookie → tenant"]
-  end
+  classDef person fill:#fef3c7,stroke:#a16207,color:#1f2937,stroke-width:2px;
+  classDef ours fill:#dbeafe,stroke:#1d4ed8,color:#0f172a,stroke-width:2px;
+  classDef external fill:#f5f5f5,stroke:#525252,color:#262626,stroke-width:1px;
+  classDef store fill:#ede9fe,stroke:#6d28d9,color:#0f172a,stroke-width:2px;
 
-  subgraph AI["AI providers"]
-    stt["Deepgram STT<br/>(streaming, mulaw 8 kHz)"]
-    llm["Anthropic Claude Haiku 4.5<br/>stream_reply, tool_use"]
-    aura["Deepgram Aura TTS<br/>(mulaw 8 kHz)"]
-  end
-
-  subgraph GCP["Google Cloud"]
-    fs[("Firestore<br/>restaurants/{rid}/<br/>{call_sessions, orders, events}")]
-    gcs[("GCS recordings bucket<br/>{rid}/{sid}.mp3")]
-    fbauth["Firebase Auth"]
-  end
-
-  subgraph Dash["Next.js dashboard (Vercel)"]
-    pages["/orders, /orders/[id],<br/>/calls, /calls/[sid], /settings"]
-    proxy["Route handlers<br/>/api/* → FastAPI"]
-    snap["onSnapshot listeners<br/>(orders, call events)"]
-  end
-
-  staff["Restaurant staff<br/>(browser / tablet)"]
-
-  caller -- "audio" --> twilio_pstn
-  twilio_pstn -- "HTTP webhook<br/>(To, CallSid)" --> voice
-  voice -- "TwiML reply" --> twilio_stream
-  twilio_stream <-- "WebSocket — caller mulaw +<br/>our outbound mulaw" --> ws
-
-  ws -- "inbound mulaw" --> stt
-  stt -- "transcript_final" --> ws
-  ws -- "transcript + history +<br/>system_prompt" --> llm
-  llm -- "text deltas / final.order" --> ws
-  ws -- "reply chunks" --> tts
-  tts -- "POST /v1/speak" --> aura
-  aura -- "mulaw chunks" --> tts
-  tts -- "media events<br/>(base64 mulaw)" --> ws
-
-  ws -- "session, events,<br/>order writes" --> fs
-  rest <--> fs
-
-  staff <--> pages
-  pages --> proxy
-  proxy -- "session cookie" --> rest
-  snap <-. "live updates" .-> fs
-  staff -. "login" .-> fbauth
-  fbauth -. "ID token →<br/>session cookie" .-> auth
-
-  classDef ext fill:#fef3c7,stroke:#a16207,color:#1f2937;
-  classDef be  fill:#dbeafe,stroke:#1d4ed8,color:#0f172a;
-  classDef fe  fill:#dcfce7,stroke:#15803d,color:#0f172a;
-  classDef gcp fill:#ede9fe,stroke:#6d28d9,color:#0f172a;
-  class caller,twilio_pstn,twilio_stream,stt,aura,llm,staff ext;
-  class voice,ws,tts,rest,auth be;
-  class pages,proxy,snap fe;
-  class fs,gcs,fbauth gcp;
+  class customer,staff person;
+  class backend,dashboard ours;
+  class twilio,ai external;
+  class firestore store;
