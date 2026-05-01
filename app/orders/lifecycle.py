@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.orders.models import Order, OrderStatus
-from app.sms import SmsError, send_sms
+from app.sms import send_sms
 from app.sms.templates import order_confirmation as render_order_confirmation
 from app.storage import firestore as order_storage
 
@@ -77,10 +77,11 @@ def persist_on_confirm(order: Order) -> Order:
                 idempotency_key=f"{confirmed_order.call_sid}:order_confirmation",
                 tenant_id=confirmed_order.restaurant_id,
             )
-        except SmsError as exc:
-            # Best-effort: SMS failure must not roll back the order.
-            # Tablet UX still shows the order; owner can resend manually
-            # post-pilot if it matters.
+        except Exception as exc:
+            # Best-effort: any failure rendering or sending the
+            # confirmation SMS must not roll back the order. The
+            # tablet UX still shows the order; owner can resend
+            # manually post-pilot if it matters.
             _log.warning(
                 "order_confirmation SMS failed for %s: %s",
                 confirmed_order.call_sid,

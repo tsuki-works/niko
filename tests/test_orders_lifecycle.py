@@ -468,3 +468,19 @@ def test_persist_on_confirm_swallows_sms_errors():
         confirmed = persist_on_confirm(order)
 
     assert confirmed.status is OrderStatus.CONFIRMED
+
+
+def test_persist_on_confirm_swallows_non_sms_errors_too():
+    """Defensive: even non-SmsError raised by send_sms (or by the
+    template renderer) must not roll back the order."""
+    from unittest.mock import patch
+    _fake_client()
+    order = _ready_pickup_order(caller_phone="+15551234567")
+
+    with patch(
+        "app.orders.lifecycle.send_sms",
+        side_effect=ValueError("unexpected"),
+    ):
+        confirmed = persist_on_confirm(order)
+
+    assert confirmed.status is OrderStatus.CONFIRMED
