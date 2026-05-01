@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import re as _re
+import re
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -17,7 +17,6 @@ from app.auth import Tenant, current_tenant
 from app.restaurants.hours import render_hours_text
 from app.restaurants.models import HoursStructured
 
-_E164 = _re.compile(r"^\+\d{8,15}$")
 from app.config import settings
 from app.orders.lifecycle import (
     OrderTransitionError,
@@ -35,6 +34,8 @@ from app.storage import (
 )
 from app.storage.restaurants import DEMO_RID
 from app.telephony.router import router as telephony_router
+
+_E164 = re.compile(r"^\+\d{8,15}$")
 
 app = FastAPI(title="niko")
 app.include_router(telephony_router)
@@ -125,22 +126,12 @@ def patch_restaurant(
     if restaurant is None:
         raise HTTPException(status_code=404, detail="restaurant not found")
 
-    # Build a typed patch dict so nested models stay as Pydantic objects
-    # (avoids a Pydantic serializer warning when hours_structured is a
-    # plain dict inside model_copy).
-    patch: dict = {}
-    if "name" in update.model_fields_set:
-        patch["name"] = update.name
-    if "display_phone" in update.model_fields_set:
-        patch["display_phone"] = update.display_phone
-    if "address" in update.model_fields_set:
-        patch["address"] = update.address
+    # Dump scalar fields via model_dump; assign hours_structured manually
+    # so it stays a Pydantic object inside model_copy (avoids a
+    # serializer warning when nested models pass through as raw dicts).
+    patch = update.model_dump(exclude_unset=True, exclude={"hours_structured"})
     if "hours_structured" in update.model_fields_set:
         patch["hours_structured"] = update.hours_structured
-    if "fallback_phone" in update.model_fields_set:
-        patch["fallback_phone"] = update.fallback_phone
-    if "offers_delivery" in update.model_fields_set:
-        patch["offers_delivery"] = update.offers_delivery
 
     updated = restaurant.model_copy(update=patch)
 
