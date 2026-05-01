@@ -3,7 +3,7 @@
 **Date:** 2026-05-01
 **Sprint:** 2.1 — Tuning conversational bot (#83)
 **Tracking issue:** #170
-**Status:** Drafted — awaiting user review
+**Status:** Approved (incorporates niko-reviewer feedback)
 **Base commit:** `3daa211` (master)
 
 ## Goal
@@ -82,10 +82,13 @@ async def _handle_final_transcript(text, state, websocket):
     interrupted = bool(state.llm_task and not state.llm_task.done())
     if interrupted:
         state.llm_task.cancel()
-        # Carry forward — the cancelled turn never wrote its user
-        # message to history, so prepend it onto the new transcript.
-        if state.in_flight_transcript:
-            text = f"{state.in_flight_transcript} {text}".strip()
+    # Carry forward — if any prior turn (cancelled or errored) left a
+    # transcript on state without persisting it to history, prepend it.
+    # The field is cleared by _run_llm_tts_turn only on event.final, so
+    # a non-empty value here always means "user words from a prior turn
+    # that never made it into history."
+    if state.in_flight_transcript.strip():
+        text = f"{state.in_flight_transcript} {text}".strip()
     silence_was_active = bool(state.silence_task and not state.silence_task.done())
     _cancel_silence_task(state)
     _abort_pending_hangup(state)
@@ -99,6 +102,8 @@ async def _handle_final_transcript(text, state, websocket):
         lambda _t: _arm_silence_watchdog(state, websocket)
     )
 ```
+
+The carry-forward read is **unconditional on `interrupted`**. The original draft only read `in_flight_transcript` when cancelling, but that left a gap: if the prior turn errored (Anthropic 5xx, network drop) instead of being cancelled, `state.llm_task.done() == True`, `interrupted == False`, and the user's words from the errored turn were silently dropped on the next final — same failure mode #170 was meant to fix, just on a different code path. Reading the field unconditionally closes that gap. The `.strip()` guard is defense-in-depth against any future caller passing a whitespace-only string.
 
 ### `_run_llm_tts_turn`
 
@@ -169,17 +174,19 @@ T1 "hi i want fries"        → cancel greeting turn (BARGE_IN logged)
 
 New cases in `tests/test_telephony.py`. The existing `mock_pipeline` fixture patches `_open_deepgram_connection`, `speak`, and `stream_reply`, so all of these run in-process.
 
-1. **`test_cancelled_turn_transcript_carried_forward`** — Drive `_handle_final_transcript` with T1, then T2 before turn 1 completes; assert `_run_llm_tts_turn` is invoked the second time with text containing both T1 and T2.
-2. **`test_chained_cancels_accumulate_transcripts`** — Three rapid finals, each cancelling the prior turn; assert the third turn is invoked with all three concatenated.
-3. **`test_completed_turn_clears_carry_forward`** — Let turn 1 complete via the mock pipeline; fire T2; assert turn 2 invoked with only T2 (no T1 prefix).
-4. **`test_call_state_has_in_flight_transcript_field`** — Dataclass shape regression: `_CallState()` exposes `in_flight_transcript` defaulting to `""`.
+1. **`test_call_state_has_in_flight_transcript_field`** — Dataclass shape regression: `_CallState()` exposes `in_flight_transcript` defaulting to `""`.
+2. **`test_cancelled_turn_transcript_carried_forward`** — Drive `_handle_final_transcript` with T1, then T2 before turn 1 completes; assert `_run_llm_tts_turn` is invoked the second time with text containing both T1 and T2. (The #170 bug repro.)
+3. **`test_chained_cancels_accumulate_transcripts`** — Three rapid finals, each cancelling the prior turn; assert the third turn is invoked with all three concatenated.
+4. **`test_run_llm_tts_turn_clears_in_flight_transcript_on_final`** — Drive `_run_llm_tts_turn` with a fake `stream_reply` that yields `event.final` immediately; assert `state.in_flight_transcript` is cleared when the turn completes.
+5. **`test_errored_turn_carries_transcript_forward`** — Spawn a turn whose `_run_llm_tts_turn` raises; assert `in_flight_transcript` is preserved across the error and prepended to the next final transcript.
+6. **`test_whitespace_only_in_flight_transcript_is_not_prepended`** — Manually seed `in_flight_transcript` to whitespace; assert the next turn fires with only the new text (no leading whitespace).
 
 Existing tests (full call lifecycle, hangup grace, mark-echo, silence watchdog, sentence-streaming chunking) should remain green untouched.
 
 ## Acceptance criteria (from #170)
 
-- [x] Two utterances within 1-2s of each other reach Haiku as one combined message — covered by test 1.
-- [x] Order item from the first utterance is captured even when the second utterance barges in — covered by test 1's combined-text assertion.
+- [x] Two utterances within 1-2s of each other reach Haiku as one combined message — covered by test 2.
+- [x] Order item from the first utterance is captured even when the second utterance barges in — covered by test 2's combined-text assertion.
 - [x] Existing barge-in mid-spoken-reply still works — the cancel path is unchanged; only its cleanup adds carry-forward. Existing barge-in semantics are preserved.
 - [x] Tests in `tests/test_telephony.py` cover both barge-in scenarios.
 
@@ -194,3 +201,4 @@ Existing tests (full call lifecycle, hangup grace, mark-echo, silence watchdog, 
 
 - The existing `barge_in` Firestore event already records each cancellation. After this PR ships, we can query the call_sessions collection to see how often barge-ins coincide with the carry-forward path, and whether cancel storms (≥3 cancels in <2s) are common enough to motivate a debounce or endpointing tweak.
 - No new telemetry is added in this PR — keep the surface minimal.
+- **Pre-existing concurrency gap** flagged during review: `_handle_final_transcript` is dispatched fire-and-forget from `Deepgram.on_transcript` (router.py: `loop.create_task(on_final(text))`), so two finals arriving sub-event-loop-quantum (~10ms) can produce concurrent handlers and corrupt `state.llm_task` and (now) `state.in_flight_transcript`. This PR does not introduce the race — the existing `state.llm_task` reassignment is already exposed — but a follow-up issue should track serializing `_handle_final_transcript` (an `asyncio.Lock` on `_CallState`, or a single-consumer queue) before any future barge-in tightening lands.

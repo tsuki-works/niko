@@ -602,11 +602,14 @@ async def _handle_final_transcript(
     interrupted = bool(state.llm_task and not state.llm_task.done())
     if interrupted:
         state.llm_task.cancel()
-        # Carry forward — the cancelled turn never wrote its user
-        # message to history, so prepend it onto the new transcript
-        # so Haiku sees the full caller intent in the next turn (#170).
-        if state.in_flight_transcript:
-            text = f"{state.in_flight_transcript} {text}".strip()
+    # Carry forward — if any prior turn (cancelled or errored) left a
+    # transcript on state without persisting it to history, prepend it
+    # so Haiku sees the full caller intent in this turn (#170). The
+    # field is cleared by `_run_llm_tts_turn` only on `event.final`,
+    # so a non-empty value here always means "user words from a prior
+    # turn that never made it into history."
+    if state.in_flight_transcript.strip():
+        text = f"{state.in_flight_transcript} {text}".strip()
     silence_was_active = bool(
         state.silence_task and not state.silence_task.done()
     )

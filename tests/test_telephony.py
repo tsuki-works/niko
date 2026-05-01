@@ -1823,3 +1823,94 @@ async def test_run_llm_tts_turn_clears_in_flight_transcript_on_final(monkeypatch
 
     assert state.in_flight_transcript == ""
 
+
+@pytest.mark.asyncio
+async def test_errored_turn_carries_transcript_forward(monkeypatch):
+    """#170 — when a turn ends in an exception (e.g. Anthropic 5xx) the
+    user's words also never reach history. The next final transcript
+    must still pick up the carry-forward — same class of bug as cancel,
+    different code path."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _handle_final_transcript
+
+    captured: list[str] = []
+
+    async def erroring_run_llm_tts_turn(transcript, state, websocket):
+        captured.append(transcript)
+        # Simulate an LLM error after the transcript was already
+        # assigned to state.in_flight_transcript by _handle_final_transcript.
+        raise RuntimeError("simulated LLM error")
+
+    async def normal_run_llm_tts_turn(transcript, state, websocket):
+        captured.append(transcript)
+        await asyncio.sleep(10.0)
+
+    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    # Turn 1 errors. in_flight_transcript should remain set.
+    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", erroring_run_llm_tts_turn)
+    await _handle_final_transcript("i'll get one chicken fried rice", state, ws)
+    # Wait for the error to propagate.
+    if state.llm_task is not None:
+        try:
+            await state.llm_task
+        except RuntimeError:
+            pass
+    assert state.in_flight_transcript == "i'll get one chicken fried rice"
+
+    # Turn 2 with a fresh transcript — must still carry forward despite
+    # state.llm_task.done() == True (errored, not running).
+    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", normal_run_llm_tts_turn)
+    await _handle_final_transcript("and a coke", state, ws)
+    await asyncio.sleep(0)
+
+    if state.llm_task and not state.llm_task.done():
+        state.llm_task.cancel()
+        try:
+            await state.llm_task
+        except (asyncio.CancelledError, BaseException):
+            pass
+
+    assert captured == [
+        "i'll get one chicken fried rice",
+        "i'll get one chicken fried rice and a coke",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch):
+    """#170 defense-in-depth — if some upstream change ever populates
+    in_flight_transcript with whitespace, the prepend must be skipped
+    so we don't inject leading spaces or trip Anthropic's empty-content
+    rejection in `_append_user_transcript`."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _handle_final_transcript
+
+    captured: list[str] = []
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        captured.append(transcript)
+        await asyncio.sleep(10.0)
+
+    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    state.in_flight_transcript = "   \t\n  "
+    ws = AsyncMock()
+
+    await _handle_final_transcript("and a coke", state, ws)
+    await asyncio.sleep(0)
+
+    if state.llm_task and not state.llm_task.done():
+        state.llm_task.cancel()
+        try:
+            await state.llm_task
+        except (asyncio.CancelledError, BaseException):
+            pass
+
+    assert captured == ["and a coke"]
+
