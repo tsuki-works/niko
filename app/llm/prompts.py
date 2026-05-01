@@ -219,8 +219,14 @@ def _format_menu(restaurant: Restaurant) -> str:
         items = menu.get(category)
         if not isinstance(items, list) or not items:
             continue
+        available_items = [
+            i for i in items
+            if not (isinstance(i, dict) and i.get("available", True) is False)
+        ]
+        if not available_items:
+            continue
         lines.append(f"{_humanize_category(category)}:")
-        for item in items:
+        for item in available_items:
             name = item.get("name", "")
             if not name:
                 continue

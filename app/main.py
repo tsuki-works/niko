@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import time
+from urllib.parse import unquote
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import RedirectResponse
@@ -15,7 +16,20 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.auth import Tenant, current_tenant
 from app.restaurants.hours import render_hours_text
-from app.restaurants.models import HoursStructured
+from app.restaurants.menu_writes import (
+    DuplicateMenuItem,
+    MenuItemNotFound,
+    add_category,
+    add_menu_item,
+    delete_menu_item,
+    update_menu_item,
+)
+from app.restaurants.models import (
+    CategoryCreate,
+    HoursStructured,
+    MenuItemCreate,
+    MenuItemUpdate,
+)
 
 from app.config import settings
 from app.orders.lifecycle import (
@@ -153,6 +167,98 @@ def patch_restaurant(
         # "clear hours" UX surfaces.
 
     restaurants_storage.save_restaurant(updated)  # also refreshes the in-process cache for this rid
+    return updated.model_dump(mode="json")
+
+
+def _require_owner(tenant: Tenant) -> None:
+    """Owner role check — settings + menu CRUD are owner-scope.
+    Mirrors the gate in patch_restaurant."""
+    if tenant.role != "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="owner role required",
+        )
+
+
+@app.post("/restaurants/me/menu/items", status_code=201)
+def post_menu_item(
+    item: MenuItemCreate,
+    tenant: Tenant = Depends(current_tenant),
+):
+    _require_owner(tenant)
+    restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="restaurant not found")
+    try:
+        updated = add_menu_item(restaurant, item)
+    except DuplicateMenuItem as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    restaurants_storage.save_restaurant(updated)
+    return updated.model_dump(mode="json")
+
+
+@app.patch("/restaurants/me/menu/items/{category}/{name}")
+def patch_menu_item(
+    category: str,
+    name: str,
+    update: MenuItemUpdate,
+    tenant: Tenant = Depends(current_tenant),
+):
+    _require_owner(tenant)
+    restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="restaurant not found")
+    try:
+        updated = update_menu_item(
+            restaurant,
+            category=unquote(category),
+            name=unquote(name),
+            update=update,
+        )
+    except MenuItemNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except DuplicateMenuItem as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    restaurants_storage.save_restaurant(updated)
+    return updated.model_dump(mode="json")
+
+
+@app.delete("/restaurants/me/menu/items/{category}/{name}")
+def delete_menu_item_endpoint(
+    category: str,
+    name: str,
+    tenant: Tenant = Depends(current_tenant),
+):
+    _require_owner(tenant)
+    restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="restaurant not found")
+    try:
+        updated = delete_menu_item(
+            restaurant,
+            category=unquote(category),
+            name=unquote(name),
+        )
+    except MenuItemNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    restaurants_storage.save_restaurant(updated)
+    return updated.model_dump(mode="json")
+
+
+@app.post("/restaurants/me/menu/categories", status_code=201)
+def post_menu_category(
+    category: CategoryCreate,
+    tenant: Tenant = Depends(current_tenant),
+):
+    _require_owner(tenant)
+    restaurant = restaurants_storage.get_restaurant(tenant.restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=404, detail="restaurant not found")
+    try:
+        updated = add_category(restaurant, category)
+    except DuplicateMenuItem as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    restaurants_storage.save_restaurant(updated)
     return updated.model_dump(mode="json")
 
 
