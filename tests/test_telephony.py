@@ -20,6 +20,7 @@ from app.main import app
 from app.llm.client import LLMResponse, StreamEvent
 from app.orders.models import Order
 from app.storage import restaurants as restaurants_storage
+from app.telephony.router import _MIN_CHUNK_CHARS, _should_flush_chunk
 
 client = TestClient(app)
 
@@ -776,8 +777,6 @@ async def test_clear_twilio_audio_swallows_websocket_disconnect():
 # ---------------------------------------------------------------------------
 # _should_flush_chunk — TTS chunking logic
 # ---------------------------------------------------------------------------
-
-from app.telephony.router import _should_flush_chunk, _MIN_CHUNK_CHARS
 
 
 def test_flush_on_period_regardless_of_length():

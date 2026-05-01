@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+import app.tts.client as tts_module
 from app.tts.client import speak
 
 
@@ -219,8 +220,6 @@ async def test_speak_without_recording_session_skips_append(monkeypatch):
 # ---------------------------------------------------------------------------
 # _get_client — module-level persistent httpx.AsyncClient (#151)
 # ---------------------------------------------------------------------------
-
-import app.tts.client as tts_module
 
 
 @pytest.fixture(autouse=True)
