@@ -411,6 +411,30 @@ def get_session(
     return snap.to_dict()
 
 
+def get_session_by_call_sid(call_sid: str) -> Optional[dict[str, Any]]:
+    """Resolve a call session using only the call_sid, reading the legacy
+    flat collection. Returns the doc dict (which carries ``restaurant_id``)
+    or None when the session was never initialised.
+
+    Used by /voice/stream-ended — Twilio's action callback only posts
+    CallSid, not rid. The legacy flat doc is the cheapest single-key
+    lookup we have before the nested tenant path is known. Phase D will
+    retire the legacy path; at that point this helper becomes a
+    collectionGroup query.
+    """
+    try:
+        client = _get_client()
+        snap = _legacy_parent(client, call_sid).get()
+        if not snap.exists:
+            return None
+        return snap.to_dict()
+    except Exception:
+        logger.exception(
+            "call_sessions: get_session_by_call_sid failed call_sid=%s", call_sid
+        )
+        return None
+
+
 def mark_call_ended(
     call_sid: str,
     restaurant_id: str,
