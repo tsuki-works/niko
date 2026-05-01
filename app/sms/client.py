@@ -28,6 +28,7 @@ from app.storage import firestore as order_storage
 
 class SmsResult(BaseModel):
     sid: str
+    status: str  # Twilio message status (queued | sending | sent | delivered | failed)
     sent_at: datetime
 
 
@@ -71,7 +72,11 @@ def send_sms(
 
     existing = order.sms_sent.get(template_name)
     if existing is not None:
-        return SmsResult(sid=existing.sid, sent_at=existing.sent_at)
+        return SmsResult(
+            sid=existing.sid,
+            status="sent",  # Re-sends would have updated the record; presence implies a successful prior dispatch
+            sent_at=existing.sent_at,
+        )
 
     if not settings.twilio_messaging_service_sid:
         raise SmsError(
@@ -96,4 +101,8 @@ def send_sms(
         update={"sms_sent": {**order.sms_sent, template_name: record}},
     )
     order_storage.save_order(updated)
-    return SmsResult(sid=message.sid, sent_at=sent_at)
+    return SmsResult(
+        sid=message.sid,
+        status=message.status,
+        sent_at=sent_at,
+    )

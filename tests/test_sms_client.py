@@ -70,7 +70,7 @@ def _ready_order() -> Order:
 def test_send_sms_calls_twilio_with_messaging_service():
     order = _ready_order()
     _fake_storage(order)
-    fake_message = MagicMock(sid="SM123")
+    fake_message = MagicMock(sid="SM123", status="queued")
 
     with (
         patch("app.sms.client._twilio_client") as twilio_factory,
@@ -91,6 +91,7 @@ def test_send_sms_calls_twilio_with_messaging_service():
     assert "messaging_service_sid" in kwargs
     assert isinstance(result, SmsResult)
     assert result.sid == "SM123"
+    assert result.status == "queued"
 
 
 def test_send_sms_short_circuits_when_record_already_exists():
@@ -114,6 +115,7 @@ def test_send_sms_short_circuits_when_record_already_exists():
 
     twilio_factory.return_value.messages.create.assert_not_called()
     assert result.sid == "SMexisting"
+    assert result.status == "sent"  # short-circuit returns "sent" since record's presence implies success
 
 
 def test_send_sms_writes_record_back_to_firestore_on_success():
@@ -126,6 +128,7 @@ def test_send_sms_writes_record_back_to_firestore_on_success():
     ):
         twilio_factory.return_value.messages.create.return_value = MagicMock(
             sid="SMnew",
+            status="queued",
         )
         send_sms(
             to="+15551234567",

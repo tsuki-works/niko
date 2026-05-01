@@ -71,6 +71,7 @@ def test_confirm_to_sms_full_path():
     ):
         twilio_factory.return_value.messages.create.return_value = MagicMock(
             sid="SMend2end",
+            status="queued",
         )
         confirmed = persist_on_confirm(order)
 
