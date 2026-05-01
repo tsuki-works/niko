@@ -372,12 +372,13 @@ def generate_reply(
             {"role": "user", "content": tool_results},
         ]
 
-    if not reply_text_parts and tool_uses:
+    if tool_uses:
+        # tools=[] is intentional — purely verbal continuation, see #173.
         followup = api.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=_system_cache_block(system_prompt),
-            tools=[UPDATE_ORDER_TOOL],
+            tools=[],
             messages=new_history,
         )
         for block in followup.content:
@@ -507,13 +508,13 @@ async def stream_reply(
             {"role": "user", "content": tool_results},
         ]
 
-    text_emitted = bool(text_parts)
-    if not text_emitted and tool_uses:
+    if tool_uses:
+        # tools=[] is intentional — purely verbal continuation, see #173.
         async with api.messages.stream(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=_system_cache_block(system_prompt),
-            tools=[UPDATE_ORDER_TOOL],
+            tools=[],
             messages=new_history,
         ) as followup_stream:
             async for event in followup_stream:

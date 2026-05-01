@@ -66,33 +66,38 @@ def test_plain_text_response_leaves_order_unchanged():
 def test_tool_use_updates_order_in_single_turn():
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
-    fake_client.messages.create.return_value = _fake_response(
-        [
-            FakeBlock(
-                type="tool_use",
-                id="toolu_1",
-                name="update_order",
-                input={
-                    "items": [
-                        {
-                            "name": "Pepperoni",
-                            "category": "pizza",
-                            "size": "medium",
-                            "quantity": 1,
-                            "unit_price": 17.99,
-                            "modifications": [],
-                        }
-                    ],
-                    "order_type": "pickup",
-                    "status": "in_progress",
-                },
-            ),
-            FakeBlock(
-                type="text",
-                text="One medium pepperoni for pickup. Anything else?",
-            ),
-        ]
-    )
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_1",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Pepperoni",
+                                "category": "pizza",
+                                "size": "medium",
+                                "quantity": 1,
+                                "unit_price": 17.99,
+                                "modifications": [],
+                            }
+                        ],
+                        "order_type": "pickup",
+                        "status": "in_progress",
+                    },
+                ),
+                FakeBlock(
+                    type="text",
+                    text="One medium pepperoni for pickup. Anything else?",
+                ),
+            ]
+        ),
+        _fake_response(
+            [FakeBlock(type="text", text="Anything else for you?")]
+        ),
+    ]
 
     result = generate_reply(
         transcript="one medium pepperoni for pickup",
@@ -102,12 +107,16 @@ def test_tool_use_updates_order_in_single_turn():
         client=fake_client,
     )
 
-    assert result.reply_text == "One medium pepperoni for pickup. Anything else?"
+    assert "One medium pepperoni for pickup. Anything else?" in result.reply_text
+    assert "Anything else for you?" in result.reply_text
     assert len(result.order.items) == 1
     assert result.order.items[0].name == "Pepperoni"
     assert result.order.order_type is OrderType.PICKUP
     assert result.order.call_sid == "CAtest"
-    assert fake_client.messages.create.call_count == 1
+    assert fake_client.messages.create.call_count == 2
+    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
+    assert followup_call_kwargs["tools"] == []
 
 
 def test_tool_only_response_triggers_followup_call():
@@ -145,6 +154,9 @@ def test_tool_only_response_triggers_followup_call():
     assert result.reply_text == "Okay, order cancelled. Have a good day."
     assert result.order.status is OrderStatus.CANCELLED
     assert fake_client.messages.create.call_count == 2
+    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
+    assert followup_call_kwargs["tools"] == []
 
 
 def test_history_threads_user_and_assistant_turns():
@@ -176,36 +188,44 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
     so we must append a synthetic ``user: [tool_result]`` message —
     otherwise the next turn 400s with ``tool_use ids were found without
     tool_result blocks``. Confirmed in production logs for
-    call_sid=CA8e3be2e91a7471221f87ba1aab63d1cd."""
+    call_sid=CA8e3be2e91a7471221f87ba1aab63d1cd.
+
+    After #173 the follow-up always runs — the tool_result user message
+    is followed by a second assistant message from the follow-up call."""
 
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
-    fake_client.messages.create.return_value = _fake_response(
-        [
-            FakeBlock(
-                type="text",
-                text="Got it, one large margarita for pickup. Anything else?",
-            ),
-            FakeBlock(
-                type="tool_use",
-                id="toolu_committed",
-                name="update_order",
-                input={
-                    "items": [
-                        {
-                            "name": "Margarita",
-                            "category": "pizza",
-                            "size": "large",
-                            "quantity": 1,
-                            "unit_price": 19.99,
-                        }
-                    ],
-                    "order_type": "pickup",
-                    "status": "in_progress",
-                },
-            ),
-        ]
-    )
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(
+                    type="text",
+                    text="Got it, one large margarita for pickup. Anything else?",
+                ),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_committed",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Margarita",
+                                "category": "pizza",
+                                "size": "large",
+                                "quantity": 1,
+                                "unit_price": 19.99,
+                            }
+                        ],
+                        "order_type": "pickup",
+                        "status": "in_progress",
+                    },
+                ),
+            ]
+        ),
+        _fake_response(
+            [FakeBlock(type="text", text="So that's one large Margarita — your total is nineteen ninety-nine. Sound right?")]
+        ),
+    ]
 
     result = generate_reply(
         transcript="i'll take a large margarita for pickup",
@@ -215,20 +235,37 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
         client=fake_client,
     )
 
-    # No follow-up call — text was emitted.
-    assert fake_client.messages.create.call_count == 1
-    # History ends with a synthetic tool_result so the next turn is valid,
-    # AND that result carries the server-computed subtotal so Haiku can
-    # quote a verified number instead of fabricating one (per the 2026-04-26
-    # Twilight $50.50-vs-$49.25 incident).
-    last = result.history[-1]
-    assert last["role"] == "user"
-    assert len(last["content"]) == 1
-    block = last["content"][0]
+    # Follow-up now always runs after tool_use (#173).
+    assert fake_client.messages.create.call_count == 2
+    # The tool_result user message must precede the follow-up assistant message
+    # in history — find it by scanning backwards.
+    tool_result_msg = None
+    followup_assistant_msg = None
+    for msg in result.history:
+        if (
+            msg["role"] == "user"
+            and isinstance(msg["content"], list)
+            and msg["content"]
+            and msg["content"][0].get("type") == "tool_result"
+        ):
+            tool_result_msg = msg
+        elif msg["role"] == "assistant" and tool_result_msg is not None:
+            followup_assistant_msg = msg
+
+    assert tool_result_msg is not None, "tool_result user message missing from history"
+    block = tool_result_msg["content"][0]
     assert block["type"] == "tool_result"
     assert block["tool_use_id"] == "toolu_committed"
+    # Server-verified subtotal must be in the tool_result (#66 regression guard).
     assert "Subtotal: $19.99" in block["content"]
     assert "Margarita" in block["content"]
+
+    # History must continue with the follow-up assistant message after the tool_result.
+    assert followup_assistant_msg is not None, "follow-up assistant message missing from history"
+    assert any(
+        b.get("text", "") == "So that's one large Margarita — your total is nineteen ninety-nine. Sound right?"
+        for b in followup_assistant_msg["content"]
+    )
 
 
 def test_tool_result_carries_post_apply_subtotal():
@@ -240,52 +277,57 @@ def test_tool_result_carries_post_apply_subtotal():
 
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
-    fake_client.messages.create.return_value = _fake_response(
-        [
-            FakeBlock(type="text", text="Adding those now."),
-            FakeBlock(
-                type="tool_use",
-                id="toolu_one",
-                name="update_order",
-                input={
-                    "items": [
-                        {
-                            "name": "Wings",
-                            "category": "appetizers",
-                            "size": None,
-                            "quantity": 1,
-                            "unit_price": 14.50,
-                        }
-                    ],
-                    "status": "in_progress",
-                },
-            ),
-            FakeBlock(
-                type="tool_use",
-                id="toolu_two",
-                name="update_order",
-                input={
-                    "items": [
-                        {
-                            "name": "Wings",
-                            "category": "appetizers",
-                            "size": None,
-                            "quantity": 1,
-                            "unit_price": 14.50,
-                        },
-                        {
-                            "name": "Fries",
-                            "category": "appetizers",
-                            "size": None,
-                            "quantity": 1,
-                            "unit_price": 7.50,
-                        },
-                    ],
-                    "status": "in_progress",
-                },
-            ),
-        ]
-    )
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(type="text", text="Adding those now."),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_one",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Wings",
+                                "category": "appetizers",
+                                "size": None,
+                                "quantity": 1,
+                                "unit_price": 14.50,
+                            }
+                        ],
+                        "status": "in_progress",
+                    },
+                ),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_two",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Wings",
+                                "category": "appetizers",
+                                "size": None,
+                                "quantity": 1,
+                                "unit_price": 14.50,
+                            },
+                            {
+                                "name": "Fries",
+                                "category": "appetizers",
+                                "size": None,
+                                "quantity": 1,
+                                "unit_price": 7.50,
+                            },
+                        ],
+                        "status": "in_progress",
+                    },
+                ),
+            ]
+        ),
+        _fake_response(
+            [FakeBlock(type="text", text="Anything else?")]
+        ),
+    ]
 
     result = generate_reply(
         transcript="add wings and fries",
@@ -295,9 +337,19 @@ def test_tool_result_carries_post_apply_subtotal():
         client=fake_client,
     )
 
-    last = result.history[-1]
-    assert last["role"] == "user"
-    blocks = last["content"]
+    # Find the tool_result user message (comes right after the first assistant turn).
+    tool_result_msg = None
+    for msg in result.history:
+        if (
+            msg["role"] == "user"
+            and isinstance(msg["content"], list)
+            and msg["content"]
+            and msg["content"][0].get("type") == "tool_result"
+        ):
+            tool_result_msg = msg
+            break
+    assert tool_result_msg is not None
+    blocks = tool_result_msg["content"]
     assert len(blocks) == 2
     # First tool_result: state after applying tool_one (just wings).
     assert blocks[0]["tool_use_id"] == "toolu_one"
@@ -513,33 +565,38 @@ def test_caller_changes_mind_replaces_items():
     assert order.items[0].name == "Pepperoni"
 
     fake_client = MagicMock()
-    fake_client.messages.create.return_value = _fake_response(
-        [
-            FakeBlock(
-                type="tool_use",
-                id="toolu_change",
-                name="update_order",
-                input={
-                    "items": [
-                        {
-                            "name": "Veggie Supreme",
-                            "category": "pizza",
-                            "size": "medium",
-                            "quantity": 1,
-                            "unit_price": 18.99,
-                            "modifications": [],
-                        }
-                    ],
-                    "order_type": "pickup",
-                    "status": "in_progress",
-                },
-            ),
-            FakeBlock(
-                type="text",
-                text="Got it — one medium veggie supreme for pickup instead.",
-            ),
-        ]
-    )
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_change",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Veggie Supreme",
+                                "category": "pizza",
+                                "size": "medium",
+                                "quantity": 1,
+                                "unit_price": 18.99,
+                                "modifications": [],
+                            }
+                        ],
+                        "order_type": "pickup",
+                        "status": "in_progress",
+                    },
+                ),
+                FakeBlock(
+                    type="text",
+                    text="Got it — one medium veggie supreme for pickup instead.",
+                ),
+            ]
+        ),
+        _fake_response(
+            [FakeBlock(type="text", text="Anything else?")]
+        ),
+    ]
 
     result = generate_reply(
         transcript="actually scratch that, make it a veggie supreme",
@@ -664,6 +721,18 @@ def _stream_manager_factory(streams: list[_FakeAsyncStream]):
     return _next_stream
 
 
+def _stream_manager_factory_capturing(streams: list[_FakeAsyncStream], captured_calls: list[dict]):
+    """Like _stream_manager_factory but records kwargs for each call into captured_calls."""
+
+    iterator = iter(streams)
+
+    def _next_stream(**kwargs):
+        captured_calls.append(kwargs)
+        return next(iterator)
+
+    return _next_stream
+
+
 async def _collect(stream_iter):
     deltas: list[str] = []
     final = None
@@ -740,7 +809,11 @@ async def test_stream_reply_applies_tool_use_to_order_state():
                         type="text", text="One medium pepperoni for pickup."
                     ),
                 ],
-            )
+            ),
+            _FakeAsyncStream(
+                deltas=["Anything else?"],
+                blocks=[FakeBlock(type="text", text="Anything else?")],
+            ),
         ]
     )
 
@@ -762,7 +835,8 @@ async def test_stream_reply_applies_tool_use_to_order_state():
 async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
-    fake_client.messages.stream = _stream_manager_factory(
+    captured_calls: list[dict] = []
+    fake_client.messages.stream = _stream_manager_factory_capturing(
         [
             _FakeAsyncStream(
                 deltas=[],  # tool-use only, no text
@@ -783,7 +857,8 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
                     )
                 ],
             ),
-        ]
+        ],
+        captured_calls,
     )
 
     deltas, final = await _collect(
@@ -799,6 +874,9 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
     assert deltas == ["Okay, ", "order cancelled."]
     assert final.reply_text == "Okay, order cancelled."
     assert final.order.status is OrderStatus.CANCELLED
+    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    assert len(captured_calls) == 2
+    assert captured_calls[1]["tools"] == []
 
 
 async def test_stream_reply_text_deltas_arrive_before_final():
@@ -891,11 +969,21 @@ async def test_stream_reply_timing_reflects_tool_use_before_text():
 
     order = Order(call_sid="CAtest")
 
+    _followup_stream = _FakeAsyncStream(
+        deltas=["Okay."],
+        blocks=[FakeBlock(type="text", text="Okay.")],
+    )
+
     async def _run(blocks):
         fake_client = MagicMock()
-        fake_client.messages.stream = _stream_manager_factory(
-            [_FakeAsyncStream(deltas=["Done."], blocks=blocks)]
-        )
+        # Provide a follow-up stream for every tool_use turn (#173).
+        streams = [_FakeAsyncStream(deltas=["Done."], blocks=blocks)]
+        has_tool = any(b.type == "tool_use" for b in blocks)
+        if has_tool:
+            streams.append(
+                _FakeAsyncStream(deltas=["Okay."], blocks=[FakeBlock(type="text", text="Okay.")])
+            )
+        fake_client.messages.stream = _stream_manager_factory(streams)
         timing = None
         async for event in stream_reply(
             transcript="x",
@@ -936,33 +1024,38 @@ def test_modifications_round_trip_into_line_item():
 
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
-    fake_client.messages.create.return_value = _fake_response(
-        [
-            FakeBlock(
-                type="tool_use",
-                id="toolu_mods",
-                name="update_order",
-                input={
-                    "items": [
-                        {
-                            "name": "Margherita",
-                            "category": "pizza",
-                            "size": "large",
-                            "quantity": 1,
-                            "unit_price": 20.99,
-                            "modifications": ["extra cheese", "no basil"],
-                        }
-                    ],
-                    "order_type": "pickup",
-                    "status": "in_progress",
-                },
-            ),
-            FakeBlock(
-                type="text",
-                text="One large margherita with extra cheese and no basil.",
-            ),
-        ]
-    )
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_mods",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Margherita",
+                                "category": "pizza",
+                                "size": "large",
+                                "quantity": 1,
+                                "unit_price": 20.99,
+                                "modifications": ["extra cheese", "no basil"],
+                            }
+                        ],
+                        "order_type": "pickup",
+                        "status": "in_progress",
+                    },
+                ),
+                FakeBlock(
+                    type="text",
+                    text="One large margherita with extra cheese and no basil.",
+                ),
+            ]
+        ),
+        _fake_response(
+            [FakeBlock(type="text", text="Anything else?")]
+        ),
+    ]
 
     result = generate_reply(
         transcript="large margherita extra cheese no basil",
@@ -1215,25 +1308,30 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
     assert order.delivery_address == "14 Spadina Ave"
 
     fake_client = MagicMock()
-    fake_client.messages.create.return_value = _fake_response(
-        [
-            FakeBlock(type="text", text="Got it, what's your address?"),
-            FakeBlock(
-                type="tool_use",
-                id="toolu_bad_addr",
-                name="update_order",
-                input={
-                    "items": [
-                        {"name": "Margherita", "category": "pizza",
-                         "size": "large", "quantity": 1, "unit_price": 19.99},
-                    ],
-                    "order_type": "delivery",
-                    "delivery_address": "uhh",
-                    "status": "in_progress",
-                },
-            ),
-        ]
-    )
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(type="text", text="Got it, what's your address?"),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_bad_addr",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {"name": "Margherita", "category": "pizza",
+                             "size": "large", "quantity": 1, "unit_price": 19.99},
+                        ],
+                        "order_type": "delivery",
+                        "delivery_address": "uhh",
+                        "status": "in_progress",
+                    },
+                ),
+            ]
+        ),
+        _fake_response(
+            [FakeBlock(type="text", text="Could you give me the full street address?")]
+        ),
+    ]
 
     result = generate_reply(
         transcript="my address is uhh",
@@ -1245,12 +1343,19 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
 
     # Bad address was REJECTED — previous good value stays.
     assert result.order.delivery_address == "14 Spadina Ave"
-    # Tool_result that went back to Haiku carries the rejection note so
-    # the model can re-ask on the next turn.
-    last = result.history[-1]
-    assert last["role"] == "user"
-    assert last["content"][0]["type"] == "tool_result"
-    assert "Delivery address incomplete" in last["content"][0]["content"]
+    # Find the tool_result user message in history and check it carries the rejection note.
+    tool_result_msg = None
+    for msg in result.history:
+        if (
+            msg["role"] == "user"
+            and isinstance(msg["content"], list)
+            and msg["content"]
+            and msg["content"][0].get("type") == "tool_result"
+        ):
+            tool_result_msg = msg
+            break
+    assert tool_result_msg is not None
+    assert "Delivery address incomplete" in tool_result_msg["content"][0]["content"]
 
 
 def test_generate_reply_sends_system_as_cache_block():
@@ -1359,3 +1464,138 @@ def test_apply_validation_passes_through_explicit_address_clears():
     })
     assert "delivery_address" not in cleaned
     assert notes == [_INVALID_ADDRESS_NOTE]
+
+
+def test_followup_after_text_plus_tool_produces_readback_in_same_turn():
+    """#173 — when the first response has BOTH text and tool_use, a follow-up
+    call always runs so the model can read back the verified subtotal in the
+    same turn rather than waiting for the next caller transcript."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(
+                    type="text",
+                    text="Got it, one Chicken Fried Rice coming up.",
+                ),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_cfr",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Chicken Fried Rice",
+                                "category": "fried_rice",
+                                "size": None,
+                                "quantity": 1,
+                                "unit_price": 12.25,
+                            }
+                        ],
+                        "status": "in_progress",
+                    },
+                ),
+            ]
+        ),
+        _fake_response(
+            [
+                FakeBlock(
+                    type="text",
+                    text="So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?",
+                )
+            ]
+        ),
+    ]
+
+    result = generate_reply(
+        transcript="that's it",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    # reply_text is the concat of ack + read-back.
+    assert "Got it, one Chicken Fried Rice coming up." in result.reply_text
+    assert "So that's one Chicken Fried Rice" in result.reply_text
+    assert fake_client.messages.create.call_count == 2
+    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
+    assert followup_call_kwargs["tools"] == []
+
+
+async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
+    """#173 streaming path — when first response has text + tool_use, the
+    follow-up stream's deltas are yielded in the same turn, after the first
+    response's deltas. final.reply_text is the full concatenation."""
+
+    order = Order(call_sid="CAtest")
+    captured_calls: list[dict] = []
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory_capturing(
+        [
+            _FakeAsyncStream(
+                deltas=["Got it, one Chicken Fried Rice coming up."],
+                blocks=[
+                    FakeBlock(
+                        type="tool_use",
+                        id="toolu_cfr",
+                        name="update_order",
+                        input={
+                            "items": [
+                                {
+                                    "name": "Chicken Fried Rice",
+                                    "category": "fried_rice",
+                                    "size": None,
+                                    "quantity": 1,
+                                    "unit_price": 12.25,
+                                }
+                            ],
+                            "status": "in_progress",
+                        },
+                    ),
+                    FakeBlock(
+                        type="text",
+                        text="Got it, one Chicken Fried Rice coming up.",
+                    ),
+                ],
+            ),
+            _FakeAsyncStream(
+                deltas=["So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?"],
+                blocks=[
+                    FakeBlock(
+                        type="text",
+                        text="So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?",
+                    )
+                ],
+            ),
+        ],
+        captured_calls,
+    )
+
+    deltas, final = await _collect(
+        stream_reply(
+            transcript="that's it",
+            history=[],
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+            client=fake_client,
+        )
+    )
+
+    # Both delta streams must be yielded in order.
+    assert "Got it, one Chicken Fried Rice coming up." in deltas
+    assert "So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?" in deltas
+    assert deltas.index("Got it, one Chicken Fried Rice coming up.") < deltas.index(
+        "So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?"
+    )
+    assert final is not None
+    assert "Got it" in final.reply_text
+    assert "So that's" in final.reply_text
+    # final.reply_text concatenates ack + read-back in that order.
+    assert final.reply_text.index("Got it") < final.reply_text.index("So that's")
+    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    assert len(captured_calls) == 2
+    assert captured_calls[1]["tools"] == []
