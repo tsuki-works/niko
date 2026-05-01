@@ -66,8 +66,14 @@ def _ulaw2lin_16(mu_law_bytes: bytes) -> bytes:
 
 def _compute_pcm_pair(inbound_mu_law: bytes, outbound_mu_law: bytes) -> bytes:
     """Decode each μ-law track to 16-bit PCM, pad the shorter side with
-    PCM silence, and interleave L=inbound / R=outbound. Returns stereo
+    PCM silence, and **mix** to a single mono channel by summing the
+    two streams sample-wise (clipped to int16 range). Returns mono
     16-bit little-endian PCM ready to feed the MP3 encoder.
+
+    Mono mix is what restaurant operators actually want: one playback
+    that "sounds like a normal phone call." Stereo (caller=L, agent=R)
+    sounds disorienting and confuses operators who expect a single
+    speaker waveform. File size is also halved.
 
     Pure function; no I/O. Keeps the hot-path math testable in isolation.
     """
@@ -84,10 +90,19 @@ def _compute_pcm_pair(inbound_mu_law: bytes, outbound_mu_law: bytes) -> bytes:
     inbound_pcm = inbound_pcm + b"\x00\x00" * (n - n_in)
     outbound_pcm = outbound_pcm + b"\x00\x00" * (n - n_out)
 
-    out = bytearray(n * 4)
+    # Sum each pair of int16 samples; clip to the int16 range so we
+    # never wrap around. Both sides talking simultaneously may clip
+    # briefly — acceptable for QA-grade phone audio.
+    out = bytearray(n * 2)
     for i in range(n):
-        out[i * 4 : i * 4 + 2] = inbound_pcm[i * 2 : i * 2 + 2]
-        out[i * 4 + 2 : i * 4 + 4] = outbound_pcm[i * 2 : i * 2 + 2]
+        a = struct.unpack_from("<h", inbound_pcm, i * 2)[0]
+        b = struct.unpack_from("<h", outbound_pcm, i * 2)[0]
+        s = a + b
+        if s > 32767:
+            s = 32767
+        elif s < -32768:
+            s = -32768
+        struct.pack_into("<h", out, i * 2, s)
     return bytes(out)
 
 
@@ -99,7 +114,7 @@ import lameenc
 _MP3_BITRATE_KBPS = 32
 _MP3_QUALITY = 2
 _PCM_SAMPLE_RATE = 8000  # Twilio media is 8 kHz μ-law
-_PCM_CHANNELS = 2        # we encode the stereo (caller=L, agent=R) mix
+_PCM_CHANNELS = 1        # caller + agent summed to mono in _compute_pcm_pair
 
 
 def _make_encoder() -> "lameenc.Encoder":
@@ -200,7 +215,8 @@ def append_chunks(
 
     # Track per-channel sample count for duration calc.
     # Stereo PCM-16 = 4 bytes per (per-channel) sample-pair.
-    session.total_pcm_samples += len(pcm) // 4
+    # Mono PCM-16 = 2 bytes per sample.
+    session.total_pcm_samples += len(pcm) // 2
 
     mp3 = session.encoder.encode(pcm)
     if mp3:
