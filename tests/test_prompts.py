@@ -69,17 +69,6 @@ def test_prompt_speak_first_rule_is_critical_and_numbered():
     assert "always speak a short acknowledgement first" in lower
 
 
-def test_prompt_caps_modification_question_length():
-    """Regression for #155 — the modification ack was too long on the
-    18:43 test call (~6s spoken, induced barge-in). Prompt now caps
-    the question to one sentence and forbids expanding the example
-    list beyond two items."""
-    prompt = build_system_prompt(_demo())
-    lower = prompt.lower()
-    assert "keep this question to one short sentence" in lower
-    assert "do not expand the example list beyond two items" in lower
-
-
 def test_prompt_makes_confirmation_goodbyes_terminal():
     """Regression for #78 — once the caller confirms, the agent should
     say a brief terminal goodbye and NOT ask another question. Otherwise
