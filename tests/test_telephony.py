@@ -1091,3 +1091,242 @@ async def test_on_transcript_increments_misheard_counter_on_low_confidence(monke
     assert state.consecutive_low_confidence_turns == 0
     assert state.last_caller_transcript == "a large pepperoni pizza"
 
+
+# ---------------------------------------------------------------------------
+# /voice/stream-ended — Phase C call-transfer dispatch (#7 Sprint 2.4 Track 2)
+# ---------------------------------------------------------------------------
+
+
+def test_stream_ended_returns_empty_twiml_when_no_transfer_requested(monkeypatch):
+    """Normal end of call — no transfer_requested event → empty TwiML.
+    Twilio's default behavior on empty TwiML is to hang up."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.storage import call_sessions
+
+    monkeypatch.setattr(
+        call_sessions,
+        "get_session_by_call_sid",
+        lambda sid: {"restaurant_id": "r1"},
+    )
+    monkeypatch.setattr(
+        call_sessions,
+        "get_session_events",
+        lambda sid, rid: [
+            {"kind": "transcript_final", "timestamp": None, "text": "hi"},
+        ],
+    )
+
+    c = TestClient(app)
+    resp = c.post("/voice/stream-ended", data={"CallSid": "CAtest"})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "<Dial" not in body
+    assert "<Record" not in body
+
+
+def test_stream_ended_returns_dial_when_transfer_requested(monkeypatch):
+    """transfer_requested event + fallback_phone set → <Dial> TwiML."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.restaurants.models import Restaurant
+    from app.storage import call_sessions, restaurants as r_storage
+
+    monkeypatch.setattr(
+        call_sessions,
+        "get_session_by_call_sid",
+        lambda sid: {"restaurant_id": "r1"},
+    )
+    monkeypatch.setattr(
+        call_sessions,
+        "get_session_events",
+        lambda sid, rid: [
+            {"kind": "transfer_requested", "timestamp": None, "text": "human_intent"},
+        ],
+    )
+    monkeypatch.setattr(
+        r_storage,
+        "get_restaurant",
+        lambda rid: Restaurant(
+            id="r1",
+            name="R",
+            display_phone="+15551234567",
+            twilio_phone="+16479058093",
+            address="1 Main",
+            hours="11-22",
+            menu={},
+            fallback_phone="+15559999999",
+        ),
+    )
+
+    c = TestClient(app)
+    resp = c.post("/voice/stream-ended", data={"CallSid": "CAtest"})
+    assert resp.status_code == 200
+    body = resp.text
+    assert "<Dial" in body
+    assert "+15559999999" in body
+    assert "/voice/transfer-result" in body
+
+
+def test_stream_ended_skips_to_voicemail_when_no_fallback(monkeypatch):
+    """transfer_requested but no fallback_phone configured → mark
+    transfer as skipped + return voicemail TwiML directly."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.restaurants.models import Restaurant
+    from app.storage import call_sessions, restaurants as r_storage
+
+    monkeypatch.setattr(
+        call_sessions,
+        "get_session_by_call_sid",
+        lambda sid: {"restaurant_id": "r1"},
+    )
+    monkeypatch.setattr(
+        call_sessions,
+        "get_session_events",
+        lambda sid, rid: [
+            {"kind": "transfer_requested", "timestamp": None, "text": "llm_error"},
+        ],
+    )
+    monkeypatch.setattr(
+        r_storage,
+        "get_restaurant",
+        lambda rid: Restaurant(
+            id="r1",
+            name="R",
+            display_phone="+15551234567",
+            twilio_phone="+16479058093",
+            address="1 Main",
+            hours="11-22",
+            menu={},
+            fallback_phone=None,
+        ),
+    )
+
+    mark_calls = []
+    monkeypatch.setattr(
+        call_sessions,
+        "mark_transfer_attempted",
+        lambda *a, **kw: mark_calls.append(kw),
+    )
+
+    c = TestClient(app)
+    resp = c.post("/voice/stream-ended", data={"CallSid": "CAtest"})
+    assert resp.status_code == 200
+    assert "<Dial" not in resp.text
+    assert "<Record" in resp.text
+    assert mark_calls and mark_calls[0]["status"] == "skipped"
+
+
+def test_stream_ended_handles_missing_call_sid_gracefully(monkeypatch):
+    """Defensive — if Twilio's CallSid form field is missing, return
+    empty TwiML rather than 500."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    c = TestClient(app)
+    resp = c.post("/voice/stream-ended", data={})
+    assert resp.status_code == 200
+    assert "<Dial" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# /voice/transfer-result — Phase C cascade on no-answer (#7 Sprint 2.4 Track 2)
+# ---------------------------------------------------------------------------
+
+
+def test_transfer_result_completed_returns_empty(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.storage import call_sessions
+
+    mark_calls = []
+    monkeypatch.setattr(
+        call_sessions,
+        "mark_transfer_attempted",
+        lambda *a, **kw: mark_calls.append(kw),
+    )
+
+    c = TestClient(app)
+    resp = c.post(
+        "/voice/transfer-result",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={"DialCallStatus": "completed"},
+    )
+    assert resp.status_code == 200
+    assert "<Record" not in resp.text
+    assert mark_calls and mark_calls[0]["status"] == "answered"
+
+
+def test_transfer_result_no_answer_drops_to_voicemail(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.storage import call_sessions
+
+    monkeypatch.setattr(
+        call_sessions,
+        "mark_transfer_attempted",
+        lambda *a, **kw: None,
+    )
+
+    c = TestClient(app)
+    resp = c.post(
+        "/voice/transfer-result",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={"DialCallStatus": "no-answer"},
+    )
+    assert resp.status_code == 200
+    assert "<Record" in resp.text
+
+
+def test_transfer_result_busy_drops_to_voicemail(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.storage import call_sessions
+
+    monkeypatch.setattr(
+        call_sessions,
+        "mark_transfer_attempted",
+        lambda *a, **kw: None,
+    )
+
+    c = TestClient(app)
+    resp = c.post(
+        "/voice/transfer-result",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={"DialCallStatus": "busy"},
+    )
+    assert resp.status_code == 200
+    assert "<Record" in resp.text
+
+
+def test_transfer_result_failed_status_marks_internal_failed(monkeypatch):
+    """Verify the Twilio-status → internal-status mapping."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.storage import call_sessions
+
+    mark_calls = []
+    monkeypatch.setattr(
+        call_sessions,
+        "mark_transfer_attempted",
+        lambda *a, **kw: mark_calls.append(kw),
+    )
+
+    c = TestClient(app)
+    resp = c.post(
+        "/voice/transfer-result",
+        params={"call_sid": "CAtest", "rid": "r1"},
+        data={"DialCallStatus": "failed"},
+    )
+    assert resp.status_code == 200
+    assert mark_calls and mark_calls[0]["status"] == "failed"
+

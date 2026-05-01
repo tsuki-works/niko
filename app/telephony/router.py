@@ -25,7 +25,9 @@ from typing import Any, Callable
 
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
-from twilio.twiml.voice_response import Connect, VoiceResponse
+from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
+
+from app.telephony.voicemail_twiml import voicemail_response
 
 from app.config import settings
 from app.llm.client import stream_reply
@@ -681,6 +683,127 @@ async def voice(request: Request) -> Response:
     stream.parameter(name="restaurant_id", value=restaurant.id)
     twiml.append(connect)
     return Response(content=str(twiml), media_type="application/xml")
+
+
+_TRANSFER_STATUS_MAP = {
+    "completed": "answered",
+    "no-answer": "no_answer",
+    "busy": "busy",
+    "failed": "failed",
+    "canceled": "failed",
+}
+
+
+@router.post("/voice/stream-ended")
+async def stream_ended(request: Request) -> Response:
+    """Twilio's <Connect> action callback. Decides what happens after
+    the AI flow ends: empty TwiML (hang up), transfer to fallback, or
+    drop to voicemail directly.
+
+    Reads the latest call_session events to see if a `transfer_requested`
+    was written by the WebSocket finally block (Phase B). If so, looks
+    up the tenant's `fallback_phone` and returns <Dial> TwiML; if no
+    fallback is configured, drops to voicemail with status='skipped'.
+    """
+    form = await request.form()
+    call_sid = form.get("CallSid")
+
+    if not call_sid:
+        # Twilio always sends CallSid; missing → defensive hangup.
+        return Response(content=str(VoiceResponse()), media_type="application/xml")
+
+    # Resolve the tenant by reading the call_session doc. Uses the legacy
+    # flat path because this action callback only receives CallSid — the
+    # rid isn't known until we look it up here.
+    try:
+        session_doc = call_sessions.get_session_by_call_sid(call_sid)
+        rid: str | None = (session_doc or {}).get("restaurant_id")
+    except Exception:
+        logger.exception(
+            "stream_ended: session lookup failed call_sid=%s", call_sid
+        )
+        rid = None
+
+    if rid is None:
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    events = call_sessions.get_session_events(call_sid, rid) or []
+    last = events[-1] if events else {}
+    transfer_requested = last.get("kind") == "transfer_requested"
+
+    if not transfer_requested:
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    restaurant = restaurants_storage.get_restaurant(rid)
+    if restaurant is None or not restaurant.fallback_phone:
+        # Transfer requested but no number to dial → mark + voicemail.
+        try:
+            call_sessions.mark_transfer_attempted(
+                call_sid, rid, status="skipped", fallback_phone=None,
+            )
+        except Exception:
+            logger.exception(
+                "stream_ended: mark_transfer_attempted skipped call_sid=%s",
+                call_sid,
+            )
+        return Response(
+            content=str(voicemail_response(call_sid, rid)),
+            media_type="application/xml",
+        )
+
+    twiml = VoiceResponse()
+    dial = Dial(
+        action=f"/voice/transfer-result?call_sid={call_sid}&rid={rid}",
+        method="POST",
+        timeout=20,
+    )
+    dial.number(restaurant.fallback_phone)
+    twiml.append(dial)
+    return Response(content=str(twiml), media_type="application/xml")
+
+
+@router.post("/voice/transfer-result")
+async def transfer_result(
+    request: Request,
+    call_sid: str,
+    rid: str,
+) -> Response:
+    """<Dial>'s action callback. Maps Twilio DialCallStatus to internal
+    status, marks the call session, and either returns empty (answered)
+    or cascades to voicemail (no-answer/busy/failed)."""
+    form = await request.form()
+    status = form.get("DialCallStatus", "failed")
+    internal_status = _TRANSFER_STATUS_MAP.get(status, "failed")
+
+    try:
+        call_sessions.mark_transfer_attempted(
+            call_sid,
+            rid,
+            status=internal_status,
+            fallback_phone=None,
+        )
+    except Exception:
+        logger.exception(
+            "transfer_result: mark_transfer_attempted failed call_sid=%s",
+            call_sid,
+        )
+
+    if internal_status == "answered":
+        return Response(
+            content=str(VoiceResponse()),
+            media_type="application/xml",
+        )
+
+    return Response(
+        content=str(voicemail_response(call_sid, rid)),
+        media_type="application/xml",
+    )
 
 
 @router.websocket("/media-stream")
