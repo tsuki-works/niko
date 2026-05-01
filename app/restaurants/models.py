@@ -141,13 +141,13 @@ class MenuItemCreate(BaseModel):
     name: str = Field(min_length=1)
     description: Optional[str] = None
     price: Optional[float] = Field(default=None, ge=0)
-    sizes: Optional[dict[str, float]] = None
+    sizes: Optional[dict[str, float]] = Field(default=None, min_length=1)
     available: bool = True
 
     @model_validator(mode="after")
     def _exactly_one_price(self):
         has_price = self.price is not None
-        has_sizes = self.sizes is not None and len(self.sizes) > 0
+        has_sizes = self.sizes is not None
         if has_price and has_sizes:
             raise ValueError("specify exactly one of price or sizes, not both")
         if not has_price and not has_sizes:
@@ -172,16 +172,22 @@ class MenuItemUpdate(BaseModel):
     new_category: Optional[str] = Field(default=None, min_length=1)
     description: Optional[str] = None
     price: Optional[float] = Field(default=None, ge=0)
-    sizes: Optional[dict[str, float]] = None
+    sizes: Optional[dict[str, float]] = Field(default=None, min_length=1)
     available: Optional[bool] = None
 
     @model_validator(mode="after")
-    def _not_both_price_and_sizes(self):
+    def _validate_sizes(self):
         if self.price is not None and self.sizes is not None:
             raise ValueError("specify at most one of price or sizes")
+        if self.sizes is not None:
+            for size_name, price in self.sizes.items():
+                if price < 0:
+                    raise ValueError(
+                        f"size {size_name!r} price must be non-negative"
+                    )
         return self
 
 
 class CategoryCreate(BaseModel):
     model_config = {"extra": "forbid"}
-    key: str = Field(min_length=1, pattern=r"^[a-z0-9_]+$")
+    key: str = Field(min_length=1, pattern=r"^[a-z0-9][a-z0-9_]*$")

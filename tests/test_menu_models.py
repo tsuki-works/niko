@@ -50,3 +50,43 @@ def test_menu_item_update_allows_partial_fields():
 def test_menu_item_update_rejects_both_price_and_sizes_together():
     with pytest.raises(ValueError):
         MenuItemUpdate(price=10.00, sizes={"small": 8.00})
+
+
+def test_category_create_accepts_snake_case_keys():
+    from app.restaurants.models import CategoryCreate
+
+    CategoryCreate(key="pizzas")
+    CategoryCreate(key="fried_rice")
+    CategoryCreate(key="caribbean_appetizers")
+    CategoryCreate(key="x")  # single char OK
+    CategoryCreate(key="abc123_xyz")
+
+
+def test_category_create_rejects_invalid_keys():
+    from app.restaurants.models import CategoryCreate
+
+    invalid = [
+        "Pizzas",          # uppercase
+        "fried rice",      # space
+        "fried-rice",      # hyphen
+        "_underscore",     # underscore prefix reserved for internal keys
+        "",                # empty
+    ]
+    for key in invalid:
+        with pytest.raises(Exception):
+            CategoryCreate(key=key)
+
+
+def test_menu_item_update_rejects_negative_size_price():
+    from app.restaurants.models import MenuItemUpdate
+
+    with pytest.raises(Exception):
+        MenuItemUpdate(sizes={"small": -1.00, "large": 18.00})
+
+
+def test_menu_item_update_rejects_empty_sizes_dict():
+    """Empty sizes dict is not the same as "not provided"; reject explicitly."""
+    from app.restaurants.models import MenuItemUpdate
+
+    with pytest.raises(Exception):
+        MenuItemUpdate(sizes={})
