@@ -7,6 +7,7 @@ just closely enough for our consumer — ``.type``, ``.text`` / ``.id`` /
 """
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Optional
 from unittest.mock import MagicMock
 
@@ -557,16 +558,34 @@ def test_caller_changes_mind_replaces_items():
 class _FakeAsyncStream:
     """Mimics ``AsyncMessageStream`` just enough for ``stream_reply``.
 
-    Yields the configured text deltas through ``text_stream``, then
-    returns a fake final message via ``get_final_message`` whose
-    ``content`` blocks the consumer can iterate. ``model_dump`` is
-    required because ``stream_reply`` serializes the assistant turn
-    into history.
+    Synthesizes a raw-event sequence that mirrors what the Anthropic
+    SDK emits, so ``stream_reply`` can iterate ``async for event in
+    stream`` and observe message_start (with cache-token usage),
+    content_block_start (text or tool_use), and content_block_delta
+    (text_delta) events.
+
+    Knobs:
+    - ``blocks``         — final-message content (text and tool_use).
+                           Determines block-start order during streaming.
+    - ``deltas``         — optional override for the first text block's
+                           streamed deltas. When empty, the block.text
+                           is emitted as a single delta.
+    - ``usage_*``        — cache token counts surfaced via the
+                           message_start event and on get_final_message.
     """
 
-    def __init__(self, *, deltas: list[str], blocks: list[FakeBlock]):
+    def __init__(
+        self,
+        *,
+        deltas: list[str],
+        blocks: list[FakeBlock],
+        usage_cache_read: int = 0,
+        usage_cache_creation: int = 0,
+    ):
         self._deltas = deltas
         self._blocks = blocks
+        self._usage_cache_read = usage_cache_read
+        self._usage_cache_creation = usage_cache_creation
 
     async def __aenter__(self):
         return self
@@ -574,18 +593,64 @@ class _FakeAsyncStream:
     async def __aexit__(self, exc_type, exc, tb):
         return None
 
-    @property
-    def text_stream(self):
-        deltas = self._deltas
+    def _synthesized_events(self) -> list[Any]:
+        usage = SimpleNamespace(
+            cache_read_input_tokens=self._usage_cache_read,
+            cache_creation_input_tokens=self._usage_cache_creation,
+        )
+        events: list[Any] = [
+            SimpleNamespace(
+                type="message_start",
+                message=SimpleNamespace(usage=usage),
+            )
+        ]
+        first_text_seen = False
+        for block in self._blocks:
+            if block.type == "text":
+                events.append(
+                    SimpleNamespace(
+                        type="content_block_start",
+                        content_block=SimpleNamespace(type="text"),
+                    )
+                )
+                if not first_text_seen and self._deltas:
+                    for d in self._deltas:
+                        events.append(
+                            SimpleNamespace(
+                                type="content_block_delta",
+                                delta=SimpleNamespace(type="text_delta", text=d),
+                            )
+                        )
+                else:
+                    events.append(
+                        SimpleNamespace(
+                            type="content_block_delta",
+                            delta=SimpleNamespace(type="text_delta", text=block.text),
+                        )
+                    )
+                first_text_seen = True
+                events.append(SimpleNamespace(type="content_block_stop"))
+            elif block.type == "tool_use":
+                events.append(
+                    SimpleNamespace(
+                        type="content_block_start",
+                        content_block=SimpleNamespace(type="tool_use"),
+                    )
+                )
+                events.append(SimpleNamespace(type="content_block_stop"))
+        events.append(SimpleNamespace(type="message_stop"))
+        return events
 
-        async def _gen():
-            for d in deltas:
-                yield d
-
-        return _gen()
+    async def __aiter__(self):
+        for event in self._synthesized_events():
+            yield event
 
     async def get_final_message(self):
-        return MagicMock(content=self._blocks)
+        usage = SimpleNamespace(
+            cache_read_input_tokens=self._usage_cache_read,
+            cache_creation_input_tokens=self._usage_cache_creation,
+        )
+        return MagicMock(content=self._blocks, usage=usage)
 
 
 def _stream_manager_factory(streams: list[_FakeAsyncStream]):
@@ -765,6 +830,104 @@ async def test_stream_reply_text_deltas_arrive_before_final():
             seen.append("final")
 
     assert seen == ["delta:A", "delta:B", "delta:C", "final"]
+
+
+async def test_stream_reply_emits_timing_event_before_first_delta():
+    """The timing snapshot must land before any text delta so the
+    router can fold the breakdown into its ``first_audio`` Firestore
+    event (#146). The exact wall-clock numbers are environment-
+    dependent; what matters is the event shape and ordering."""
+
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(
+                deltas=["Hi!"],
+                blocks=[FakeBlock(type="text", text="Hi!")],
+                usage_cache_read=420,
+                usage_cache_creation=0,
+            )
+        ]
+    )
+
+    seen_kinds: list[str] = []
+    timing_payload: dict[str, Any] | None = None
+    async for event in stream_reply(
+        transcript="hello",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    ):
+        if event.timing is not None:
+            seen_kinds.append("timing")
+            timing_payload = event.timing
+        elif event.text_delta is not None:
+            seen_kinds.append("delta")
+        elif event.final is not None:
+            seen_kinds.append("final")
+
+    # timing must precede every text delta and the final event.
+    assert seen_kinds == ["timing", "delta", "final"]
+    assert timing_payload is not None
+    assert set(timing_payload.keys()) == {
+        "ttft_seconds",
+        "tool_prefix_seconds",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+    }
+    assert timing_payload["ttft_seconds"] >= 0
+    assert timing_payload["tool_prefix_seconds"] >= 0
+    # Cache token counts come straight from the message_start usage block.
+    assert timing_payload["cache_read_tokens"] == 420
+    assert timing_payload["cache_creation_tokens"] == 0
+
+
+async def test_stream_reply_timing_reflects_tool_use_before_text():
+    """When a tool_use block opens before any text, tool_prefix_seconds
+    is non-zero (the invisible streaming time #146 needs to expose).
+    When a text block opens first, tool_prefix_seconds is ~0."""
+
+    order = Order(call_sid="CAtest")
+
+    async def _run(blocks):
+        fake_client = MagicMock()
+        fake_client.messages.stream = _stream_manager_factory(
+            [_FakeAsyncStream(deltas=["Done."], blocks=blocks)]
+        )
+        timing = None
+        async for event in stream_reply(
+            transcript="x",
+            history=[],
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+            client=fake_client,
+        ):
+            if event.timing is not None:
+                timing = event.timing
+        assert timing is not None
+        return timing
+
+    text_first = await _run([FakeBlock(type="text", text="Done.")])
+    tool_first = await _run(
+        [
+            FakeBlock(
+                type="tool_use",
+                id="toolu_x",
+                name="update_order",
+                input={"items": [], "status": "confirmed"},
+            ),
+            FakeBlock(type="text", text="Done."),
+        ]
+    )
+
+    # Text-first: nothing between first event and first text block.
+    assert text_first["tool_prefix_seconds"] == 0.0
+    # Tool-first: tool_prefix_seconds may be small in tests but must be
+    # strictly greater than the text-first case (the synthesized
+    # tool_use block_start + stop events take real wall-clock time).
+    assert tool_first["tool_prefix_seconds"] >= text_first["tool_prefix_seconds"]
 
 
 def test_modifications_round_trip_into_line_item():

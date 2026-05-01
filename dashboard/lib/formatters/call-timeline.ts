@@ -49,6 +49,33 @@ function formatDuration(seconds: number): string {
   return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 
+/**
+ * Render the latency-breakdown suffix for `first_audio` events that
+ * carry the #146 instrumentation fields. Returns an empty string for
+ * legacy events that only have `latency_seconds`, so old timelines
+ * still render cleanly.
+ */
+export function formatFirstAudioBreakdown(detail: Record<string, unknown>): string {
+  const ttft = detail.ttft_seconds as number | undefined;
+  const toolPrefix = detail.tool_prefix_seconds as number | undefined;
+  const firstText = detail.first_text_seconds as number | undefined;
+  const cacheRead = detail.cache_read_tokens as number | undefined;
+  const cacheCreation = detail.cache_creation_tokens as number | undefined;
+
+  const parts: string[] = [];
+  if (typeof ttft === 'number') parts.push(`ttft=${Math.round(ttft * 1000)}ms`);
+  if (typeof toolPrefix === 'number')
+    parts.push(`tool=${Math.round(toolPrefix * 1000)}ms`);
+  if (typeof firstText === 'number')
+    parts.push(`text=${Math.round(firstText * 1000)}ms`);
+  if (typeof cacheRead === 'number' || typeof cacheCreation === 'number') {
+    const hit = (cacheRead ?? 0) > 0 && (cacheCreation ?? 0) === 0;
+    parts.push(`cache=${hit ? 'hit' : 'miss'}`);
+  }
+
+  return parts.length ? `[${parts.join(' ')}]` : '';
+}
+
 function eventBody(event: CallEvent): string {
   switch (event.kind) {
     case 'transcript_final':
@@ -62,7 +89,9 @@ function eventBody(event: CallEvent): string {
       const latency = event.detail.latency_seconds as number | undefined;
       if (typeof latency !== 'number') return '';
       const ms = Math.round(latency * 1000);
-      return ms >= 1000 ? `${ms}ms (over budget)` : `${ms}ms`;
+      const head = ms >= 1000 ? `${ms}ms (over budget)` : `${ms}ms`;
+      const breakdown = formatFirstAudioBreakdown(event.detail);
+      return breakdown ? `${head} ${breakdown}` : head;
     }
     case 'error':
       return event.text;

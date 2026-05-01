@@ -67,6 +67,61 @@ describe('formatTimelineAsText', () => {
     expect(text).toContain('1246ms (over budget)');
   });
 
+  it('renders the latency breakdown when #146 instrumentation fields are present', () => {
+    const enriched: CallTimeline = {
+      call_sid: 'CAenriched',
+      events: [
+        {
+          timestamp: '2026-05-01T10:37:09.000Z',
+          kind: 'first_audio',
+          text: '',
+          detail: {
+            latency_seconds: 1.236,
+            first_text_seconds: 1.1,
+            ttft_seconds: 0.42,
+            tool_prefix_seconds: 0.38,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 1850,
+          },
+        },
+      ],
+    };
+    const text = formatTimelineAsText(enriched);
+    expect(text).toContain('1236ms (over budget)');
+    expect(text).toContain('ttft=420ms');
+    expect(text).toContain('tool=380ms');
+    expect(text).toContain('text=1100ms');
+    expect(text).toContain('cache=miss');
+  });
+
+  it('omits the breakdown for legacy first_audio events that lack the new fields', () => {
+    const text = formatTimelineAsText(TIMELINE);
+    expect(text).not.toContain('ttft=');
+    expect(text).not.toContain('cache=');
+  });
+
+  it('marks cache=hit when read tokens are present and creation tokens are zero', () => {
+    const cached: CallTimeline = {
+      call_sid: 'CAcached',
+      events: [
+        {
+          timestamp: '2026-05-01T10:37:27.000Z',
+          kind: 'first_audio',
+          text: '',
+          detail: {
+            latency_seconds: 0.574,
+            ttft_seconds: 0.4,
+            tool_prefix_seconds: 0,
+            cache_read_tokens: 1850,
+            cache_creation_tokens: 0,
+          },
+        },
+      ],
+    };
+    const text = formatTimelineAsText(cached);
+    expect(text).toContain('cache=hit');
+  });
+
   it('renders agent_reply events with the AGENT label', () => {
     const text = formatTimelineAsText(TIMELINE);
     expect(text).toMatch(
