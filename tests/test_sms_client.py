@@ -72,7 +72,10 @@ def test_send_sms_calls_twilio_with_messaging_service():
     _fake_storage(order)
     fake_message = MagicMock(sid="SM123")
 
-    with patch("app.sms.client._twilio_client") as twilio_factory:
+    with (
+        patch("app.sms.client._twilio_client") as twilio_factory,
+        patch("app.config.settings.twilio_messaging_service_sid", "MGfake"),
+    ):
         twilio_factory.return_value.messages.create.return_value = fake_message
         result = send_sms(
             to="+15551234567",
@@ -117,7 +120,10 @@ def test_send_sms_writes_record_back_to_firestore_on_success():
     order = _ready_order()
     client = _fake_storage(order)
 
-    with patch("app.sms.client._twilio_client") as twilio_factory:
+    with (
+        patch("app.sms.client._twilio_client") as twilio_factory,
+        patch("app.config.settings.twilio_messaging_service_sid", "MGfake"),
+    ):
         twilio_factory.return_value.messages.create.return_value = MagicMock(
             sid="SMnew",
         )
@@ -146,7 +152,10 @@ def test_send_sms_raises_sms_error_when_twilio_fails():
     order = _ready_order()
     _fake_storage(order)
 
-    with patch("app.sms.client._twilio_client") as twilio_factory:
+    with (
+        patch("app.sms.client._twilio_client") as twilio_factory,
+        patch("app.config.settings.twilio_messaging_service_sid", "MGfake"),
+    ):
         twilio_factory.return_value.messages.create.side_effect = Exception(
             "twilio is sad",
         )
@@ -181,3 +190,24 @@ def test_send_sms_rejects_malformed_idempotency_key():
             idempotency_key="no-colon-here",
             tenant_id="niko-pizza-kitchen",
         )
+
+
+def test_send_sms_raises_when_messaging_service_sid_missing():
+    """Production safeguard: env var unset → fail fast with a clear
+    error rather than letting Twilio reject opaquely."""
+    order = _ready_order()
+    _fake_storage(order)
+
+    with (
+        patch("app.sms.client._twilio_client") as twilio_factory,
+        patch("app.config.settings.twilio_messaging_service_sid", None),
+    ):
+        with pytest.raises(SmsError) as exc:
+            send_sms(
+                to="+15551234567",
+                body="hello",
+                idempotency_key="CAabc:order_confirmation",
+                tenant_id="niko-pizza-kitchen",
+            )
+        assert "MESSAGING_SERVICE_SID" in str(exc.value)
+        twilio_factory.return_value.messages.create.assert_not_called()

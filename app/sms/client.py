@@ -73,6 +73,12 @@ def send_sms(
     if existing is not None:
         return SmsResult(sid=existing.sid, sent_at=existing.sent_at)
 
+    if not settings.twilio_messaging_service_sid:
+        raise SmsError(
+            "TWILIO_MESSAGING_SERVICE_SID not configured — outbound SMS "
+            "requires a Messaging Service for 10DLC compliance."
+        )
+
     try:
         message = _twilio_client().messages.create(
             to=to,
