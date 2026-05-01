@@ -238,7 +238,9 @@ def finalize_recording(
             return ("", 0)
 
         encoder = _make_encoder()
-        mp3 = encoder.encode(mixed) + encoder.flush()
+        # lameenc returns bytearray; upload_from_string rejects bytearray
+        # ("could not be converted to bytes"), so cast explicitly.
+        mp3 = bytes(encoder.encode(mixed) + encoder.flush())
 
         _upload_blob(
             blob_name=session.blob_name,
