@@ -564,7 +564,13 @@ async def voice(request: Request) -> Response:
 
     host = request.headers.get("host", "localhost:8000")
     connect = Connect()
-    stream = connect.stream(url=f"wss://{host}/media-stream", track="both_tracks")
+    # NOTE: <Connect><Stream> only supports the default ``inbound_track``;
+    # passing ``track="both_tracks"`` makes Twilio reject the TwiML and
+    # the call drops the moment the caller dismisses the trial-account
+    # interstitial. To capture the agent's voice in the recording, the
+    # /media-stream WS handler intercepts the TTS bytes we send out via
+    # ``speak()`` and feeds them directly into the recording session.
+    stream = connect.stream(url=f"wss://{host}/media-stream")
     stream.parameter(name="restaurant_id", value=restaurant.id)
     twiml.append(connect)
     return Response(content=str(twiml), media_type="application/xml")
