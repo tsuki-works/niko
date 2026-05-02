@@ -302,6 +302,41 @@ class _CallState:
     in_flight_transcript: str = ""
 
 
+_KEYTERM_INTENT_VOCAB = [
+    "pickup", "delivery", "large", "small", "medium", "extra",
+    "no", "with", "without", "order", "add",
+]
+
+# Deepgram keyterm budget: 500 tokens per request (roughly 500 words).
+_KEYTERM_MAX = 500
+
+
+def _build_keyterms(restaurant: "Restaurant | None") -> list[str]:
+    """Build a per-restaurant keyterm list for Deepgram Nova-3.
+
+    Combines menu item names with a fixed intent vocabulary so Deepgram
+    biases recognition toward domain-specific words (e.g. "pepper soup"
+    over "pepper shrimp"). Capped at _KEYTERM_MAX entries.
+    """
+    terms: list[str] = []
+    if restaurant is not None:
+        for word in restaurant.name.split():
+            clean = word.strip(".,!?").lower()
+            if clean and clean not in terms:
+                terms.append(clean)
+        for items in restaurant.menu.values():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                name = item.get("name", "") if isinstance(item, dict) else ""
+                if name and name not in terms:
+                    terms.append(name)
+    for word in _KEYTERM_INTENT_VOCAB:
+        if word not in terms:
+            terms.append(word)
+    return terms[:_KEYTERM_MAX]
+
+
 async def _open_deepgram_connection(
     call_sid: str | None,
     restaurant_id: str | None,
@@ -357,8 +392,9 @@ async def _open_deepgram_connection(
     # utterance_end_ms=1000 layers a prosody-aware end-of-utterance
     # signal on top so we wait for "actually finished" instead of just
     # "stopped making noise".
+    restaurant = state.restaurant if state is not None else None
     options = LiveOptions(
-        model="nova-2",
+        model=settings.deepgram_stt_model,
         encoding="mulaw",
         sample_rate=8000,
         channels=1,
@@ -366,6 +402,10 @@ async def _open_deepgram_connection(
         endpointing=800,
         utterance_end_ms=1000,
         vad_events=True,
+        smart_format=True,
+        language="en-US",
+        numerals=True,
+        keyterm=_build_keyterms(restaurant),
     )
     started = await conn.start(options)
     if not started:

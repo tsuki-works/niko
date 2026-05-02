@@ -2009,3 +2009,89 @@ async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch
 
     assert captured == ["and a coke"]
 
+
+# ---------------------------------------------------------------------------
+# Nova-3 + keyterm tests (#195)
+# ---------------------------------------------------------------------------
+
+def test_deepgram_stt_model_defaults_to_nova3():
+    from app.config import settings as app_settings
+    assert app_settings.deepgram_stt_model == "nova-3-general"
+
+
+def test_build_keyterms_includes_menu_items_and_intent_vocab():
+    from app.telephony.router import _build_keyterms, _KEYTERM_INTENT_VOCAB
+    from app.restaurants.models import Restaurant
+
+    restaurant = Restaurant(
+        id="test-r",
+        name="Niko Pizza Kitchen",
+        display_phone="+14165550001",
+        twilio_phone="+16479058093",
+        address="1 Test St",
+        hours="Mon-Sun 11:00-22:00",
+        menu={
+            "pizzas": [
+                {"name": "Margherita", "price": 14.99},
+                {"name": "Pepper Soup Special", "price": 12.99},
+            ],
+            "drinks": [
+                {"name": "Coke", "price": 2.99},
+            ],
+        },
+    )
+
+    terms = _build_keyterms(restaurant)
+
+    assert "Margherita" in terms
+    assert "Pepper Soup Special" in terms
+    assert "Coke" in terms
+    assert "pickup" in terms
+    assert "delivery" in terms
+    assert len(terms) <= 500
+
+
+def test_build_keyterms_handles_none_restaurant():
+    from app.telephony.router import _build_keyterms, _KEYTERM_INTENT_VOCAB
+
+    terms = _build_keyterms(None)
+    assert "pickup" in terms
+    assert len(terms) == len(_KEYTERM_INTENT_VOCAB)
+
+
+def test_open_deepgram_connection_uses_nova3(monkeypatch):
+    """_open_deepgram_connection passes nova-3-general (or configured model)
+    to LiveOptions."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _open_deepgram_connection
+
+    captured_options: list = []
+
+    class FakeConn:
+        def on(self, *a, **kw): pass
+        async def start(self, options):
+            captured_options.append(options)
+            return True
+
+    class FakeDG:
+        class listen:
+            class asynclive:
+                @staticmethod
+                def v(_):
+                    return FakeConn()
+
+    monkeypatch.setattr(router_mod, "DeepgramClient", lambda _key: FakeDG())
+
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(
+        _open_deepgram_connection("CAtest", "rid", lambda t: None)
+    )
+
+    assert len(captured_options) == 1
+    opts = captured_options[0]
+    assert opts.model == "nova-3-general"
+    assert opts.smart_format is True
+    assert opts.language == "en-US"
+    assert opts.numerals is True
+    assert isinstance(opts.keyterm, list)
+
