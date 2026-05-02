@@ -74,12 +74,21 @@ JARVIS_POST_SECRET=$(gcloud secrets versions access latest \
 ANTHROPIC_API_KEY=$(gcloud secrets versions access latest \
   --secret=anthropic-api-key --project="$PROJECT_ID")
 
+# github-token is fetched tolerantly. If it has no version yet, the bot
+# falls back to chat-only mode (only get_recent_messages registered) and
+# logs the degraded path explicitly instead of crashing the unit. Once a
+# value is populated, a VM reset picks it up and the full 7-tool registry
+# comes online.
+GITHUB_TOKEN=$(gcloud secrets versions access latest \
+  --secret=github-token --project="$PROJECT_ID" 2>/dev/null || echo "")
+
 umask 077
 cat > "$ENV_FILE" <<EOF
 DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN
 DISCORD_GUILD_ID=$DISCORD_GUILD_ID
 JARVIS_POST_SECRET=$JARVIS_POST_SECRET
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+GITHUB_TOKEN=$GITHUB_TOKEN
 JARVIS_HTTP_PORT=8080
 JARVIS_LOG_LEVEL=INFO
 EOF
