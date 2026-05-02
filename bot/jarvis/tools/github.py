@@ -153,3 +153,67 @@ def build_get_issue_tool(
         },
         fn=get_issue,
     )
+
+
+def build_open_issue_tool(
+    *, github_client: Any, repo: str, allowed_labels: list[str]
+) -> ToolDescriptor:
+    allowed_set = set(allowed_labels)
+    allowed_for_doc = ", ".join(sorted(allowed_set)) or "(none)"
+
+    async def open_issue(
+        title: str, body: str, labels: list[str] | None = None
+    ) -> dict[str, Any]:
+        requested = list(labels or [])
+        accepted = [l for l in requested if l in allowed_set]
+        dropped = [l for l in requested if l not in allowed_set]
+
+        payload: dict[str, Any] = {"title": title, "body": body}
+        if accepted:
+            payload["labels"] = accepted
+
+        raw = await github_client.post(f"/repos/{repo}/issues", json=payload)
+
+        result: dict[str, Any] = {
+            "number": raw.get("number"),
+            "url": raw.get("html_url"),
+        }
+        if dropped:
+            result["dropped_labels"] = dropped
+        return result
+
+    return ToolDescriptor(
+        name="open_issue",
+        description=(
+            "Open a new GitHub issue in tsuki-works/niko. Returns the new "
+            "issue's number and URL. Labels are validated against an "
+            f"allowlist ({allowed_for_doc}); any unrecognized labels are "
+            "silently dropped and surfaced in 'dropped_labels' in the "
+            "response. Use this when the user asks you to file a bug, "
+            "feature request, or chore — confirm with the user before "
+            "calling unless they explicitly asked you to file."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Issue title (one line).",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Issue body in markdown.",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        f"Optional labels. Allowed: {allowed_for_doc}. "
+                        "Other labels are dropped."
+                    ),
+                },
+            },
+            "required": ["title", "body"],
+        },
+        fn=open_issue,
+    )

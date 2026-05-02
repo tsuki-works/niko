@@ -195,3 +195,89 @@ async def test_get_issue_descriptor_metadata():
     assert "issue" in desc.description.lower()
     assert desc.input_schema["properties"]["number"]["type"] == "integer"
     assert desc.input_schema.get("required") == ["number"]
+
+
+from jarvis.tools.github import build_open_issue_tool
+
+
+async def test_open_issue_creates_issue_with_basic_fields():
+    raw = {"number": 200, "html_url": "https://github.com/o/r/issues/200"}
+    gh = AsyncMock()
+    gh.post = AsyncMock(return_value=raw)
+    desc = build_open_issue_tool(
+        github_client=gh,
+        repo="o/r",
+        allowed_labels=["bug", "feature"],
+    )
+    out = await desc.fn(title="Bug: x", body="Steps: ...", labels=["bug"])
+    assert out == {"number": 200, "url": "https://github.com/o/r/issues/200"}
+    gh.post.assert_awaited_once()
+    path, kwargs = gh.post.await_args.args[0], gh.post.await_args.kwargs
+    assert path == "/repos/o/r/issues"
+    payload = kwargs["json"]
+    assert payload["title"] == "Bug: x"
+    assert payload["body"] == "Steps: ..."
+    assert payload["labels"] == ["bug"]
+
+
+async def test_open_issue_drops_labels_not_in_allowlist():
+    raw = {"number": 201, "html_url": "u"}
+    gh = AsyncMock()
+    gh.post = AsyncMock(return_value=raw)
+    desc = build_open_issue_tool(
+        github_client=gh,
+        repo="o/r",
+        allowed_labels=["bug", "feature"],
+    )
+    out = await desc.fn(
+        title="t", body="b", labels=["bug", "production-incident", "paid"]
+    )
+    payload = gh.post.await_args.kwargs["json"]
+    assert payload["labels"] == ["bug"]
+    assert out["dropped_labels"] == ["production-incident", "paid"]
+
+
+async def test_open_issue_omits_labels_field_when_none_accepted():
+    raw = {"number": 202, "html_url": "u"}
+    gh = AsyncMock()
+    gh.post = AsyncMock(return_value=raw)
+    desc = build_open_issue_tool(
+        github_client=gh,
+        repo="o/r",
+        allowed_labels=["bug"],
+    )
+    out = await desc.fn(title="t", body="b", labels=["foo", "bar"])
+    payload = gh.post.await_args.kwargs["json"]
+    assert "labels" not in payload  # don't send empty list
+    assert out["dropped_labels"] == ["foo", "bar"]
+
+
+async def test_open_issue_handles_no_labels_kwarg():
+    raw = {"number": 203, "html_url": "u"}
+    gh = AsyncMock()
+    gh.post = AsyncMock(return_value=raw)
+    desc = build_open_issue_tool(
+        github_client=gh,
+        repo="o/r",
+        allowed_labels=["bug"],
+    )
+    out = await desc.fn(title="t", body="b")
+    payload = gh.post.await_args.kwargs["json"]
+    assert "labels" not in payload
+    assert "dropped_labels" not in out
+
+
+async def test_open_issue_descriptor_metadata():
+    gh = AsyncMock()
+    desc = build_open_issue_tool(
+        github_client=gh, repo="o/r", allowed_labels=["bug"]
+    )
+    assert desc.name == "open_issue"
+    assert "open" in desc.description.lower() or "create" in desc.description.lower()
+    props = desc.input_schema["properties"]
+    assert props["title"]["type"] == "string"
+    assert props["body"]["type"] == "string"
+    assert props["labels"]["type"] == "array"
+    assert props["labels"]["items"]["type"] == "string"
+    # title and body required; labels optional.
+    assert set(desc.input_schema.get("required", [])) == {"title", "body"}
