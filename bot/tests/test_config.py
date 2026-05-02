@@ -23,6 +23,9 @@ def test_settings_defaults(fake_env, tmp_path, monkeypatch):
     assert s.jarvis_log_level == "INFO"
     assert s.commit_sha == ""
     assert s.gcp_project_id is None
+    assert s.github_token is None
+    assert s.github_repo == "tsuki-works/niko"
+    assert s.github_project_id == "PVT_kwDOEIgWQM4BVBdK"
 
 
 def test_settings_overrides_via_env(fake_env, tmp_path, monkeypatch):
@@ -41,6 +44,17 @@ def test_settings_gcp_project_id_override(fake_env, tmp_path, monkeypatch):
     monkeypatch.setenv("GCP_PROJECT_ID", "niko-tsuki-staging")
     s = Settings()
     assert s.gcp_project_id == "niko-tsuki-staging"
+
+
+def test_settings_github_overrides(fake_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
+    monkeypatch.setenv("GITHUB_REPO", "myorg/myrepo")
+    monkeypatch.setenv("GITHUB_PROJECT_ID", "PVT_other")
+    s = Settings()
+    assert s.github_token == "ghp_fake"
+    assert s.github_repo == "myorg/myrepo"
+    assert s.github_project_id == "PVT_other"
 
 
 def test_settings_missing_required_raises(tmp_path, monkeypatch):

@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     # staging project).
     gcp_project_id: Optional[str] = None
 
+    # GitHub credentials (PR 3a). Token is a PAT with read:org / repo
+    # scope (or fine-grained equivalent). PR 5 swaps to a GitHub App
+    # whose private key lives in Secret Manager — this PAT path is the
+    # bridging step.
+    github_token: Optional[str] = None
+    github_repo: str = "tsuki-works/niko"
+    github_project_id: str = "PVT_kwDOEIgWQM4BVBdK"
+
     commit_sha: str = ""
 
 
