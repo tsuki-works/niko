@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { CallTimeline } from '@/lib/api/calls';
 import {
+  formatFirstAudioBreakdown,
   formatTimelineAsText,
   timelineFilename,
 } from '@/lib/formatters/call-timeline';
@@ -215,5 +216,47 @@ describe('formatFirstAudioBreakdown — #175 new fields', () => {
     // New fields must not appear.
     expect(text).not.toContain('net+pre=');
     expect(text).not.toContain('decode=');
+  });
+});
+
+describe('formatFirstAudioBreakdown — #183 raw cache token counts', () => {
+  it('renders r=N w=M after cache=hit/miss when both token fields are present', () => {
+    const result = formatFirstAudioBreakdown({
+      ttft_seconds: 0.539,
+      network_prefill_seconds: 0.539,
+      decode_seconds: 0.0,
+      tool_prefix_seconds: 0.0,
+      first_text_seconds: 0.541,
+      cache_read_tokens: 4096,
+      cache_creation_tokens: 0,
+    });
+    expect(result).toContain('cache=hit r=4096 w=0');
+    // Verify the entire bracketed format for the issue's suggested example.
+    expect(result).toBe(
+      '[ttft=539ms net+pre=539ms decode=0ms tool=0ms text=541ms cache=hit r=4096 w=0]',
+    );
+  });
+
+  it('omits r= and w= entirely when both token fields are absent', () => {
+    // Legacy event — only timing fields, no cache token counts.
+    const result = formatFirstAudioBreakdown({
+      ttft_seconds: 0.42,
+      tool_prefix_seconds: 0.38,
+      first_text_seconds: 1.1,
+    });
+    expect(result).not.toContain('r=');
+    expect(result).not.toContain('w=');
+    expect(result).not.toContain('cache=');
+    expect(result).toBe('[ttft=420ms tool=380ms text=1100ms]');
+  });
+
+  it('renders cache=miss r=0 w=4096 for a cold cache write (read=0, creation>0)', () => {
+    // cache_read=0 + cache_creation>0 means a fresh write — no prior cache hit.
+    const result = formatFirstAudioBreakdown({
+      ttft_seconds: 0.6,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 4096,
+    });
+    expect(result).toContain('cache=miss r=0 w=4096');
   });
 });
