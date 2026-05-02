@@ -136,3 +136,62 @@ async def test_get_pr_descriptor_metadata():
     assert "pull request" in desc.description.lower() or "pr" in desc.description.lower()
     assert desc.input_schema["properties"]["number"]["type"] == "integer"
     assert desc.input_schema.get("required") == ["number"]
+
+
+from jarvis.tools.github import build_get_issue_tool
+
+
+async def test_get_issue_returns_compact_record():
+    raw = {
+        "title": "Fix the thing",
+        "state": "open",
+        "body": "Steps to reproduce: ...",
+        "labels": [
+            {"name": "bug"},
+            {"name": "phase-2"},
+        ],
+        "assignees": [
+            {"login": "meet"},
+            {"login": "sandeep"},
+        ],
+        "html_url": "https://github.com/o/r/issues/45",
+    }
+    gh = AsyncMock()
+    gh.get = AsyncMock(return_value=raw)
+    desc = build_get_issue_tool(github_client=gh, repo="o/r")
+    out = await desc.fn(number=45)
+    assert out == {
+        "title": "Fix the thing",
+        "state": "open",
+        "body": "Steps to reproduce: ...",
+        "labels": ["bug", "phase-2"],
+        "assignees": ["meet", "sandeep"],
+        "url": "https://github.com/o/r/issues/45",
+    }
+    gh.get.assert_awaited_once_with("/repos/o/r/issues/45")
+
+
+async def test_get_issue_handles_empty_labels_assignees():
+    raw = {
+        "title": "T",
+        "state": "closed",
+        "body": "",
+        "labels": [],
+        "assignees": [],
+        "html_url": "u",
+    }
+    gh = AsyncMock()
+    gh.get = AsyncMock(return_value=raw)
+    desc = build_get_issue_tool(github_client=gh, repo="o/r")
+    out = await desc.fn(number=1)
+    assert out["labels"] == []
+    assert out["assignees"] == []
+
+
+async def test_get_issue_descriptor_metadata():
+    gh = AsyncMock()
+    desc = build_get_issue_tool(github_client=gh, repo="o/r")
+    assert desc.name == "get_issue"
+    assert "issue" in desc.description.lower()
+    assert desc.input_schema["properties"]["number"]["type"] == "integer"
+    assert desc.input_schema.get("required") == ["number"]

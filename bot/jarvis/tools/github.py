@@ -111,3 +111,45 @@ def build_get_pr_tool(
         },
         fn=get_pr,
     )
+
+
+def build_get_issue_tool(
+    *, github_client: Any, repo: str
+) -> ToolDescriptor:
+    async def get_issue(number: int) -> dict[str, Any]:
+        raw = await github_client.get(f"/repos/{repo}/issues/{number}")
+        return {
+            "title": raw.get("title"),
+            "state": raw.get("state"),
+            "body": raw.get("body") or "",
+            "labels": [
+                (l or {}).get("name") for l in (raw.get("labels") or [])
+            ],
+            "assignees": [
+                (a or {}).get("login") for a in (raw.get("assignees") or [])
+            ],
+            "url": raw.get("html_url"),
+        }
+
+    return ToolDescriptor(
+        name="get_issue",
+        description=(
+            "Fetch a single issue from tsuki-works/niko by number. "
+            "Returns title, state, body, labels, assignees, and "
+            "GitHub URL. Use this when the user asks 'what's #42 "
+            "about?', 'who's working on #42?', or to read an issue "
+            "before referencing it. Note that GitHub treats PRs as a "
+            "subtype of issues — for PRs prefer get_pr for richer fields."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "integer",
+                    "description": "Issue number (e.g., 42).",
+                },
+            },
+            "required": ["number"],
+        },
+        fn=get_issue,
+    )
