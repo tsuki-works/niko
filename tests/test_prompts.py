@@ -92,6 +92,40 @@ def test_prompt_couples_goodbye_phrases_with_status_flip():
     assert 'status="confirmed"' in lower
 
 
+def test_prompt_closing_uses_period_terminated_openers():
+    """Regression for #186 — closing examples must use period-terminated
+    openers so TTS flushes the opener immediately instead of buffering
+    behind a comma. Also pins the variety rule listing at least three of
+    the four named openers."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    # Period-terminated openers present in the closing examples.
+    # The text wraps across lines in the dedented block, so we check each
+    # part separately rather than as a single substring.
+    assert "got it." in lower
+    assert "your order is in" in lower
+    assert "perfect." in lower
+    assert "we'll have it ready" in lower
+    # Old comma-led forms must be gone (the #186 fix replaced them)
+    assert "great, your order is in" not in lower
+    assert "perfect, we'll have it ready" not in lower
+    # Variety rule — at least 3 of the 4 named openers must appear quoted
+    variety_openers = ['"got it."', '"perfect."', '"alright."', '"of course."']
+    found = sum(1 for o in variety_openers if o in lower)
+    assert found >= 3, f"Expected >=3 variety openers in prompt, found {found}"
+    # Motivation sentence must be present so the model knows WHY
+    assert "periods let" in lower or "tts start speaking sooner" in lower
+
+
+def test_prompt_readback_example_uses_period_terminated_opener():
+    """Regression for #186 — the order confirmation read-back example
+    must also lead with a period-terminated opener ('Perfect.') so the
+    TTS flushing rule is modelled consistently across all examples."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    assert "perfect. so that's one large margherita" in lower
+
+
 def test_prompt_renders_per_tenant_name():
     """Multi-tenancy (#79): the same builder run against a different
     Restaurant produces a prompt with that restaurant's name — proves
