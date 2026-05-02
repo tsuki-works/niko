@@ -18,9 +18,12 @@ def test_system_prompt_includes_team_members():
         assert name in p, f"{name} missing from system prompt"
 
 
-def test_system_prompt_acknowledges_no_tools():
+def test_system_prompt_lists_available_tools():
     p = build_system_prompt()
-    assert "no tools" in p.lower() or "cannot look up" in p.lower()
+    # PR 3a: three tools available
+    assert "get_current_sprint" in p
+    assert "get_recent_commits" in p
+    assert "search_repo_docs" in p
 
 
 def test_system_prompt_has_hard_rules():
