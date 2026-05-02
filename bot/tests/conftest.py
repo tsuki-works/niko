@@ -2,10 +2,29 @@
 
 from __future__ import annotations
 
-import os
+import logging
 from collections.abc import Iterator
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logger() -> Iterator[None]:
+    """Snapshot root logger state before each test and restore after.
+
+    The bot's logging tests (and any future test that exercises modules
+    using the root logger) mutate global state. Without this, ordering
+    between test files becomes load-bearing — fail loudly here, not
+    obscurely later.
+    """
+    root = logging.getLogger()
+    saved_level = root.level
+    saved_handlers = list(root.handlers)
+    try:
+        yield
+    finally:
+        root.setLevel(saved_level)
+        root.handlers = saved_handlers
 
 
 @pytest.fixture
@@ -18,5 +37,4 @@ def fake_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("JARVIS_HTTP_PORT", raising=False)
     monkeypatch.delenv("JARVIS_LOG_LEVEL", raising=False)
     monkeypatch.delenv("COMMIT_SHA", raising=False)
-    # Block .env file resolution by chdir'ing to a fresh tmp dir.
     yield

@@ -14,13 +14,16 @@ def test_configure_logging_sets_root_level():
 
 def test_configure_logging_idempotent():
     configure_logging("INFO")
-    handlers_before = list(logging.getLogger().handlers)
     configure_logging("INFO")
-    handlers_after = list(logging.getLogger().handlers)
-    # Should not duplicate handlers on repeat invocation.
-    assert len(handlers_after) == len(handlers_before)
+    tagged = [
+        h
+        for h in logging.getLogger().handlers
+        if getattr(h, "_jarvis_stream_handler", False)
+    ]
+    assert len(tagged) == 1
 
 
 def test_configure_logging_invalid_level_falls_back_to_info(caplog):
     configure_logging("NOT_A_LEVEL")
     assert logging.getLogger().level == logging.INFO
+    assert caplog.records == []
