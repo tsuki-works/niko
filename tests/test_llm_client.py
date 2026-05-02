@@ -1887,3 +1887,265 @@ async def test_stream_reply_persistent_client_used_when_no_injection(monkeypatch
     assert client_module._default_async_client is fake_api, (
         "stream_reply must reuse the singleton, not replace it"
     )
+
+
+# ---------------------------------------------------------------------------
+# Second cache_control breakpoint on recent history (#176)
+# ---------------------------------------------------------------------------
+
+def test_mark_last_assistant_cache_breakpoint_no_assistant_turn():
+    """History shape: first turn — no assistant message yet.
+    _mark_last_assistant_cache_breakpoint must return the list unchanged."""
+    from app.llm.client import _mark_last_assistant_cache_breakpoint
+
+    messages = [{"role": "user", "content": "hello"}]
+    result = _mark_last_assistant_cache_breakpoint(messages)
+    assert result == messages
+
+
+def test_mark_last_assistant_cache_breakpoint_plain_assistant_turn():
+    """History shape: …user → assistant (plain text reply).
+    The last block of the assistant message must get cache_control: ephemeral.
+    The other blocks must be untouched."""
+    from app.llm.client import _mark_last_assistant_cache_breakpoint
+
+    messages = [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Hi there!"},
+                {"type": "text", "text": "What would you like?"},
+            ],
+        },
+        {"role": "user", "content": "one pepperoni"},
+    ]
+    result = _mark_last_assistant_cache_breakpoint(messages)
+
+    asst = result[1]
+    # First block — no cache_control added.
+    assert "cache_control" not in asst["content"][0]
+    # Last block — breakpoint stamped.
+    assert asst["content"][1]["cache_control"] == {"type": "ephemeral"}
+    assert asst["content"][1]["text"] == "What would you like?"
+    # Input list must not be mutated.
+    assert "cache_control" not in messages[1]["content"][1]
+
+
+def test_mark_last_assistant_cache_breakpoint_pending_tool_result_shape():
+    """History shape: …user → assistant (text + tool_use) → user (tool_result).
+    This is the pending-tool_result shape from _append_user_transcript.
+    The last ASSISTANT message is messages[-2]; its last block must be marked."""
+    from app.llm.client import _mark_last_assistant_cache_breakpoint
+
+    messages = [
+        {"role": "user", "content": "one pepperoni for pickup"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Got it!"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "update_order",
+                    "input": {"items": [], "status": "in_progress"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "Order updated."}
+            ],
+        },
+    ]
+    result = _mark_last_assistant_cache_breakpoint(messages)
+
+    asst = result[1]
+    # Last block of the assistant turn is the tool_use block — it gets the breakpoint.
+    assert asst["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert asst["content"][-1]["type"] == "tool_use"
+    # First block (text) untouched.
+    assert "cache_control" not in asst["content"][0]
+    # The trailing user/tool_result message must be untouched.
+    assert "cache_control" not in result[2]["content"][0]
+    # Input list must not be mutated.
+    assert "cache_control" not in messages[1]["content"][-1]
+
+
+def test_generate_reply_second_breakpoint_placed_on_prior_assistant_turn():
+    """generate_reply must pass a second cache_control breakpoint on the last
+    block of the previous assistant turn when one exists (#176)."""
+    order = Order(call_sid="CAtest")
+    captured: list[dict] = []
+
+    class FakeMessage:
+        content = [FakeBlock(type="text", text="Anything else?")]
+        stop_reason = "end_turn"
+
+    class FakeClient:
+        class messages:
+            @staticmethod
+            def create(**kwargs):
+                captured.append(kwargs)
+                return FakeMessage()
+
+    history = [
+        {"role": "user", "content": "one pepperoni"},
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Got it, what size?"}],
+        },
+    ]
+
+    generate_reply(
+        transcript="medium",
+        history=history,
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=FakeClient(),
+    )
+
+    sent_messages = captured[0]["messages"]
+    asst_msg = next(m for m in sent_messages if m["role"] == "assistant")
+    last_block = asst_msg["content"][-1]
+    assert last_block.get("cache_control") == {"type": "ephemeral"}, (
+        "Last block of prior assistant turn must carry cache_control: ephemeral"
+    )
+
+
+def test_generate_reply_no_breakpoint_on_first_turn():
+    """generate_reply on the very first turn (no history) must not add a
+    second breakpoint — there is no prior assistant turn to mark (#176)."""
+    order = Order(call_sid="CAtest")
+    captured: list[dict] = []
+
+    class FakeMessage:
+        content = [FakeBlock(type="text", text="Hi!")]
+        stop_reason = "end_turn"
+
+    class FakeClient:
+        class messages:
+            @staticmethod
+            def create(**kwargs):
+                captured.append(kwargs)
+                return FakeMessage()
+
+    generate_reply(
+        transcript="hello",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=FakeClient(),
+    )
+
+    sent_messages = captured[0]["messages"]
+    for msg in sent_messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                assert "cache_control" not in block, (
+                    "No cache_control breakpoint should be set when there is no prior assistant turn"
+                )
+
+
+async def test_stream_reply_second_breakpoint_placed_on_prior_assistant_turn():
+    """stream_reply must pass a second cache_control breakpoint on the last
+    block of the previous assistant turn when one exists (#176)."""
+    order = Order(call_sid="CAtest")
+    captured_calls: list[dict] = []
+
+    history = [
+        {"role": "user", "content": "one pepperoni"},
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Got it, what size?"}],
+        },
+    ]
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory_capturing(
+        [
+            _FakeAsyncStream(
+                deltas=["Okay."],
+                blocks=[FakeBlock(type="text", text="Okay.")],
+            )
+        ],
+        captured_calls,
+    )
+
+    await _collect_all_events(
+        stream_reply(
+            transcript="medium",
+            history=history,
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+            client=fake_client,
+        )
+    )
+
+    sent_messages = captured_calls[0]["messages"]
+    asst_msg = next(m for m in sent_messages if m["role"] == "assistant")
+    last_block = asst_msg["content"][-1]
+    assert last_block.get("cache_control") == {"type": "ephemeral"}, (
+        "stream_reply: last block of prior assistant turn must carry cache_control: ephemeral"
+    )
+
+
+async def test_stream_reply_second_breakpoint_pending_tool_result_shape():
+    """stream_reply with history ending in a pending tool_result (text+tool_use
+    shape) must mark the last block of the assistant message at messages[-2]
+    (#176)."""
+    order = Order(call_sid="CAtest")
+    captured_calls: list[dict] = []
+
+    history = [
+        {"role": "user", "content": "one pepperoni"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Got it!"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_p",
+                    "name": "update_order",
+                    "input": {"items": [], "status": "in_progress"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_p", "content": "Order updated."}
+            ],
+        },
+    ]
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory_capturing(
+        [
+            _FakeAsyncStream(
+                deltas=["Sounds good."],
+                blocks=[FakeBlock(type="text", text="Sounds good.")],
+            )
+        ],
+        captured_calls,
+    )
+
+    await _collect_all_events(
+        stream_reply(
+            transcript="extra olives",
+            history=history,
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+            client=fake_client,
+        )
+    )
+
+    sent_messages = captured_calls[0]["messages"]
+    asst_msg = next(m for m in sent_messages if m["role"] == "assistant")
+    last_block = asst_msg["content"][-1]
+    assert last_block.get("cache_control") == {"type": "ephemeral"}, (
+        "stream_reply: last block of prior assistant turn (pending tool_result shape) "
+        "must carry cache_control: ephemeral"
+    )
