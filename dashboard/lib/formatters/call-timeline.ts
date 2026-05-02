@@ -76,7 +76,9 @@ export function formatFirstAudioBreakdown(detail: Record<string, unknown>): stri
     parts.push(`text=${Math.round(firstText * 1000)}ms`);
   if (typeof cacheRead === 'number' || typeof cacheCreation === 'number') {
     const hit = (cacheRead ?? 0) > 0 && (cacheCreation ?? 0) === 0;
-    parts.push(`cache=${hit ? 'hit' : 'miss'}`);
+    const r = cacheRead ?? 0;
+    const w = cacheCreation ?? 0;
+    parts.push(`cache=${hit ? 'hit' : 'miss'} r=${r} w=${w}`);
   }
 
   return parts.length ? `[${parts.join(' ')}]` : '';
