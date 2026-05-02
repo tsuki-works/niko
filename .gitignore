@@ -18,3 +18,7 @@ venv/
 # Claude Code: per-developer local permissions (team-shared config lives in settings.json)
 .claude/settings.local.json
 **/.claude/settings.local.json
+
+# Claude Code: isolated worktrees created by /superpowers and similar workflows
+.claude/worktrees/
+**/.claude/worktrees/
