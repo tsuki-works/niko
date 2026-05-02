@@ -37,4 +37,5 @@ def fake_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("JARVIS_HTTP_PORT", raising=False)
     monkeypatch.delenv("JARVIS_LOG_LEVEL", raising=False)
     monkeypatch.delenv("COMMIT_SHA", raising=False)
+    monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
     yield

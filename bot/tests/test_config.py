@@ -22,6 +22,7 @@ def test_settings_defaults(fake_env, tmp_path, monkeypatch):
     assert s.jarvis_http_port == 8080
     assert s.jarvis_log_level == "INFO"
     assert s.commit_sha == ""
+    assert s.gcp_project_id is None
 
 
 def test_settings_overrides_via_env(fake_env, tmp_path, monkeypatch):
@@ -33,6 +34,13 @@ def test_settings_overrides_via_env(fake_env, tmp_path, monkeypatch):
     assert s.jarvis_http_port == 9090
     assert s.jarvis_log_level == "DEBUG"
     assert s.commit_sha == "abc1234"
+
+
+def test_settings_gcp_project_id_override(fake_env, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GCP_PROJECT_ID", "niko-tsuki-staging")
+    s = Settings()
+    assert s.gcp_project_id == "niko-tsuki-staging"
 
 
 def test_settings_missing_required_raises(tmp_path, monkeypatch):
