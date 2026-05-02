@@ -521,6 +521,100 @@ def test_stop_event_skips_persist_if_order_not_ready(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# #175 — tool-use turns emit two timing events
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_use_turn_two_timing_events_handled_by_router(monkeypatch):
+    """#175 — when stream_reply yields two timing events (tool-use turn),
+    the router must consume both without error. On a tool-only first turn
+    (no text in the first stream), the event order is:
+      1. timing-1 (fallback from the tool-only first stream)
+      2. timing-2 (from the follow-up stream's first text block)
+      3. text_delta (follow-up stream)
+      4. final
+    timing_snapshot is updated each time, so timing-2 ends up in the
+    first_audio Firestore event detail because it arrives before speak()
+    fires for the first time."""
+    from app.telephony import router as router_mod
+    from app.telephony.router import _run_llm_tts_turn, _CallState
+    from app.storage import call_sessions
+
+    first_timing = {
+        "ttft_seconds": 0.8,
+        "tool_prefix_seconds": 0.0,
+        "network_prefill_seconds": 0.6,
+        "decode_seconds": 0.2,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 500,
+    }
+    second_timing = {
+        "ttft_seconds": 0.3,
+        "tool_prefix_seconds": 0.0,
+        "network_prefill_seconds": 0.25,
+        "decode_seconds": 0.05,
+        "cache_read_tokens": 500,
+        "cache_creation_tokens": 0,
+    }
+
+    async def fake_stream_reply_tool_only_then_text(*, transcript, history, order, **kw):
+        # Tool-only first stream: timing-1 arrives (no text delta from first stream).
+        yield StreamEvent(timing=first_timing)
+        # Follow-up stream: timing-2 arrives BEFORE the text delta, so the
+        # router's timing_snapshot is updated before speak() fires.
+        yield StreamEvent(timing=second_timing)
+        # Now yield a text delta long enough to trigger a flush.
+        yield StreamEvent(text_delta="Okay, order cancelled. Have a great day!")
+        yield StreamEvent(
+            final=LLMResponse(
+                reply_text="Okay, order cancelled. Have a great day!",
+                order=order,
+                history=history,
+            )
+        )
+
+    async def fake_speak(text, websocket, stream_sid, **kw):
+        on_first_byte = kw.get("on_first_byte")
+        if on_first_byte is not None:
+            on_first_byte()
+
+    recorded_events: list[dict] = []
+
+    def fake_bg_call_event(call_sid, rid, **kwargs):
+        recorded_events.append({"call_sid": call_sid, "rid": rid, **kwargs})
+
+    monkeypatch.setattr(router_mod, "stream_reply", fake_stream_reply_tool_only_then_text)
+    monkeypatch.setattr(router_mod, "speak", fake_speak)
+    monkeypatch.setattr(router_mod, "_bg_call_event", fake_bg_call_event)
+    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+    ws = AsyncMock()
+
+    await _run_llm_tts_turn("never mind cancel", state, ws)
+
+    first_audio_events = [e for e in recorded_events if e.get("kind") == "first_audio"]
+    assert len(first_audio_events) == 1, (
+        f"Expected 1 first_audio event, got {len(first_audio_events)}"
+    )
+    detail = first_audio_events[0]["detail"]
+    # The second timing snapshot overwrites the first — its values appear in detail.
+    assert detail.get("ttft_seconds") == second_timing["ttft_seconds"], (
+        f"timing_snapshot should hold the second event; got ttft={detail.get('ttft_seconds')}"
+    )
+    assert detail.get("network_prefill_seconds") == second_timing["network_prefill_seconds"]
+    assert detail.get("decode_seconds") == second_timing["decode_seconds"]
+    assert "latency_seconds" in detail
+
+
+# ---------------------------------------------------------------------------
 # Barge-in: clear Twilio's audio buffer (#74)
 # ---------------------------------------------------------------------------
 

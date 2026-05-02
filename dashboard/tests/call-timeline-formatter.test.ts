@@ -149,3 +149,71 @@ describe('timelineFilename', () => {
     expect(filename).toBe('niko-call-CA1fa31451-20260425.txt');
   });
 });
+
+describe('formatFirstAudioBreakdown — #175 new fields', () => {
+  it('renders net+pre and decode when present, placed after ttft', () => {
+    const detail = {
+      latency_seconds: 1.1,
+      ttft_seconds: 0.5,
+      network_prefill_seconds: 0.35,
+      decode_seconds: 0.15,
+      tool_prefix_seconds: 0.0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 900,
+    };
+    const timeline: CallTimeline = {
+      call_sid: 'CAnew',
+      events: [
+        {
+          timestamp: '2026-05-01T12:00:00.000Z',
+          kind: 'first_audio',
+          text: '',
+          detail,
+        },
+      ],
+    };
+    const text = formatTimelineAsText(timeline);
+    expect(text).toContain('ttft=500ms');
+    expect(text).toContain('net+pre=350ms');
+    expect(text).toContain('decode=150ms');
+    expect(text).toContain('cache=miss');
+    // net+pre must come after ttft in the rendered string.
+    const ttftIdx = text.indexOf('ttft=');
+    const netPreIdx = text.indexOf('net+pre=');
+    const decodeIdx = text.indexOf('decode=');
+    expect(netPreIdx).toBeGreaterThan(ttftIdx);
+    expect(decodeIdx).toBeGreaterThan(netPreIdx);
+  });
+
+  it('old-shape detail without new fields renders identically to before', () => {
+    // This is the same detail shape as the existing "renders the latency breakdown"
+    // test — verifying the new fields' absence does not change existing output.
+    const detail = {
+      latency_seconds: 1.236,
+      first_text_seconds: 1.1,
+      ttft_seconds: 0.42,
+      tool_prefix_seconds: 0.38,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 1850,
+    };
+    const timeline: CallTimeline = {
+      call_sid: 'CAold',
+      events: [
+        {
+          timestamp: '2026-05-01T12:00:00.000Z',
+          kind: 'first_audio',
+          text: '',
+          detail,
+        },
+      ],
+    };
+    const text = formatTimelineAsText(timeline);
+    expect(text).toContain('ttft=420ms');
+    expect(text).toContain('tool=380ms');
+    expect(text).toContain('text=1100ms');
+    expect(text).toContain('cache=miss');
+    // New fields must not appear.
+    expect(text).not.toContain('net+pre=');
+    expect(text).not.toContain('decode=');
+  });
+});
