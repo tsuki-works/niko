@@ -48,7 +48,11 @@ from jarvis.tools.sprint import build_get_current_sprint_tool
 
 logger = logging.getLogger(__name__)
 
-_OPEN_ISSUE_LABEL_ALLOWLIST = ["bug", "feature", "docs", "chore", "question"]
+# Subset of tsuki-works/niko's actual labels that bot-filed issues are
+# allowed to carry. Triage labels (duplicate/invalid/wontfix) and
+# community markers (good first issue, help wanted) are deliberately
+# omitted — those are for human triage, not bot-filed issues.
+_OPEN_ISSUE_LABEL_ALLOWLIST = ["bug", "enhancement", "documentation", "question"]
 
 
 async def serve_http(app, port: int) -> None:
