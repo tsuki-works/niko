@@ -9,6 +9,30 @@
 
 ## 1. System Overview
 
+### 1.0 As-built (current `master`)
+
+![niko system overview — current master](./diagrams/system-overview.svg)
+
+Source: [`diagrams/system-overview.mmd`](./diagrams/system-overview.mmd) — regenerate with
+`npx -p @mermaid-js/mermaid-cli mmdc -i docs/diagrams/system-overview.mmd -o docs/diagrams/system-overview.svg -b transparent`.
+
+Notable deltas from the original April 2026 sketch below: the data layer is **Firestore** (not Postgres+Redis); auth is **Firebase Auth → session cookie** verified by FastAPI; the dashboard does **live updates via Firestore `onSnapshot`** instead of polling REST; there is **no separate task queue** yet (Celery/Redis was speculative — all per-call work runs inline in the WS handler); POS integration is unimplemented.
+
+### 1.1 Call recording pipeline (as built)
+
+![niko voice recording feature — current master](./diagrams/voice-recording.svg)
+
+Source: [`diagrams/voice-recording.mmd`](./diagrams/voice-recording.mmd) — regenerate with
+`npx -p @mermaid-js/mermaid-cli mmdc -i docs/diagrams/voice-recording.mmd -o docs/diagrams/voice-recording.svg -b transparent`.
+
+Five-stage flow: **(1) capture** caller audio from Twilio's WS plus agent audio intercepted in our own TTS pipeline (because `<Connect><Stream>` only forwards the inbound track — PR #140); **(2) buffer** raw PCM per side in memory with silence-padding to keep them time-aligned; **(3) finalize** mixes the two PCM streams to mono, encodes to MP3 32 kbps via `lameenc`, and uploads as a single GCS blob with `custom_time` set for per-tenant retention; **(4) persist** writes `recording_url` + duration onto the Firestore call session and emits a `recording_ready` event; **(5) playback** in the dashboard's call detail page hits a tenant-authed FastAPI endpoint that 302-redirects to a 30-min V4 signed URL minted via IAM `signBlob`.
+
+Key trade-off baked in by PR #142: encoding/upload happens once at WS stop, not incrementally during the call. Mid-call mixing produced choppy audio (caller-bytes-then-agent-bytes interleaving sounded wrong); deferring fixes that at the cost of losing the recording if the Cloud Run instance dies before `finalize_recording` runs.
+
+Owner-only `DELETE /calls/{sid}/recording` deletes the GCS blob (idempotent) and clears `recording_url` from the Firestore doc, emitting a `recording_deleted` event.
+
+### 1.2 Original system sketch (April 2026, pre-implementation)
+
 ```
                           ┌─────────────────────────────────────┐
                           │           RESTAURANT DASHBOARD       │
@@ -51,6 +75,8 @@
                              │  menus, transcripts    │
                              └──────────────────────┘
 ```
+
+Kept for historical reference. See §1.0 for the as-built system.
 
 ---
 

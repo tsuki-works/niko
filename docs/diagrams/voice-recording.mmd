@@ -1,0 +1,34 @@
+%% niko call recording — capture, store, play back
+%% regenerate: npx -p @mermaid-js/mermaid-cli mmdc -i voice-recording.mmd -o voice-recording.svg -b transparent
+sequenceDiagram
+  autonumber
+  participant C as 📞 Customer
+  participant T as Twilio
+  participant B as Backend
+  participant G as GCS bucket
+  participant D as Dashboard
+
+  rect rgba(219, 234, 254, 0.5)
+    note over C,B: 1. During the call — capture both voices
+    C->>T: speaks
+    T->>B: caller audio (live μ-law)
+    B->>T: agent audio (live μ-law)
+    T->>C: agent's voice
+    note right of B: Backend buffers BOTH sides<br/>as raw audio in memory.<br/>(Twilio never stores anything.)
+  end
+
+  rect rgba(220, 252, 231, 0.5)
+    note over B,G: 2. When the call ends — mix and upload
+    B->>B: mix caller + agent → 1 mono track
+    B->>B: encode to MP3 (lameenc, 32 kbps)
+    B->>G: upload one .mp3 file
+    B->>B: save recording URL on the call record
+  end
+
+  rect rgba(254, 226, 226, 0.5)
+    note over D,G: 3. Later — playback in the dashboard
+    D->>B: GET /calls/{id}/recording
+    B-->>D: 302 redirect to a signed GCS URL<br/>(valid for 30 min)
+    D->>G: stream the .mp3
+    G-->>D: audio bytes
+  end

@@ -1,0 +1,27 @@
+%% niko system overview — what happens when someone calls a restaurant
+%% regenerate: npx -p @mermaid-js/mermaid-cli mmdc -i system-overview.mmd -o system-overview.svg -b transparent
+flowchart LR
+  customer(["📞 Customer<br/>on the phone"])
+  twilio["Twilio<br/>(phone network)"]
+  backend["Our backend<br/>(FastAPI on Cloud Run)"]
+  ai["AI pipeline<br/><br/>Deepgram — speech to text<br/>Claude Haiku — conversation<br/>Deepgram Aura — text to speech"]
+  firestore[("Firestore<br/>(orders, calls, events)")]
+  dashboard["Restaurant dashboard<br/>(Next.js)"]
+  staff(["👩‍🍳 Restaurant staff"])
+
+  customer <==>|phone call| twilio
+  twilio <==>|live audio<br/>over WebSocket| backend
+  backend <-->|listen → think → speak| ai
+  backend -->|save order +<br/>call events| firestore
+  firestore -.->|live updates| dashboard
+  dashboard --- staff
+
+  classDef person fill:#fef3c7,stroke:#a16207,color:#1f2937,stroke-width:2px;
+  classDef ours fill:#dbeafe,stroke:#1d4ed8,color:#0f172a,stroke-width:2px;
+  classDef external fill:#f5f5f5,stroke:#525252,color:#262626,stroke-width:1px;
+  classDef store fill:#ede9fe,stroke:#6d28d9,color:#0f172a,stroke-width:2px;
+
+  class customer,staff person;
+  class backend,dashboard ours;
+  class twilio,ai external;
+  class firestore store;
