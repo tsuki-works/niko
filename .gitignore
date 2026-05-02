@@ -22,3 +22,17 @@ venv/
 # Claude Code: isolated worktrees created by /superpowers and similar workflows
 .claude/worktrees/
 **/.claude/worktrees/
+
+# Terraform — local state, plan files, provider plugins, lockfile-overrides
+# (.terraform.lock.hcl is intentionally NOT ignored — it pins provider versions
+# for reproducibility and should be committed.)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
