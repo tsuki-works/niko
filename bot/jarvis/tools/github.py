@@ -74,3 +74,40 @@ def build_get_recent_commits_tool(
         },
         fn=get_recent_commits,
     )
+
+
+def build_get_pr_tool(
+    *, github_client: Any, repo: str
+) -> ToolDescriptor:
+    async def get_pr(number: int) -> dict[str, Any]:
+        raw = await github_client.get(f"/repos/{repo}/pulls/{number}")
+        return {
+            "title": raw.get("title"),
+            "state": raw.get("state"),
+            "author": (raw.get("user") or {}).get("login"),
+            "body": raw.get("body") or "",
+            "files_changed": raw.get("changed_files"),
+            "url": raw.get("html_url"),
+        }
+
+    return ToolDescriptor(
+        name="get_pr",
+        description=(
+            "Fetch a single pull request from tsuki-works/niko by number. "
+            "Returns title, state (open/closed/merged), author, body, "
+            "files_changed count, and GitHub URL. Use this when the user "
+            "asks 'what does PR #123 do?', 'is #123 ready?', or to read "
+            "a PR's description before commenting."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "integer",
+                    "description": "Pull request number (e.g., 191).",
+                },
+            },
+            "required": ["number"],
+        },
+        fn=get_pr,
+    )

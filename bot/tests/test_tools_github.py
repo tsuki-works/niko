@@ -84,3 +84,55 @@ async def test_get_recent_commits_descriptor_metadata():
     assert "branch" in desc.input_schema["properties"]
     # Both args optional.
     assert desc.input_schema.get("required", []) == []
+
+
+from jarvis.tools.github import build_get_pr_tool
+
+
+async def test_get_pr_returns_compact_record():
+    raw = {
+        "title": "Add Twilio recording",
+        "state": "open",
+        "user": {"login": "meet"},
+        "body": "Closes #42. Adds recording webhook.",
+        "changed_files": 5,
+        "html_url": "https://github.com/o/r/pull/123",
+    }
+    gh = AsyncMock()
+    gh.get = AsyncMock(return_value=raw)
+    desc = build_get_pr_tool(github_client=gh, repo="tsuki-works/niko")
+    out = await desc.fn(number=123)
+    assert out == {
+        "title": "Add Twilio recording",
+        "state": "open",
+        "author": "meet",
+        "body": "Closes #42. Adds recording webhook.",
+        "files_changed": 5,
+        "url": "https://github.com/o/r/pull/123",
+    }
+    gh.get.assert_awaited_once_with("/repos/tsuki-works/niko/pulls/123")
+
+
+async def test_get_pr_handles_null_body():
+    raw = {
+        "title": "T",
+        "state": "closed",
+        "user": {"login": "u"},
+        "body": None,
+        "changed_files": 0,
+        "html_url": "u",
+    }
+    gh = AsyncMock()
+    gh.get = AsyncMock(return_value=raw)
+    desc = build_get_pr_tool(github_client=gh, repo="o/r")
+    out = await desc.fn(number=1)
+    assert out["body"] == ""
+
+
+async def test_get_pr_descriptor_metadata():
+    gh = AsyncMock()
+    desc = build_get_pr_tool(github_client=gh, repo="o/r")
+    assert desc.name == "get_pr"
+    assert "pull request" in desc.description.lower() or "pr" in desc.description.lower()
+    assert desc.input_schema["properties"]["number"]["type"] == "integer"
+    assert desc.input_schema.get("required") == ["number"]
