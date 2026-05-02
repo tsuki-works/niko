@@ -59,6 +59,17 @@ HANGUP_GRACE_SECONDS = 5.0
 # instead of hanging open. Picked > typical mark round-trip (1-3s).
 MARK_ECHO_TIMEOUT_SECONDS = 8.0
 
+# Silence watchdog arms from TTS-playback-end, not byte-send (#178).
+# After the last speak() of each turn we send this named mark; Twilio
+# echoes it back once the buffered audio has actually played out, and
+# only then do we start counting the silence window. A fallback timer
+# arms the watchdog anyway if Twilio never echoes (e.g. WS dropout).
+TTS_TURN_MARK = "tts_turn_end"
+# Max seconds to wait for Twilio to echo TTS_TURN_MARK before falling
+# back to arming the watchdog directly. 15s covers the longest plausible
+# agent TTS reply (~10s audio + 5s buffer); beyond this the mark is lost.
+TTS_MARK_ECHO_TIMEOUT_SECONDS = 15.0
+
 # Chunking thresholds for TTS handoff (#151). Sentence terminators
 # always flush; soft breaks (commas, semicolons, colons, em dashes)
 # only flush once the buffered chunk is ≥ _MIN_CHUNK_CHARS so that
@@ -168,6 +179,33 @@ async def send_end_of_call_mark(
         return False
 
 
+async def send_tts_turn_mark(websocket: WebSocket, stream_sid: str | None) -> bool:
+    """Append TTS_TURN_MARK to the outgoing media stream.
+
+    Twilio echoes it back once all queued TTS audio has played out, which
+    is when the caller can actually start responding (#178). Returns True
+    if the send succeeded.
+    """
+    if not stream_sid:
+        return False
+    try:
+        await websocket.send_json(
+            {
+                "event": "mark",
+                "streamSid": stream_sid,
+                "mark": {"name": TTS_TURN_MARK},
+            }
+        )
+        return True
+    except WebSocketDisconnect:
+        return False
+    except Exception:
+        logger.exception(
+            "mark: failed to send tts_turn_end mark stream_sid=%s", stream_sid
+        )
+        return False
+
+
 async def _hang_up_after_grace(state: _CallState) -> None:
     """Wait HANGUP_GRACE_SECONDS, then close the WebSocket to end the
     call.
@@ -233,6 +271,29 @@ async def _hang_up_after_mark_timeout(state: _CallState) -> None:
     await _hang_up_after_grace(state)
 
 
+async def _arm_silence_after_tts_mark_timeout(
+    state: _CallState, websocket: WebSocket
+) -> None:
+    """Fallback for #178: if Twilio never echoes TTS_TURN_MARK, arm the
+    silence watchdog anyway after ``TTS_MARK_ECHO_TIMEOUT_SECONDS``.
+
+    This prevents the call from hanging in silence forever if the WS
+    mark is dropped. Cancelled by the TTS mark-echo handler when the
+    echo arrives on time.
+    """
+    try:
+        await asyncio.sleep(TTS_MARK_ECHO_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        return
+    logger.warning(
+        "silence watchdog: tts_turn_end mark echo timed out after %.1fs, "
+        "arming watchdog directly call_sid=%s",
+        TTS_MARK_ECHO_TIMEOUT_SECONDS,
+        state.call_sid,
+    )
+    _arm_silence_watchdog(state, websocket)
+
+
 def _abort_pending_hangup(state: _CallState) -> None:
     """Cancel a pending auto-hangup because the caller spoke during
     the grace window. Safe to call when no hangup is pending."""
@@ -275,10 +336,11 @@ class _CallState:
     history:      list[dict]       = field(default_factory=list)
     restaurant:   Restaurant | None = None     # tenant for this call (#79)
     system_prompt: str             = ""        # built from restaurant on start
-    llm_task:          asyncio.Task | None = None   # current LLM→TTS turn
-    silence_task:      asyncio.Task | None = None   # silence watchdog
-    hangup_task:       asyncio.Task | None = None   # pending auto-hangup (#78)
-    mark_timeout_task: asyncio.Task | None = None   # mark-echo fallback (#114)
+    llm_task:              asyncio.Task | None = None   # current LLM→TTS turn
+    silence_task:          asyncio.Task | None = None   # silence watchdog
+    hangup_task:           asyncio.Task | None = None   # pending auto-hangup (#78)
+    mark_timeout_task:     asyncio.Task | None = None   # mark-echo fallback (#114)
+    tts_mark_timeout_task: asyncio.Task | None = None   # fallback if TTS_TURN_MARK never echoes (#178)
     pending_hangup: bool           = False     # set when goodbye mark sent (#78)
     recording_session: "RecordingUploadSession | None" = None
     should_hangup: asyncio.Event = field(default_factory=asyncio.Event)
@@ -320,31 +382,62 @@ async def _open_deepgram_connection(
             return
         label = "final" if result.is_final else "interim"
         logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
-        if result.is_final:
-            # Track confidence for transfer-trigger detection (#7).
-            # Explicit None check — `or 1.0` would replace 0.0 (falsy)
-            # with 1.0, masking a legitimate worst-case misheard signal.
-            raw_confidence = getattr(alt, "confidence", 1.0)
-            confidence = 1.0 if raw_confidence is None else raw_confidence
+        if not result.is_final:
+            # Caller is actively speaking — cancel both the silence watchdog
+            # and the TTS-mark fallback timer so neither fires while the
+            # caller is mid-sentence (#177).
             if state is not None:
-                state.last_caller_transcript = text
-                if confidence < 0.5:
-                    state.consecutive_low_confidence_turns += 1
-                else:
-                    state.consecutive_low_confidence_turns = 0
-            _bg_call_event(
+                _cancel_silence_task(state)
+                if (
+                    state.tts_mark_timeout_task
+                    and not state.tts_mark_timeout_task.done()
+                ):
+                    state.tts_mark_timeout_task.cancel()
+                    state.tts_mark_timeout_task = None
+            return
+        # Final transcript path.
+        # Track confidence for transfer-trigger detection (#7).
+        # Explicit None check — `or 1.0` would replace 0.0 (falsy)
+        # with 1.0, masking a legitimate worst-case misheard signal.
+        raw_confidence = getattr(alt, "confidence", 1.0)
+        confidence = 1.0 if raw_confidence is None else raw_confidence
+        if state is not None:
+            state.last_caller_transcript = text
+            if confidence < 0.5:
+                state.consecutive_low_confidence_turns += 1
+            else:
+                state.consecutive_low_confidence_turns = 0
+        _bg_call_event(
+            call_sid,
+            restaurant_id,
+            kind="transcript_final",
+            text=text,
+            detail={"text": text, "confidence": confidence},
+        )
+        asyncio.get_event_loop().create_task(on_final(text))
+
+    async def on_speech_started(self, speech_started, **kwargs):
+        # Deepgram fires this the moment VAD detects the caller speaking,
+        # before any transcript is ready. Cancel the silence watchdog
+        # immediately so it doesn't fire while the caller is talking (#177).
+        if state is not None:
+            logger.debug(
+                "speech_started: cancelling silence watchdog call_sid=%s",
                 call_sid,
-                restaurant_id,
-                kind="transcript_final",
-                text=text,
-                detail={"text": text, "confidence": confidence},
             )
-            asyncio.get_event_loop().create_task(on_final(text))
+            _cancel_silence_task(state)
+            if (
+                state.tts_mark_timeout_task
+                and not state.tts_mark_timeout_task.done()
+            ):
+                state.tts_mark_timeout_task.cancel()
+                state.tts_mark_timeout_task = None
 
     async def on_error(self, error, **kwargs):
         logger.error("deepgram error call_sid=%s error=%s", call_sid, error)
 
     conn.on(LiveTranscriptionEvents.Transcript, on_transcript)
+    conn.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
     conn.on(LiveTranscriptionEvents.Error, on_error)
 
     # endpointing + utterance_end_ms together control how aggressively
@@ -577,6 +670,23 @@ async def _run_llm_tts_turn(
                             state.mark_timeout_task = asyncio.create_task(
                                 _hang_up_after_mark_timeout(state)
                             )
+                # Send TTS_TURN_MARK so the silence watchdog arms from
+                # audio-playback-end rather than byte-send-end (#178).
+                # On hangup turns the end_of_call mark already owns timing
+                # so we skip to avoid a redundant watchdog arm racing the
+                # grace window.
+                if state.stream_sid and not state.pending_hangup:
+                    tts_sent = await send_tts_turn_mark(websocket, state.stream_sid)
+                    if tts_sent:
+                        if state.tts_mark_timeout_task and not state.tts_mark_timeout_task.done():
+                            state.tts_mark_timeout_task.cancel()
+                        state.tts_mark_timeout_task = asyncio.create_task(
+                            _arm_silence_after_tts_mark_timeout(state, websocket)
+                        )
+                    else:
+                        # Mark send failed (WS disconnected); fall back to
+                        # arming immediately so the watchdog still runs.
+                        _arm_silence_watchdog(state, websocket)
 
     except asyncio.CancelledError:
         logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)
@@ -614,6 +724,11 @@ async def _handle_final_transcript(
         state.silence_task and not state.silence_task.done()
     )
     _cancel_silence_task(state)
+    # Cancel any pending TTS-mark fallback timer — caller is speaking so
+    # we must not arm the silence watchdog behind their back (#177/#178).
+    if state.tts_mark_timeout_task and not state.tts_mark_timeout_task.done():
+        state.tts_mark_timeout_task.cancel()
+    state.tts_mark_timeout_task = None
     # Caller spoke — abort any pending auto-hangup (#78). Even if they
     # spoke during the grace window after a confirmation, we want to
     # keep the call alive and process this transcript.
@@ -626,9 +741,8 @@ async def _handle_final_transcript(
     state.llm_task = asyncio.create_task(
         _run_llm_tts_turn(text, state, websocket)
     )
-    state.llm_task.add_done_callback(
-        lambda _t: _arm_silence_watchdog(state, websocket)
-    )
+    # Silence watchdog is now armed by the TTS_TURN_MARK echo (audio
+    # playback end), not by task completion (byte-send end) — #178.
 
 
 _UNCONFIGURED_TWIML_MESSAGE = (
@@ -1056,9 +1170,8 @@ async def media_stream(websocket: WebSocket) -> None:
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)
                 )
-                state.llm_task.add_done_callback(
-                    lambda _t: _arm_silence_watchdog(state, websocket)
-                )
+                # Silence watchdog is now armed by the TTS_TURN_MARK echo
+                # (audio playback end), not by task completion — #178.
 
             elif event == "media":
                 payload = base64.b64decode(msg["media"]["payload"])
@@ -1082,7 +1195,8 @@ async def media_stream(websocket: WebSocket) -> None:
             elif event == "mark":
                 # Twilio echoes our outgoing marks once the audio queued
                 # before them has finished playing. We use it to drive
-                # auto-hangup after order confirmation (#78).
+                # auto-hangup after order confirmation (#78) and to arm
+                # the silence watchdog at true audio-end (#178).
                 mark_name = msg.get("mark", {}).get("name")
                 if mark_name == END_OF_CALL_MARK and state.pending_hangup:
                     logger.info(
@@ -1097,6 +1211,18 @@ async def media_stream(websocket: WebSocket) -> None:
                     state.hangup_task = asyncio.create_task(
                         _hang_up_after_grace(state)
                     )
+                elif mark_name == TTS_TURN_MARK:
+                    # Caller has now heard the agent's full reply — start
+                    # the silence countdown from this moment (#178).
+                    logger.debug(
+                        "silence watchdog: tts_turn_end mark received, "
+                        "arming watchdog call_sid=%s",
+                        state.call_sid,
+                    )
+                    if state.tts_mark_timeout_task and not state.tts_mark_timeout_task.done():
+                        state.tts_mark_timeout_task.cancel()
+                    state.tts_mark_timeout_task = None
+                    _arm_silence_watchdog(state, websocket)
 
             elif event == "stop":
                 logger.info("media-stream stop call_sid=%s", state.call_sid)
@@ -1113,6 +1239,9 @@ async def media_stream(websocket: WebSocket) -> None:
         logger.info("media-stream disconnected call_sid=%s", state.call_sid)
     finally:
         _cancel_silence_task(state)
+        if state.tts_mark_timeout_task and not state.tts_mark_timeout_task.done():
+            state.tts_mark_timeout_task.cancel()
+        state.tts_mark_timeout_task = None
         # Auto-hangup: stop any pending grace-window timer; the call is
         # already ending so we don't need to fire the REST close (#78).
         _abort_pending_hangup(state)
