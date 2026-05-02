@@ -36,6 +36,12 @@ if ! id jarvis >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin jarvis
 fi
 
+# 2a. Trust /opt/niko for git ops as root.
+# Without this, second-and-subsequent boots fail with
+# `fatal: detected dubious ownership in repository at '/opt/niko'`
+# because step 3 chowns the tree to `jarvis` but git ops run as root.
+git config --system --add safe.directory "$APP_DIR"
+
 # 3. Code: clone or refresh
 if [ ! -d "$APP_DIR/.git" ]; then
   log "cloning $REPO_URL ($BRANCH) to $APP_DIR"
