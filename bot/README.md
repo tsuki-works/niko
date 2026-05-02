@@ -40,6 +40,15 @@ doesn't get a "why are messages empty" debugging detour.
 
 3. Run:
 
+   PowerShell (Windows):
+
+   ```powershell
+   $env:PYTHONPATH = "bot"
+   .venv\Scripts\python -m jarvis.main
+   ```
+
+   bash / zsh (macOS / Linux / WSL):
+
    ```bash
    PYTHONPATH=bot .venv/Scripts/python -m jarvis.main
    ```
