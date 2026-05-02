@@ -74,3 +74,146 @@ def build_get_recent_commits_tool(
         },
         fn=get_recent_commits,
     )
+
+
+def build_get_pr_tool(
+    *, github_client: Any, repo: str
+) -> ToolDescriptor:
+    async def get_pr(number: int) -> dict[str, Any]:
+        raw = await github_client.get(f"/repos/{repo}/pulls/{number}")
+        return {
+            "title": raw.get("title"),
+            "state": raw.get("state"),
+            "author": (raw.get("user") or {}).get("login"),
+            "body": raw.get("body") or "",
+            "files_changed": raw.get("changed_files"),
+            "url": raw.get("html_url"),
+        }
+
+    return ToolDescriptor(
+        name="get_pr",
+        description=(
+            "Fetch a single pull request from tsuki-works/niko by number. "
+            "Returns title, state (open/closed/merged), author, body, "
+            "files_changed count, and GitHub URL. Use this when the user "
+            "asks 'what does PR #123 do?', 'is #123 ready?', or to read "
+            "a PR's description before commenting."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "integer",
+                    "description": "Pull request number (e.g., 191).",
+                },
+            },
+            "required": ["number"],
+        },
+        fn=get_pr,
+    )
+
+
+def build_get_issue_tool(
+    *, github_client: Any, repo: str
+) -> ToolDescriptor:
+    async def get_issue(number: int) -> dict[str, Any]:
+        raw = await github_client.get(f"/repos/{repo}/issues/{number}")
+        return {
+            "title": raw.get("title"),
+            "state": raw.get("state"),
+            "body": raw.get("body") or "",
+            "labels": [
+                (l or {}).get("name") for l in (raw.get("labels") or [])
+            ],
+            "assignees": [
+                (a or {}).get("login") for a in (raw.get("assignees") or [])
+            ],
+            "url": raw.get("html_url"),
+        }
+
+    return ToolDescriptor(
+        name="get_issue",
+        description=(
+            "Fetch a single issue from tsuki-works/niko by number. "
+            "Returns title, state, body, labels, assignees, and "
+            "GitHub URL. Use this when the user asks 'what's #42 "
+            "about?', 'who's working on #42?', or to read an issue "
+            "before referencing it. Note that GitHub treats PRs as a "
+            "subtype of issues — for PRs prefer get_pr for richer fields."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "integer",
+                    "description": "Issue number (e.g., 42).",
+                },
+            },
+            "required": ["number"],
+        },
+        fn=get_issue,
+    )
+
+
+def build_open_issue_tool(
+    *, github_client: Any, repo: str, allowed_labels: list[str]
+) -> ToolDescriptor:
+    allowed_set = set(allowed_labels)
+    allowed_for_doc = ", ".join(sorted(allowed_set)) or "(none)"
+
+    async def open_issue(
+        title: str, body: str, labels: list[str] | None = None
+    ) -> dict[str, Any]:
+        requested = list(labels or [])
+        accepted = [l for l in requested if l in allowed_set]
+        dropped = [l for l in requested if l not in allowed_set]
+
+        payload: dict[str, Any] = {"title": title, "body": body}
+        if accepted:
+            payload["labels"] = accepted
+
+        raw = await github_client.post(f"/repos/{repo}/issues", json=payload)
+
+        result: dict[str, Any] = {
+            "number": raw.get("number"),
+            "url": raw.get("html_url"),
+        }
+        if dropped:
+            result["dropped_labels"] = dropped
+        return result
+
+    return ToolDescriptor(
+        name="open_issue",
+        description=(
+            "Open a new GitHub issue in tsuki-works/niko. Returns the new "
+            "issue's number and URL. Labels are validated against an "
+            f"allowlist ({allowed_for_doc}); any unrecognized labels are "
+            "silently dropped and surfaced in 'dropped_labels' in the "
+            "response. Use this when the user asks you to file a bug, "
+            "feature request, or chore — confirm with the user before "
+            "calling unless they explicitly asked you to file."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Issue title (one line).",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Issue body in markdown.",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        f"Optional labels. Allowed: {allowed_for_doc}. "
+                        "Other labels are dropped."
+                    ),
+                },
+            },
+            "required": ["title", "body"],
+        },
+        fn=open_issue,
+    )
