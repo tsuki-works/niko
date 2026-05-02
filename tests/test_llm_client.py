@@ -20,6 +20,15 @@ from app.orders.models import Order, OrderStatus, OrderType
 _TEST_SYSTEM_PROMPT = "you are a test agent"
 
 
+@pytest.fixture(autouse=True)
+def _reset_async_client_singleton():
+    """Reset the module-level AsyncAnthropic singleton after each test so
+    one test's instance never leaks into the next. The real process doesn't
+    need this — the singleton is intentionally long-lived there."""
+    yield
+    client_module._reset_async_client()
+
+
 @dataclass
 class FakeBlock:
     type: str
@@ -1645,10 +1654,39 @@ async def test_stream_reply_timing_includes_network_prefill_and_decode():
     assert timing_payload["decode_seconds"] >= 0
 
 
-async def test_stream_reply_tool_use_turn_emits_two_timing_events():
+async def test_stream_reply_tool_use_turn_emits_two_timing_events(monkeypatch):
     """#175 — a tool-use turn must emit two timing events: one for the first
     stream call (at the text block of that turn) and one for the follow-up
-    stream call. The router iterates all events so seeing two is fine."""
+    stream call.
+
+    The clock is pinned to a deterministic sequence so a scoping bug where
+    the follow-up reused the first call's t_request_start (producing inflated
+    timing values like 1.05 - 0.0 = 1.05s) would be caught by the approx
+    assertions below."""
+    # time.monotonic call order inside stream_reply for this fixture shape
+    # (first stream: tool_use + text; follow-up stream: text):
+    #   [0] t_request_start (before first stream loop)
+    #   [1] t_first_event   (message_start, first-event guard)
+    #   [2] t_message_start (message_start branch)
+    #   [3] t_first_text_block (content_block_start(text) in first stream)
+    #   [4] fu_t_request_start (before follow-up stream loop)
+    #   [5] fu_t_first_event   (message_start, first-event guard)
+    #   [6] fu_t_message_start (message_start branch)
+    #   [7] fu_t_first_text_block (content_block_start(text) in follow-up)
+    _clock = [0.0, 0.10, 0.10, 0.20, 1.0, 1.05, 1.05, 1.15]
+    _clock_idx = [0]
+
+    def _fake_monotonic():
+        v = _clock[_clock_idx[0]]
+        _clock_idx[0] += 1
+        return v
+
+    # Patch the time module reference inside client.py so asyncio's own
+    # time.monotonic (used for event-loop scheduling) is not affected.
+    import types as _types
+    fake_time = _types.SimpleNamespace(monotonic=_fake_monotonic)
+    monkeypatch.setattr(client_module, "time", fake_time)
+
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
     fake_client.messages.stream = _stream_manager_factory(
@@ -1697,19 +1735,52 @@ async def test_stream_reply_tool_use_turn_emits_two_timing_events():
     assert len(timing_events) == 2, (
         f"Expected 2 timing events for a tool-use turn, got {len(timing_events)}"
     )
-    for t in timing_events:
-        assert "network_prefill_seconds" in t.timing
-        assert "decode_seconds" in t.timing
-        assert "ttft_seconds" in t.timing
-        assert "tool_prefix_seconds" in t.timing
-        assert t.timing["network_prefill_seconds"] >= 0
-        assert t.timing["decode_seconds"] >= 0
+
+    first_t = timing_events[0].timing
+    second_t = timing_events[1].timing
+
+    # First call: network_prefill = 0.10 - 0.0, decode = 0.20 - 0.10
+    assert first_t["network_prefill_seconds"] == pytest.approx(0.10, abs=1e-9)
+    assert first_t["decode_seconds"] == pytest.approx(0.10, abs=1e-9)
+
+    # Follow-up has its own t_request_start anchored at 1.0, not 0.0.
+    # A scoping bug reusing t_request_start=0.0 would produce ~1.05s here.
+    assert second_t["network_prefill_seconds"] == pytest.approx(0.05, abs=1e-9)
+    assert second_t["decode_seconds"] == pytest.approx(0.10, abs=1e-9)
+    assert second_t["network_prefill_seconds"] < first_t["network_prefill_seconds"]
 
 
-async def test_stream_reply_tool_only_turn_emits_two_timing_events():
+async def test_stream_reply_tool_only_turn_emits_two_timing_events(monkeypatch):
     """#175 — tool-only first turn (no text) + follow-up text turn also emits
     two timing events: the fallback from the first call and the normal one
-    from the follow-up call."""
+    from the follow-up call.
+
+    The clock is pinned so a scoping bug aliasing fu_t_request_start to
+    t_request_start would produce inflated follow-up timing and be caught."""
+    # time.monotonic call order for this fixture shape
+    # (first stream: tool_use only; follow-up stream: text):
+    #   [0] t_request_start (before first stream loop)
+    #   [1] t_first_event   (message_start, first-event guard)
+    #   [2] t_message_start (message_start branch)
+    #   — no t_first_text_block; fallback timing emitted with decode=0.0
+    #   [3] fu_t_request_start (before follow-up stream loop)
+    #   [4] fu_t_first_event   (message_start, first-event guard)
+    #   [5] fu_t_message_start (message_start branch)
+    #   [6] fu_t_first_text_block (content_block_start(text) in follow-up)
+    _clock = [0.0, 0.10, 0.10, 1.0, 1.05, 1.05, 1.15]
+    _clock_idx = [0]
+
+    def _fake_monotonic():
+        v = _clock[_clock_idx[0]]
+        _clock_idx[0] += 1
+        return v
+
+    # Patch the time module reference inside client.py so asyncio's own
+    # time.monotonic (used for event-loop scheduling) is not affected.
+    import types as _types
+    fake_time = _types.SimpleNamespace(monotonic=_fake_monotonic)
+    monkeypatch.setattr(client_module, "time", fake_time)
+
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
     fake_client.messages.stream = _stream_manager_factory(
@@ -1747,51 +1818,72 @@ async def test_stream_reply_tool_only_turn_emits_two_timing_events():
         f"Expected 2 timing events for a tool-only turn, got {len(timing_events)}"
     )
 
+    first_t = timing_events[0].timing
+    second_t = timing_events[1].timing
 
-async def test_stream_reply_persistent_client_used_when_no_injection():
-    """#175 — when no client is injected, stream_reply uses the module-level
-    singleton rather than building a new instance. We verify the singleton is
-    set after a call (we patch the key so _get_async_client doesn't fail)."""
-    from app.llm import client as client_module
+    # First call emitted a fallback timing (no text block): decode must be 0.
+    assert first_t["network_prefill_seconds"] == pytest.approx(0.10, abs=1e-9)
+    assert first_t["decode_seconds"] == pytest.approx(0.0, abs=1e-9)
 
-    client_module._reset_async_client()
+    # Follow-up is anchored at fu_t_request_start=1.0, not the first call's 0.0.
+    # A scoping bug reusing t_request_start=0.0 would produce ~1.05s here.
+    assert second_t["network_prefill_seconds"] == pytest.approx(0.05, abs=1e-9)
+    assert second_t["decode_seconds"] == pytest.approx(0.10, abs=1e-9)
+    assert second_t["network_prefill_seconds"] < first_t["network_prefill_seconds"]
 
-    fake_stream = _FakeAsyncStream(
-        deltas=["Hi!"],
-        blocks=[FakeBlock(type="text", text="Hi!")],
+
+async def test_stream_reply_persistent_client_used_when_no_injection(monkeypatch):
+    """#175 — when no client= is injected, stream_reply must use the module-level
+    singleton (_get_async_client) on every call, not construct a fresh
+    AsyncAnthropic per turn. A regression that switched back to per-turn
+    construction would bypass _get_async_client entirely and be caught here."""
+    # Pre-seed the singleton with a fake client so stream_reply can run without
+    # touching the real network. Two fake streams — one per stream_reply call.
+    fake_api = MagicMock()
+    fake_api.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(deltas=["Hi!"], blocks=[FakeBlock(type="text", text="Hi!")]),
+            _FakeAsyncStream(
+                deltas=["Hello again!"], blocks=[FakeBlock(type="text", text="Hello again!")]
+            ),
+        ]
+    )
+    monkeypatch.setattr(client_module, "_default_async_client", fake_api)
+
+    # Wrap _get_async_client to count how many times stream_reply invokes it.
+    get_call_count = 0
+    real_get = client_module._get_async_client
+
+    def _counting_get():
+        nonlocal get_call_count
+        get_call_count += 1
+        return real_get()
+
+    monkeypatch.setattr(client_module, "_get_async_client", _counting_get)
+
+    order = Order(call_sid="CAtest")
+    # Two calls without client= — both must route through _get_async_client.
+    await _collect_all_events(
+        stream_reply(
+            transcript="hello",
+            history=[],
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+        )
+    )
+    await _collect_all_events(
+        stream_reply(
+            transcript="and again",
+            history=[],
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+        )
     )
 
-    def _make_stream(**kwargs):
-        return fake_stream
-
-    original_get = client_module._get_async_client
-
-    created_instances: list = []
-
-    def _tracked_get():
-        instance = original_get()
-        created_instances.append(instance)
-        return instance
-
-    import unittest.mock as mock_module
-
-    with mock_module.patch.object(client_module, "_get_async_client", _tracked_get):
-        with mock_module.patch.object(client_module.settings, "anthropic_api_key", "fake-key"):
-            # First call creates the singleton.
-            client_module._reset_async_client()
-            # Inject a fake stream via the explicit client param so we don't
-            # hit the real network — this test only verifies the singleton path
-            # is invoked, not the live API.
-            pass
-
-    # Simpler assertion: after _reset_async_client(), calling _get_async_client
-    # with a valid key creates a new instance and stores it.
-    client_module._reset_async_client()
-    assert client_module._default_async_client is None
-
-    with mock_module.patch.object(client_module.settings, "anthropic_api_key", "fake-key-for-test"):
-        instance1 = client_module._get_async_client()
-        instance2 = client_module._get_async_client()
-
-    assert instance1 is instance2, "Singleton must return the same instance on repeated calls"
-    client_module._reset_async_client()
+    assert get_call_count == 2, (
+        f"_get_async_client should be called once per stream_reply turn; got {get_call_count}"
+    )
+    # The singleton was never replaced — both turns shared the same instance.
+    assert client_module._default_async_client is fake_api, (
+        "stream_reply must reuse the singleton, not replace it"
+    )
