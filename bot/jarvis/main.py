@@ -51,10 +51,12 @@ async def run() -> None:
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        # Re-raise the first exception (if any) from the completed tasks.
+        # Re-raise the first exception from the completed tasks. Calling
+        # task.result() (rather than `raise task.exception()`) preserves
+        # the original traceback, so a gateway crash points at the
+        # gateway frame instead of this loop.
         for task in done:
-            if task.exception() is not None:
-                raise task.exception()
+            task.result()
     finally:
         try:
             await bot.close()
