@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     # Deepgram STT model for the live transcription pipeline. Nova-3 gives
     # ~18% relative WER reduction over Nova-2 and is required for the
     # `keyterm` parameter that fixes domain-vocabulary misfires (#195).
-    # Override via DEEPGRAM_STT_MODEL once Kailash confirms the best
-    # telephony-optimised Nova-3 variant from the Deepgram dashboard.
+    # Override via DEEPGRAM_STT_MODEL if a telephony-optimised Nova-3 variant
+    # becomes available (verify via the Deepgram dashboard before changing).
     deepgram_stt_model: str = "nova-3-general"
 
     twilio_account_sid: Optional[str] = None

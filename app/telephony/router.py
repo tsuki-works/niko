@@ -307,7 +307,7 @@ _KEYTERM_INTENT_VOCAB = [
     "no", "with", "without", "order", "add",
 ]
 
-# Deepgram keyterm budget: 500 tokens per request (roughly 500 words).
+# Deepgram keyterm limit: 500 entries per request.
 _KEYTERM_MAX = 500
 
 
@@ -319,21 +319,25 @@ def _build_keyterms(restaurant: "Restaurant | None") -> list[str]:
     over "pepper shrimp"). Capped at _KEYTERM_MAX entries.
     """
     terms: list[str] = []
+    seen: set[str] = set()
+
+    def _add(term: str) -> None:
+        key = term.lower()
+        if term and key not in seen:
+            seen.add(key)
+            terms.append(term)
+
     if restaurant is not None:
         for word in restaurant.name.split():
-            clean = word.strip(".,!?").lower()
-            if clean and clean not in terms:
-                terms.append(clean)
+            _add(word.strip(".,!?"))
         for items in restaurant.menu.values():
             if not isinstance(items, list):
                 continue
             for item in items:
                 name = item.get("name", "") if isinstance(item, dict) else ""
-                if name and name not in terms:
-                    terms.append(name)
+                _add(name)
     for word in _KEYTERM_INTENT_VOCAB:
-        if word not in terms:
-            terms.append(word)
+        _add(word)
     return terms[:_KEYTERM_MAX]
 
 
@@ -346,7 +350,7 @@ async def _open_deepgram_connection(
     assert settings.deepgram_api_key, "DEEPGRAM_API_KEY is not set"
 
     dg = DeepgramClient(settings.deepgram_api_key)
-    conn = dg.listen.asynclive.v("1")
+    conn = dg.listen.asyncwebsocket.v("1")
 
     async def on_transcript(self, result, **kwargs):
         alt = result.channel.alternatives[0]

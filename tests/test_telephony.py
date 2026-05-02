@@ -1146,7 +1146,7 @@ async def test_on_transcript_increments_misheard_counter_on_low_confidence(monke
     class FakeDeepgramClient:
         def __init__(self, *_):
             self.listen = MagicMock()
-            self.listen.asynclive.v.return_value = FakeDeepgramConn()
+            self.listen.asyncwebsocket.v.return_value = FakeDeepgramConn()
 
     monkeypatch.setattr(router_mod, "DeepgramClient", FakeDeepgramClient)
 
@@ -2075,7 +2075,7 @@ def test_open_deepgram_connection_uses_nova3(monkeypatch):
 
     class FakeDG:
         class listen:
-            class asynclive:
+            class asyncwebsocket:
                 @staticmethod
                 def v(_):
                     return FakeConn()
@@ -2083,9 +2083,7 @@ def test_open_deepgram_connection_uses_nova3(monkeypatch):
     monkeypatch.setattr(router_mod, "DeepgramClient", lambda _key: FakeDG())
 
     import asyncio
-    asyncio.get_event_loop().run_until_complete(
-        _open_deepgram_connection("CAtest", "rid", lambda t: None)
-    )
+    asyncio.run(_open_deepgram_connection("CAtest", "rid", lambda t: None))
 
     assert len(captured_options) == 1
     opts = captured_options[0]
