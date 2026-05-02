@@ -20,10 +20,14 @@ def test_system_prompt_includes_team_members():
 
 def test_system_prompt_lists_available_tools():
     p = build_system_prompt()
-    # PR 3a: three tools available
+    # PR 3b: seven tools available
     assert "get_current_sprint" in p
     assert "get_recent_commits" in p
     assert "search_repo_docs" in p
+    assert "get_pr" in p
+    assert "get_issue" in p
+    assert "open_issue" in p
+    assert "get_recent_messages" in p
 
 
 def test_system_prompt_has_hard_rules():

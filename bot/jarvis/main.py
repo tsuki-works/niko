@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import uvicorn
 from anthropic import AsyncAnthropic
@@ -36,11 +36,19 @@ from jarvis.ratelimit import InMemoryRateLimiter
 from jarvis.stream_writer import stream_to_discord
 from jarvis.system_prompt import build_system_prompt
 from jarvis.tools import ToolContext, ToolRegistry
+from jarvis.tools.chat import build_get_recent_messages_tool
 from jarvis.tools.docs import build_search_repo_docs_tool
-from jarvis.tools.github import build_get_recent_commits_tool
+from jarvis.tools.github import (
+    build_get_recent_commits_tool,
+    build_get_pr_tool,
+    build_get_issue_tool,
+    build_open_issue_tool,
+)
 from jarvis.tools.sprint import build_get_current_sprint_tool
 
 logger = logging.getLogger(__name__)
+
+_OPEN_ISSUE_LABEL_ALLOWLIST = ["bug", "feature", "docs", "chore", "question"]
 
 
 async def serve_http(app, port: int) -> None:
@@ -67,11 +75,15 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
         max_per_window=20, window_seconds=3600.0
     )
 
-    # Tool registry — only wired if a GitHub token is present. Without
-    # it the bot still works (PR 2 behavior); with it the agent can
-    # ground answers in repo state.
-    tool_registry = None
+    tool_registry: Optional[ToolRegistry] = None
     github_client = None
+
+    # get_recent_messages doesn't need GitHub — register it
+    # unconditionally so the bot can still ground replies in chat
+    # history when GITHUB_TOKEN is unset.
+    chat_only_registry = ToolRegistry()
+    chat_only_registry.register(build_get_recent_messages_tool())
+
     if settings.github_token:
         github_client = AsyncGitHubClient(token=settings.github_token)
         tool_registry = ToolRegistry()
@@ -88,16 +100,36 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
             )
         )
         tool_registry.register(
-            build_search_repo_docs_tool(
-                docs_root=Path("docs"),
+            build_search_repo_docs_tool(docs_root=Path("docs"))
+        )
+        tool_registry.register(
+            build_get_pr_tool(
+                github_client=github_client,
+                repo=settings.github_repo,
             )
         )
+        tool_registry.register(
+            build_get_issue_tool(
+                github_client=github_client,
+                repo=settings.github_repo,
+            )
+        )
+        tool_registry.register(
+            build_open_issue_tool(
+                github_client=github_client,
+                repo=settings.github_repo,
+                allowed_labels=_OPEN_ISSUE_LABEL_ALLOWLIST,
+            )
+        )
+        tool_registry.register(build_get_recent_messages_tool())
         logger.info(
             "tool registry: %s", ", ".join(tool_registry.names())
         )
     else:
+        tool_registry = chat_only_registry
         logger.info(
-            "GITHUB_TOKEN not set — running without repo-grounding tools"
+            "GITHUB_TOKEN not set — running with only chat tools: %s",
+            ", ".join(tool_registry.names()),
         )
 
     async def agent_fn(
