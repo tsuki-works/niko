@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     jarvis_http_port: int = 8080
     jarvis_log_level: str = "INFO"
 
+    # Firestore project ID. Optional — google-cloud-firestore auto-detects
+    # from credentials (gcloud ADC locally, metadata server on GCE). Set
+    # explicitly only when you need to override (e.g., dev pointing at a
+    # staging project).
+    gcp_project_id: Optional[str] = None
+
     commit_sha: str = ""
 
 
