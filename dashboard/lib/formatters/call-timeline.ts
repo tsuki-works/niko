@@ -57,6 +57,8 @@ function formatDuration(seconds: number): string {
  */
 export function formatFirstAudioBreakdown(detail: Record<string, unknown>): string {
   const ttft = detail.ttft_seconds as number | undefined;
+  const networkPrefill = detail.network_prefill_seconds as number | undefined;
+  const decode = detail.decode_seconds as number | undefined;
   const toolPrefix = detail.tool_prefix_seconds as number | undefined;
   const firstText = detail.first_text_seconds as number | undefined;
   const cacheRead = detail.cache_read_tokens as number | undefined;
@@ -64,6 +66,10 @@ export function formatFirstAudioBreakdown(detail: Record<string, unknown>): stri
 
   const parts: string[] = [];
   if (typeof ttft === 'number') parts.push(`ttft=${Math.round(ttft * 1000)}ms`);
+  // #175 finer breakdown: network+prefill and decode placed after ttft, before cache.
+  if (typeof networkPrefill === 'number')
+    parts.push(`net+pre=${Math.round(networkPrefill * 1000)}ms`);
+  if (typeof decode === 'number') parts.push(`decode=${Math.round(decode * 1000)}ms`);
   if (typeof toolPrefix === 'number')
     parts.push(`tool=${Math.round(toolPrefix * 1000)}ms`);
   if (typeof firstText === 'number')
