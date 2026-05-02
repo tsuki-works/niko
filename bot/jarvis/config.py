@@ -1,0 +1,34 @@
+"""Runtime settings for the Jarvis bot.
+
+Mirrors the pattern used by `app/config.py`: pydantic-settings reading
+from environment variables (and optionally a .env file), with required
+fields typed without defaults so a missing env var fails loudly at
+construction. Optional fields used only by later PRs (anthropic_api_key,
+jarvis_post_secret) default to None so importing this module never
+crashes a PR-1-only install.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    discord_bot_token: str
+    discord_guild_id: int
+
+    anthropic_api_key: Optional[str] = None
+    jarvis_post_secret: Optional[str] = None
+    jarvis_http_port: int = 8080
+    jarvis_log_level: str = "INFO"
+
+    commit_sha: str = ""
+
+
+def get_settings() -> Settings:
+    """Single accessor — useful for tests that want to monkeypatch."""
+    return Settings()
