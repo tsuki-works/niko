@@ -1,0 +1,27 @@
+[Unit]
+Description=Jarvis 2.0 — Tsuki Works Discord bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jarvis
+Group=jarvis
+WorkingDirectory=/opt/niko/bot
+EnvironmentFile=/etc/jarvis/env
+Environment=PYTHONPATH=/opt/niko/bot
+ExecStart=/opt/niko/.venv/bin/python -m jarvis.main
+Restart=always
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jarvis
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
