@@ -130,6 +130,9 @@ async def test_run_constructs_full_dep_graph(monkeypatch):
             "commit_sha": "",
             "anthropic_api_key": "ak",
             "gcp_project_id": None,
+            "github_token": "ghp_x",
+            "github_repo": "tsuki-works/niko",
+            "github_project_id": "PVT_x",
         },
     )()
 
@@ -143,6 +146,7 @@ async def test_run_constructs_full_dep_graph(monkeypatch):
     monkeypatch.setattr(main_mod, "JarvisBot", fake_jarvis_bot)
     monkeypatch.setattr(main_mod, "AsyncAnthropic", lambda **kw: object())
     monkeypatch.setattr(main_mod, "AsyncFirestoreClient", lambda **kw: object())
+    monkeypatch.setattr(main_mod, "AsyncGitHubClient", lambda **kw: object())
 
     await asyncio.wait_for(main_mod.run(), timeout=2.0)
     assert captured["on_message_handler"] is not None

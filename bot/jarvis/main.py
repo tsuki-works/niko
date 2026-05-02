@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
+from typing import Any
 
 import uvicorn
 from anthropic import AsyncAnthropic
@@ -26,11 +28,17 @@ from jarvis.agent import respond as agent_respond
 from jarvis.client import JarvisBot
 from jarvis.config import Settings, get_settings
 from jarvis.events import OnMessageHandler
+from jarvis.github_client import AsyncGitHubClient
 from jarvis.http.app import build_app
 from jarvis.logging_setup import configure_logging
 from jarvis.memory import ThreadMemory
+from jarvis.ratelimit import InMemoryRateLimiter
 from jarvis.stream_writer import stream_to_discord
 from jarvis.system_prompt import build_system_prompt
+from jarvis.tools import ToolContext, ToolRegistry
+from jarvis.tools.docs import build_search_repo_docs_tool
+from jarvis.tools.github import build_get_recent_commits_tool
+from jarvis.tools.sprint import build_get_current_sprint_tool
 
 logger = logging.getLogger(__name__)
 
@@ -55,27 +63,79 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
     firestore_client = AsyncFirestoreClient(**fs_kwargs)
     memory = ThreadMemory(firestore_client)
 
-    async def agent_fn(*, system_prompt, history, user_message):
+    rate_limiter = InMemoryRateLimiter(
+        max_per_window=20, window_seconds=3600.0
+    )
+
+    # Tool registry — only wired if a GitHub token is present. Without
+    # it the bot still works (PR 2 behavior); with it the agent can
+    # ground answers in repo state.
+    tool_registry = None
+    github_client = None
+    if settings.github_token:
+        github_client = AsyncGitHubClient(token=settings.github_token)
+        tool_registry = ToolRegistry()
+        tool_registry.register(
+            build_get_current_sprint_tool(
+                github_client=github_client,
+                project_id=settings.github_project_id,
+            )
+        )
+        tool_registry.register(
+            build_get_recent_commits_tool(
+                github_client=github_client,
+                repo=settings.github_repo,
+            )
+        )
+        tool_registry.register(
+            build_search_repo_docs_tool(
+                docs_root=Path("docs"),
+            )
+        )
+        logger.info(
+            "tool registry: %s", ", ".join(tool_registry.names())
+        )
+    else:
+        logger.info(
+            "GITHUB_TOKEN not set — running without repo-grounding tools"
+        )
+
+    async def agent_fn(
+        *, system_prompt, history, user_message, tool_registry, tool_context
+    ):
         async for d in agent_respond(
             anthropic_client=anthropic_client,
             system_prompt=system_prompt,
             history=history,
             user_message=user_message,
+            tool_registry=tool_registry,
+            tool_context=tool_context,
         ):
             yield d
+
+    def make_tool_context(message: Any) -> ToolContext:
+        return ToolContext(
+            guild=getattr(message, "guild", None),
+            github_client=github_client,
+            github_repo=settings.github_repo,
+            github_project_id=settings.github_project_id,
+            docs_root=Path("docs"),
+        )
 
     # We don't know our own user id until on_ready fires. Capture it
     # there and replace the placeholder. For now bot_user_id=0 — the
     # router will simply not match it, which means the bot ignores
     # everything until on_ready replaces it.
-    handler = OnMessageHandler(
+    return OnMessageHandler(
         bot_user_id=0,
         memory=memory,
         agent_fn=agent_fn,
         system_prompt_fn=build_system_prompt,
         stream_writer_fn=stream_to_discord,
+        rate_limiter=rate_limiter,
+        tool_registry=tool_registry,
+        tool_context_factory=make_tool_context,
     )
-    return handler
 
 
 async def run() -> None:
