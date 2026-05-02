@@ -126,11 +126,16 @@ class StreamEvent:
     The ``timing`` payload has the shape::
 
         {
-            "ttft_seconds": float,        # request → first SDK event
-            "tool_prefix_seconds": float, # first event → first text block
+            "ttft_seconds": float,             # request → first SDK event
+            "tool_prefix_seconds": float,      # first event → first text block
+            "network_prefill_seconds": float,  # request → message_start (#175)
+            "decode_seconds": float,           # message_start → first text block (#175)
             "cache_read_tokens": int,
             "cache_creation_tokens": int,
         }
+
+    On tool-use turns a second timing event is emitted for the follow-up
+    call so each network round-trip is measured independently (#175).
     """
 
     text_delta: Optional[str] = None
@@ -149,14 +154,38 @@ def _client() -> Anthropic:
     key = settings.anthropic_api_key
     if not key:
         raise _missing_key_error()
+    # Sync path is only used by tests; intentionally not a singleton so tests
+    # can patch/inject freely without worrying about module-level state. If this
+    # ever needs to be a singleton too, follow the same lazy pattern as
+    # _get_async_client below — but don't change it speculatively.
     return Anthropic(api_key=key)
 
 
-def _async_client() -> AsyncAnthropic:
-    key = settings.anthropic_api_key
-    if not key:
-        raise _missing_key_error()
-    return AsyncAnthropic(api_key=key)
+# Process-wide reusable AsyncAnthropic instance (#175). Constructing a new
+# AsyncAnthropic() on every stream_reply call creates a fresh httpx.AsyncClient
+# per turn; when the local reference goes out of scope the pool closes and the
+# TLS connection is torn down, costing a full TCP+TLS handshake on the next
+# turn (~100-250ms). Reusing one instance keeps the connection pool warm.
+# Lazy-initialised so importing this module never spins up sockets at startup.
+# Reset to None in tests that need a clean slate (see _reset_async_client).
+_default_async_client: Optional[AsyncAnthropic] = None
+
+
+def _get_async_client() -> AsyncAnthropic:
+    global _default_async_client
+    if _default_async_client is None:
+        key = settings.anthropic_api_key
+        if not key:
+            raise _missing_key_error()
+        _default_async_client = AsyncAnthropic(api_key=key)
+    return _default_async_client
+
+
+def _reset_async_client() -> None:
+    """Reset the module-level singleton. Called by tests that inject their own
+    fake client so they don't accidentally touch the real singleton."""
+    global _default_async_client
+    _default_async_client = None
 
 
 def _serialize_block(block: Any) -> dict[str, Any]:
@@ -420,35 +449,53 @@ async def stream_reply(
     the side effect before talking back.
     """
 
-    api = client or _async_client()
+    api = client or _get_async_client()
 
     new_history = _append_user_transcript(history, transcript)
 
     text_parts: list[str] = []
     tool_uses: list[dict[str, Any]] = []
 
-    # Latency instrumentation (#146). t_request_start anchors the whole
-    # turn — TTFT is the time to the first SDK event, tool_prefix is
-    # how long we wait between that first event and the moment a text
-    # content block opens (i.e. how much of the budget Haiku spent
-    # streaming a tool_use input before saying anything aloud).
+    # Latency instrumentation (#146, extended in #175). t_request_start anchors
+    # the whole turn — TTFT is time to first SDK event; tool_prefix is the gap
+    # between first event and first text block. #175 adds two finer fields:
+    # - network_prefill_seconds: request → message_start (TCP+TLS+queue+prefill)
+    # - decode_seconds: message_start → first text block (token-1 decode)
     t_request_start = time.monotonic()
     t_first_event: Optional[float] = None
+    t_message_start: Optional[float] = None
     t_first_text_block: Optional[float] = None
     cache_read_tokens = 0
     cache_creation_tokens = 0
     timing_emitted = False
 
-    def _make_timing_event() -> StreamEvent:
+    def _make_timing_event(
+        _t_req: float,
+        _t_first_ev: Optional[float],
+        _t_msg_start: Optional[float],
+        _t_first_text: Optional[float],
+        _cache_read: int,
+        _cache_creation: int,
+    ) -> StreamEvent:
         return StreamEvent(
             timing={
-                "ttft_seconds": round((t_first_event or t_request_start) - t_request_start, 3),
+                "ttft_seconds": round((_t_first_ev or _t_req) - _t_req, 3),
                 "tool_prefix_seconds": round(
-                    (t_first_text_block - t_first_event) if (t_first_text_block and t_first_event) else 0.0,
+                    (_t_first_text - _t_first_ev) if (_t_first_text and _t_first_ev) else 0.0,
                     3,
                 ),
-                "cache_read_tokens": cache_read_tokens,
-                "cache_creation_tokens": cache_creation_tokens,
+                "network_prefill_seconds": round(
+                    (_t_msg_start - _t_req) if _t_msg_start is not None else 0.0,
+                    3,
+                ),
+                "decode_seconds": round(
+                    (_t_first_text - _t_msg_start)
+                    if (_t_first_text is not None and _t_msg_start is not None)
+                    else 0.0,
+                    3,
+                ),
+                "cache_read_tokens": _cache_read,
+                "cache_creation_tokens": _cache_creation,
             }
         )
 
@@ -464,6 +511,7 @@ async def stream_reply(
                 t_first_event = time.monotonic()
             etype = getattr(event, "type", None)
             if etype == "message_start":
+                t_message_start = time.monotonic()
                 msg = getattr(event, "message", None)
                 usage = getattr(msg, "usage", None) if msg is not None else None
                 if usage is not None:
@@ -473,7 +521,14 @@ async def stream_reply(
                 block = getattr(event, "content_block", None)
                 if getattr(block, "type", None) == "text" and t_first_text_block is None:
                     t_first_text_block = time.monotonic()
-                    yield _make_timing_event()
+                    yield _make_timing_event(
+                        t_request_start,
+                        t_first_event,
+                        t_message_start,
+                        t_first_text_block,
+                        cache_read_tokens,
+                        cache_creation_tokens,
+                    )
                     timing_emitted = True
             elif etype == "content_block_delta":
                 delta = getattr(event, "delta", None)
@@ -508,8 +563,31 @@ async def stream_reply(
             {"role": "user", "content": tool_results},
         ]
 
+    if tool_uses and not timing_emitted:
+        # First stream produced only tool_use blocks (no text). Emit the
+        # first-call timing snapshot before starting the follow-up so the
+        # router always receives a timing event per network round-trip (#175).
+        yield _make_timing_event(
+            t_request_start,
+            t_first_event,
+            t_message_start,
+            t_first_text_block,
+            cache_read_tokens,
+            cache_creation_tokens,
+        )
+
     if tool_uses:
         # tools=[] is intentional — purely verbal continuation, see #173.
+        # Each follow-up call gets its own scoped timing variables so the second
+        # timing event reports that call's numbers, not the first call's (#175).
+        fu_t_request_start = time.monotonic()
+        fu_t_first_event: Optional[float] = None
+        fu_t_message_start: Optional[float] = None
+        fu_t_first_text_block: Optional[float] = None
+        fu_cache_read_tokens = 0
+        fu_cache_creation_tokens = 0
+        fu_timing_emitted = False
+
         async with api.messages.stream(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -518,29 +596,64 @@ async def stream_reply(
             messages=new_history,
         ) as followup_stream:
             async for event in followup_stream:
+                if fu_t_first_event is None:
+                    fu_t_first_event = time.monotonic()
                 etype = getattr(event, "type", None)
-                if etype == "content_block_start":
+                if etype == "message_start":
+                    fu_t_message_start = time.monotonic()
+                    msg = getattr(event, "message", None)
+                    usage = getattr(msg, "usage", None) if msg is not None else None
+                    if usage is not None:
+                        fu_cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+                        fu_cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+                elif etype == "content_block_start":
                     block = getattr(event, "content_block", None)
-                    if getattr(block, "type", None) == "text" and t_first_text_block is None:
-                        t_first_text_block = time.monotonic()
-                        yield _make_timing_event()
-                        timing_emitted = True
+                    if getattr(block, "type", None) == "text" and fu_t_first_text_block is None:
+                        fu_t_first_text_block = time.monotonic()
+                        yield _make_timing_event(
+                            fu_t_request_start,
+                            fu_t_first_event,
+                            fu_t_message_start,
+                            fu_t_first_text_block,
+                            fu_cache_read_tokens,
+                            fu_cache_creation_tokens,
+                        )
+                        fu_timing_emitted = True
                 elif etype == "content_block_delta":
                     delta = getattr(event, "delta", None)
                     if getattr(delta, "type", None) == "text_delta":
                         text_parts.append(delta.text)
                         yield StreamEvent(text_delta=delta.text)
             followup_message = await followup_stream.get_final_message()
+
+        if not fu_timing_emitted:
+            # Follow-up emitted no text blocks; emit a timing snapshot anyway.
+            yield _make_timing_event(
+                fu_t_request_start,
+                fu_t_first_event,
+                fu_t_message_start,
+                fu_t_first_text_block,
+                fu_cache_read_tokens,
+                fu_cache_creation_tokens,
+            )
+
         followup_content = [_serialize_block(b) for b in followup_message.content]
         new_history = [
             *new_history,
             {"role": "assistant", "content": followup_content},
         ]
 
-    if not timing_emitted:
+    if not timing_emitted and not tool_uses:
         # Tool-only path with no follow-up text (rare); still emit a
         # timing snapshot so consumers always see the breakdown.
-        yield _make_timing_event()
+        yield _make_timing_event(
+            t_request_start,
+            t_first_event,
+            t_message_start,
+            t_first_text_block,
+            cache_read_tokens,
+            cache_creation_tokens,
+        )
 
     yield StreamEvent(
         final=LLMResponse(
