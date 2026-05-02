@@ -38,4 +38,7 @@ def fake_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("JARVIS_LOG_LEVEL", raising=False)
     monkeypatch.delenv("COMMIT_SHA", raising=False)
     monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_REPO", raising=False)
+    monkeypatch.delenv("GITHUB_PROJECT_ID", raising=False)
     yield

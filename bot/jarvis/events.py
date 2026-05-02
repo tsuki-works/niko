@@ -34,6 +34,8 @@ class _AgentFn(Protocol):
         system_prompt: str,
         history: list[dict[str, Any]],
         user_message: str,
+        tool_registry: Any,
+        tool_context: Any,
     ) -> AsyncIterator[str]: ...
 
 
@@ -68,6 +70,7 @@ class _MemoryProto(Protocol):
 _THREAD_NAME_PREFIX = "jarvis: "
 _MAX_THREAD_NAME_LEN = 90  # Discord cap is 100; leave headroom for prefix
 _PLACEHOLDER_TEXT = "thinking…"
+_EMPTY_RESPONSE = "(empty response)"
 
 
 class OnMessageHandler:
@@ -79,12 +82,18 @@ class OnMessageHandler:
         agent_fn: _AgentFn,
         system_prompt_fn: Callable[[], str],
         stream_writer_fn: _StreamWriterFn,
+        rate_limiter: Any,  # Optional[InMemoryRateLimiter] — Any to keep events.py independent of ratelimit
+        tool_registry: Any,  # Optional[ToolRegistry]
+        tool_context_factory: Callable[[Any], Any],
     ) -> None:
         self._bot_user_id = bot_user_id
         self._memory = memory
         self._agent_fn = agent_fn
         self._system_prompt_fn = system_prompt_fn
         self._stream_writer_fn = stream_writer_fn
+        self._rate_limiter = rate_limiter
+        self._tool_registry = tool_registry
+        self._tool_context_factory = tool_context_factory
 
     async def handle(self, message: Any) -> None:
         decision = await classify_incoming(
@@ -94,6 +103,26 @@ class OnMessageHandler:
         )
         if decision == RoutingDecision.IGNORE:
             return
+
+        # Rate limit BEFORE thread creation — a rate-limited caller
+        # shouldn't pollute the channel with empty threads.
+        if self._rate_limiter is not None:
+            allowed = self._rate_limiter.check_and_record(
+                user_id=int(message.author.id)
+            )
+            if not allowed:
+                logger.info(
+                    "rate-limited user %s in channel %s",
+                    message.author.id,
+                    message.channel.id,
+                )
+                try:
+                    await message.reply(
+                        "Rate limit reached — try again in a few minutes."
+                    )
+                except Exception:  # noqa: BLE001 — best-effort notice
+                    logger.exception("failed to post rate-limit reply")
+                return
 
         if decision == RoutingDecision.MENTION_NEW_THREAD:
             thread = await self._open_thread(message)
@@ -126,13 +155,15 @@ class OnMessageHandler:
             system_prompt=self._system_prompt_fn(),
             history=history,
             user_message=message.content,
+            tool_registry=self._tool_registry,
+            tool_context=self._tool_context_factory(message),
         )
         final_text = await self._stream_writer_fn(placeholder, chunks)
 
         await self._memory.append_turn(
             thread_id=thread_id,
             role="assistant",
-            content=final_text or "(empty response)",
+            content=final_text or _EMPTY_RESPONSE,
         )
 
     def set_bot_user_id(self, bot_user_id: int) -> None:
