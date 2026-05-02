@@ -32,6 +32,19 @@ resource "google_secret_manager_secret" "anthropic_api_key" {
   depends_on = [google_project_service.required]
 }
 
+# GitHub PAT for the agent's tool registry (PR 3a/3b). Without it, the bot
+# falls back to chat-only mode (only get_recent_messages registered);
+# startup.sh tolerates a missing version so the bot still boots.
+resource "google_secret_manager_secret" "github_token" {
+  secret_id = "github-token"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.required]
+}
+
 resource "google_secret_manager_secret_iam_member" "jarvis_discord_token" {
   secret_id = google_secret_manager_secret.jarvis_discord_token.id
   role      = "roles/secretmanager.secretAccessor"
@@ -46,6 +59,12 @@ resource "google_secret_manager_secret_iam_member" "jarvis_post_secret" {
 
 resource "google_secret_manager_secret_iam_member" "anthropic_api_key" {
   secret_id = google_secret_manager_secret.anthropic_api_key.id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.jarvis.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "github_token" {
+  secret_id = google_secret_manager_secret.github_token.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.jarvis.email}"
 }

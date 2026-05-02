@@ -15,7 +15,7 @@ This is PR 5 of the six-PR Jarvis 2.0 plan
 | `versions.tf` | Terraform + `google` provider pins |
 | `variables.tf` | `project_id`, `region`, `zone`, `vm_name`, `repo_url`, `branch` |
 | `main.tf` | Required APIs, service account, IAM, firewall (IAP-SSH only), VM |
-| `secrets.tf` | Three Secret Manager slots + `secretAccessor` IAM for the VM SA |
+| `secrets.tf` | Four Secret Manager slots + `secretAccessor` IAM for the VM SA |
 | `outputs.tf` | VM name/zone/internal IP, SA email, IAP-SSH command |
 | `jarvis.service` | systemd unit (User=jarvis, EnvironmentFile=/etc/jarvis/env) |
 | `startup.sh` | Idempotent VM bootstrap (apt, git clone, venv, secrets, unit) |
@@ -79,6 +79,11 @@ GCP Console UI for the cleanest flow:
 3. Repeat for `jarvis-post-secret` (any 32+ character random string;
    generate with `openssl rand -hex 32` if you don't have one)
 4. Repeat for `anthropic-api-key` (the key from `#shared-creds` in Discord)
+5. Repeat for `github-token` — a PAT with `read:org` + `repo` scopes
+   (fine-grained equivalent OK). Without a value here the bot still
+   boots, but only `get_recent_messages` is registered as a tool;
+   `get_current_sprint`, `get_recent_commits`, `search_repo_docs`,
+   `get_pr`, `get_issue`, and `open_issue` are unavailable.
 
 Or via CLI, with `--data-file=-` to keep the value off the command line:
 
@@ -87,6 +92,7 @@ Or via CLI, with `--data-file=-` to keep the value off the command line:
 gcloud secrets versions add jarvis-discord-token --data-file=-
 gcloud secrets versions add jarvis-post-secret    --data-file=-
 gcloud secrets versions add anthropic-api-key     --data-file=-
+gcloud secrets versions add github-token          --data-file=-
 ```
 
 ### 4. Reboot the VM so the startup script picks up the new secret versions
