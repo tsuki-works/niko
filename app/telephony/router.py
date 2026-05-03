@@ -24,10 +24,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
-from fastapi import APIRouter, Depends, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
 
-from app.telephony.signature import require_twilio_signature
 from app.telephony.voicemail_twiml import voicemail_response
 
 from app.config import settings
@@ -663,10 +662,7 @@ def _resolve_restaurant_for_voice(
 
 
 @router.post("/voice")
-async def voice(
-    request: Request,
-    _sig: None = Depends(require_twilio_signature),
-) -> Response:
+async def voice(request: Request) -> Response:
     """Respond to Twilio's inbound call webhook with TwiML.
 
     Looks up the tenant by Twilio's ``To`` field, opens a bidirectional
@@ -744,10 +740,7 @@ _TRANSFER_STATUS_MAP = {
 
 
 @router.post("/voice/stream-ended")
-async def stream_ended(
-    request: Request,
-    _sig: None = Depends(require_twilio_signature),
-) -> Response:
+async def stream_ended(request: Request) -> Response:
     """Twilio's <Connect> action callback. Decides what happens after
     the AI flow ends: empty TwiML (hang up), transfer to fallback, or
     drop to voicemail directly.
@@ -825,7 +818,6 @@ async def transfer_result(
     request: Request,
     call_sid: str,
     rid: str,
-    _sig: None = Depends(require_twilio_signature),
 ) -> Response:
     """<Dial>'s action callback. Maps Twilio DialCallStatus to internal
     status, marks the call session, and either returns empty (answered)
@@ -864,7 +856,6 @@ async def voicemail_recorded(
     request: Request,
     call_sid: str,
     rid: str,
-    _sig: None = Depends(require_twilio_signature),
 ) -> Response:
     """Twilio's <Record> action callback. Downloads the recording from
     Twilio's REST and uploads to GCS, then writes metadata to the call
@@ -953,7 +944,6 @@ async def voicemail_transcription(
     request: Request,
     call_sid: str,
     rid: str,
-    _sig: None = Depends(require_twilio_signature),
 ) -> Response:
     """Twilio's transcribeCallback. Patches the voicemail transcript on
     the call session. Empty transcript (Twilio sometimes posts ""
