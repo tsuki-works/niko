@@ -9,7 +9,7 @@ import {
   orderBy,
   query,
 } from 'firebase/firestore';
-import { Phone } from 'lucide-react';
+import { PhoneIncoming } from 'lucide-react';
 
 import { LiveIndicator } from '@/components/shared/live-indicator';
 import { db } from '@/lib/firebase/client';
@@ -56,23 +56,16 @@ export function LiveCallsWidget({ initial, restaurantId }: Props) {
   }, [restaurantId]);
 
   return (
-    <article className="flex flex-col gap-4 rounded-lg border border-border p-6">
-      <header className="flex items-baseline justify-between gap-2">
-        <div>
-          <h3 className="text-base font-medium">Live calls</h3>
-          <p className="text-xs text-muted-foreground">
-            {calls.length === 0
-              ? 'No active calls'
-              : `${calls.length} on the line`}
-          </p>
-        </div>
+    <article className="flex flex-col gap-4 rounded-md border border-border-subtle bg-surface-1 p-4">
+      <header className="flex items-center justify-between gap-2">
+        <h3 className="text-md font-medium">Live calls</h3>
         {calls.length > 0 ? <LiveIndicator /> : null}
       </header>
 
       {calls.length === 0 ? (
         <EmptyState />
       ) : (
-        <ul className="flex flex-col divide-y divide-border">
+        <ul className="flex flex-col divide-y divide-border-subtle">
           {calls.map((c) => (
             <CallRow key={c.call_sid} call={c} />
           ))}
@@ -87,16 +80,10 @@ function CallRow({ call }: { call: CallSession }) {
     <li className="py-3 first:pt-0 last:pb-0">
       <Link
         href={`/calls/${encodeURIComponent(call.call_sid)}`}
-        className="flex items-center justify-between gap-3 text-sm hover:text-primary"
+        className="flex items-center justify-between gap-3 text-sm hover:text-foreground"
       >
-        <div className="flex items-center gap-2">
-          <span
-            aria-hidden
-            className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500"
-          />
-          <span className="font-medium">{callShortId(call)}</span>
-        </div>
-        <span className="text-xs text-muted-foreground tabular-nums">
+        <span className="font-mono font-medium">{callShortId(call)}</span>
+        <span className="text-xs text-foreground-muted tabular-nums">
           <CallDuration startedAt={call.started_at} />
           {' · '}
           {call.transcript_count} turn{call.transcript_count === 1 ? '' : 's'}
@@ -125,9 +112,12 @@ function CallDuration({ startedAt }: { startedAt: Date }) {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border py-8 text-center">
-      <Phone className="h-5 w-5 text-muted-foreground" />
-      <p className="text-sm text-muted-foreground">
+    <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+      <PhoneIncoming
+        className="size-8 text-foreground-faint"
+        aria-hidden
+      />
+      <p className="text-sm text-foreground-muted">
         No callers on the line right now.
       </p>
     </div>

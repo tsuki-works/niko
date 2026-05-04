@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 
-import { Tile } from '@/components/analytics/tile';
 import { ActiveOrdersWidget } from '@/components/overview/active-orders-widget';
+import { KpiStrip, type KpiItem } from '@/components/overview/kpi-strip';
 import { LiveCallsWidget } from '@/components/overview/live-calls-widget';
 import { PageHeader } from '@/components/shared/page-header';
 import { getOrderSummary } from '@/lib/api/analytics';
@@ -28,51 +28,37 @@ export default async function OverviewPage() {
     safeRestaurantName(session.restaurantId),
   ]);
 
+  const kpis: KpiItem[] = [
+    {
+      eyebrow: 'Orders today',
+      value: summary ? String(summary.today_count) : '—',
+    },
+    {
+      eyebrow: 'Orders this week',
+      value: summary ? String(summary.seven_day_count) : '—',
+      caption: 'rolling 7 days',
+    },
+    {
+      eyebrow: 'Avg order value',
+      value: summary ? formatCAD(summary.average_order_value_7d) : '—',
+      caption: 'rolling 7 days',
+    },
+    {
+      eyebrow: 'Completion rate',
+      value: summary
+        ? `${Math.round(summary.completion_rate_7d * 100)}%`
+        : '—',
+      caption: 'confirmed → completed',
+    },
+  ];
+
   return (
     <section className="flex flex-1 flex-col gap-8 p-6 lg:p-10">
       <PageHeader title="Overview" subtitle={restaurantName} />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Tile
-          label="Orders today"
-          value={summary ? String(summary.today_count) : '—'}
-          unit={
-            summary
-              ? summary.today_count === 1
-                ? 'order'
-                : 'orders'
-              : undefined
-          }
-        />
-        <Tile
-          label="Orders this week"
-          value={summary ? String(summary.seven_day_count) : '—'}
-          unit={
-            summary
-              ? summary.seven_day_count === 1
-                ? 'order'
-                : 'orders'
-              : undefined
-          }
-          hint="rolling 7 days"
-        />
-        <Tile
-          label="Avg order value"
-          value={summary ? formatCAD(summary.average_order_value_7d) : '—'}
-          hint="rolling 7 days"
-        />
-        <Tile
-          label="Completion rate"
-          value={
-            summary
-              ? `${Math.round(summary.completion_rate_7d * 100)}%`
-              : '—'
-          }
-          hint="of orders confirmed → completed"
-        />
-      </div>
+      <KpiStrip items={kpis} />
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
         <LiveCallsWidget
           initial={callsSeed}
           restaurantId={session.restaurantId}
