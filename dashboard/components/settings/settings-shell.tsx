@@ -12,26 +12,29 @@ export function SettingsShell({ restaurant }: { restaurant: Restaurant }) {
         subtitle="Restaurant info, hours, and call-handling fallbacks. Changes take effect on the next call."
       />
 
-      <div className="flex max-w-3xl flex-col gap-12">
+      <div className="flex max-w-3xl flex-col gap-6">
         <RestaurantInfoForm restaurant={restaurant} />
         <HoursEditor restaurant={restaurant} />
 
-        <section className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-6">
-          <h3 className="text-base font-medium">Stripe Connect</h3>
-          <p className="text-xs text-muted-foreground">
-            Configured during onboarding when delivery or prepay-for-pickup is
-            enabled. Lands in Sprint 2.3.
-          </p>
-        </section>
+        <Placeholder
+          title="Stripe Connect"
+          body="Configured during onboarding when delivery or prepay-for-pickup is enabled. Lands in Sprint 2.3."
+        />
 
-        <section className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-6">
-          <h3 className="text-base font-medium">SMS preferences</h3>
-          <p className="text-xs text-muted-foreground">
-            Order confirmations send by default. Opt-out toggles arrive
-            post-pilot.
-          </p>
-        </section>
+        <Placeholder
+          title="SMS preferences"
+          body="Order confirmations send by default. Opt-out toggles arrive post-pilot."
+        />
       </div>
+    </section>
+  );
+}
+
+function Placeholder({ title, body }: { title: string; body: string }) {
+  return (
+    <section className="rounded-md border border-dashed border-border-subtle bg-surface-1 p-6">
+      <h3 className="text-md font-medium text-foreground-muted">{title}</h3>
+      <p className="mt-1 text-sm text-foreground-subtle">{body}</p>
     </section>
   );
 }

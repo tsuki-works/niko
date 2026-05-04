@@ -36,9 +36,9 @@ export function TimelineExport({ timeline }: { timeline: CallTimeline }) {
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1">
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         onClick={handleCopy}
         aria-label="Copy timeline as text"
@@ -46,7 +46,7 @@ export function TimelineExport({ timeline }: { timeline: CallTimeline }) {
         <Copy aria-hidden /> Copy
       </Button>
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
         onClick={handleDownload}
         aria-label="Download timeline as text file"

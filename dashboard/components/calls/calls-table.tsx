@@ -1,8 +1,10 @@
 import Link from 'next/link';
-import { AlertTriangle, CheckCircle2, PhoneForwarded, PhoneIncoming, Radio, Voicemail } from 'lucide-react';
+import { PhoneIncoming } from 'lucide-react';
 
 import { LocalTime } from '@/components/shared/local-time';
+import { StatusBadge } from '@/components/orders/status-badge';
 import type { CallStatus, CallSummary } from '@/lib/api/calls';
+import type { OrderStatus } from '@/lib/schemas/order';
 import { formatPhone } from '@/lib/formatters/phone';
 import { cn } from '@/lib/utils';
 
@@ -16,15 +18,15 @@ export function CallsTable({
   if (calls.length === 0) return <EmptyState twilioPhone={twilioPhone} />;
 
   return (
-    <div className="overflow-hidden rounded-xl border">
+    <div className="overflow-hidden">
       <table className="w-full text-left text-sm">
-        <thead className="bg-muted/40 text-muted-foreground">
-          <tr>
-            <Th className="w-32">Call ID</Th>
-            <Th className="w-32">Started</Th>
+        <thead>
+          <tr className="border-b border-border-subtle text-foreground-muted">
+            <Th className="w-40">Call ID</Th>
+            <Th className="w-40">Started</Th>
             <Th className="w-24 text-right">Duration</Th>
             <Th className="w-24 text-right">Turns</Th>
-            <Th className="w-32">Status</Th>
+            <Th className="w-24">Status</Th>
           </tr>
         </thead>
         <tbody>
@@ -45,88 +47,58 @@ function CallRow({ call }: { call: CallSummary }) {
     Math.round((endedAt.getTime() - startedAt.getTime()) / 1000),
   );
 
+  const detailHref = `/calls/${encodeURIComponent(call.call_sid)}`;
+  const status = mappedStatus(call);
+
   return (
-    <tr className="border-t transition-colors hover:bg-muted/40">
-      <Td className="py-3">
-        <Link
-          href={`/calls/${encodeURIComponent(call.call_sid)}`}
-          className="flex items-center gap-2 font-medium"
-        >
-          <PhoneIncoming className="h-4 w-4 text-muted-foreground" aria-hidden />
+    <tr className="border-b border-border-subtle transition-colors hover:bg-surface-2/40">
+      <Td>
+        <Link href={detailHref} className="inline-flex items-center gap-2">
+          <PhoneIncoming
+            className="size-3.5 text-foreground-muted"
+            aria-hidden
+          />
           <span className="font-mono text-xs">
             {call.call_sid.slice(0, 8)}…
           </span>
         </Link>
       </Td>
-      <Td>
-        <LocalTime date={startedAt} mode="datetime" />
+      <Td className="text-foreground-muted">
+        <Link href={detailHref}>
+          <LocalTime date={startedAt} mode="datetime" />
+        </Link>
       </Td>
-      <Td className="text-right tabular-nums">{formatDuration(durationSec)}</Td>
-      <Td className="text-right tabular-nums">{call.transcript_count}</Td>
+      <Td className="text-right font-mono tabular-nums">
+        <Link href={detailHref}>{formatDuration(durationSec)}</Link>
+      </Td>
+      <Td className="text-right font-mono tabular-nums">
+        <Link href={detailHref}>{call.transcript_count}</Link>
+      </Td>
       <Td>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <CallStatusBadge status={call.status} hasError={call.has_error} />
-          {call.voicemail_left ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400"
-              aria-label="Voicemail left"
-            >
-              <Voicemail className="h-3 w-3" aria-hidden /> voicemail
-            </span>
-          ) : null}
-          {call.transfer_attempted ? (
-            <span
-              className={cn(
-                'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium',
-                call.transfer_status === 'answered'
-                  ? 'bg-sky-500/15 text-sky-700 dark:text-sky-400'
-                  : 'bg-muted text-muted-foreground',
-              )}
-              aria-label={`Transfer ${call.transfer_status ?? 'attempted'}`}
-            >
-              <PhoneForwarded className="h-3 w-3" aria-hidden />{' '}
-              {call.transfer_status === 'answered' ? 'transferred' : 'transfer ' + (call.transfer_status ?? 'attempted')}
-            </span>
-          ) : null}
-        </div>
+        <Link href={detailHref}>
+          <StatusBadge status={status} />
+        </Link>
       </Td>
     </tr>
   );
 }
 
-function CallStatusBadge({
-  status,
-  hasError,
-}: {
-  status: CallStatus;
-  hasError: boolean;
-}) {
-  if (hasError) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-destructive/15 px-2 py-1 text-xs font-medium text-destructive">
-        <AlertTriangle className="h-3 w-3" aria-hidden /> errored
-      </span>
-    );
+/**
+ * Map a CallSummary to the closest OrderStatus so we can render with the
+ * shared <StatusBadge>. Calls aren't orders, but the badge vocabulary
+ * fits: live = caller still on the line, confirmed = order placed,
+ * completed = call ended cleanly without an order, cancelled = error.
+ */
+function mappedStatus(call: CallSummary): OrderStatus {
+  if (call.has_error) return 'cancelled';
+  switch (call.status as CallStatus) {
+    case 'in_progress':
+      return 'in_progress';
+    case 'confirmed':
+      return 'confirmed';
+    case 'ended':
+      return 'completed';
   }
-  if (status === 'confirmed') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-        <CheckCircle2 className="h-3 w-3" aria-hidden /> confirmed
-      </span>
-    );
-  }
-  if (status === 'in_progress') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400">
-        <Radio className="h-3 w-3" aria-hidden /> live
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-      ended
-    </span>
-  );
 }
 
 function formatDuration(seconds: number): string {
@@ -139,10 +111,13 @@ function formatDuration(seconds: number): string {
 function EmptyState({ twilioPhone }: { twilioPhone: string }) {
   const display = formatPhone(twilioPhone);
   return (
-    <div className="flex flex-col items-center gap-2 rounded-xl border bg-card p-10 text-center">
-      <PhoneIncoming className="h-6 w-6 text-muted-foreground" aria-hidden />
-      <p className="text-sm font-medium">No calls in the selected window</p>
-      <p className="text-xs text-muted-foreground">
+    <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+      <PhoneIncoming
+        className="size-8 text-foreground-faint"
+        aria-hidden
+      />
+      <p className="text-md font-medium">No calls yet</p>
+      <p className="max-w-sm text-sm text-foreground-muted">
         {display
           ? `Dial ${display} — the call will appear here once it ends.`
           : 'No Twilio number is assigned to this restaurant yet.'}
@@ -153,12 +128,17 @@ function EmptyState({ twilioPhone }: { twilioPhone: string }) {
 
 function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <th className={cn('px-4 py-2 text-xs font-medium uppercase tracking-wide', className)}>
+    <th
+      className={cn(
+        'px-2.5 py-2.5 text-xs font-medium uppercase tracking-wide',
+        className,
+      )}
+    >
       {children}
     </th>
   );
 }
 
 function Td({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <td className={cn('px-4 py-3 align-middle', className)}>{children}</td>;
+  return <td className={cn('px-2.5 py-2.5 align-middle', className)}>{children}</td>;
 }

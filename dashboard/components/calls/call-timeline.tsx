@@ -3,8 +3,8 @@
 import { useRef } from 'react';
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
+  ChevronLeft,
   Copy,
   Mic,
   PhoneCall,
@@ -19,6 +19,7 @@ import {
 import Link from 'next/link';
 import { toast } from 'sonner';
 
+import { CallRecordingPlayer } from '@/components/calls/call-recording-player';
 import { TimelineExport } from '@/components/calls/timeline-export';
 import { Button } from '@/components/ui/button';
 import { LocalTime } from '@/components/shared/local-time';
@@ -28,6 +29,27 @@ import { cn } from '@/lib/utils';
 
 const TRANSCRIPT_KINDS = new Set(['transcript_final', 'agent_reply']);
 
+/**
+ * Event-type accent palette. Five status-token categories + one neutral
+ * fallback, per design-system.md → "Stage 6 — Calls list + detail":
+ *   confirmed (blue) — system events: call started, recording ready
+ *   preparing (violet) — agent / LLM activity
+ *   ready (green) — first audio, order confirmed (success states)
+ *   live (amber) — caller activity / warnings
+ *   cancelled (red) — errors / failed transfers
+ *   log (neutral surface-3) — interim transcript, ended, skipped, default
+ */
+const ACCENT = {
+  confirmed: 'bg-status-confirmed-bg text-status-confirmed',
+  preparing: 'bg-status-preparing-bg text-status-preparing',
+  ready: 'bg-status-ready-bg text-status-ready',
+  live: 'bg-status-live-bg text-status-live',
+  cancelled: 'bg-status-cancelled-bg text-status-cancelled',
+  log: 'bg-surface-3 text-foreground-muted',
+} as const;
+
+type AccentKey = keyof typeof ACCENT;
+
 export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingUrl = timeline.recording_available
@@ -35,12 +57,11 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
     : null;
 
   // Use the FIRST event's timestamp as the call-start anchor for
-  // computing per-turn offsets into the recording. Fallback to the
-  // earliest event if the explicit `start` event is missing.
-  const callStartMs = (() => {
-    const firstEvent = timeline.events[0];
-    return firstEvent ? new Date(firstEvent.timestamp).getTime() : 0;
-  })();
+  // computing per-turn offsets into the recording. Fallback to 0 if
+  // there are no events at all (defensive — shouldn't happen).
+  const callStartMs = timeline.events[0]
+    ? new Date(timeline.events[0].timestamp).getTime()
+    : 0;
 
   function seekTo(seconds: number) {
     if (!audioRef.current) return;
@@ -52,45 +73,16 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
   }
 
   return (
-    <section className="flex flex-1 flex-col gap-4 p-6">
-      <header className="flex items-center gap-3">
-        <Link
-          href="/calls"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden />
-          All calls
-        </Link>
-      </header>
-
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-medium">Call timeline</h1>
-          <p className="font-mono text-xs text-muted-foreground">
-            {timeline.call_sid}
-          </p>
-        </div>
-        <TimelineExport timeline={timeline} />
-      </div>
+    <section className="mx-auto flex max-w-5xl flex-col p-6">
+      <Header timeline={timeline} />
 
       {recordingUrl && (
-        <div className="flex flex-col gap-1.5 rounded-xl border bg-card p-4">
-          <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <Radio className="h-3.5 w-3.5" aria-hidden />
-            Call recording
-          </p>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio
-            ref={audioRef}
-            controls
-            src={recordingUrl}
-            className="w-full"
-            aria-label="Call recording audio player"
-          />
+        <div className="mt-4">
+          <CallRecordingPlayer ref={audioRef} src={recordingUrl} />
         </div>
       )}
 
-      <ol className="flex flex-col gap-2 rounded-xl border bg-card p-4">
+      <ol className="mt-4 flex flex-col">
         {timeline.events.map((event, i) => (
           <TimelineRow
             key={i}
@@ -101,6 +93,27 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
         ))}
       </ol>
     </section>
+  );
+}
+
+function Header({ timeline }: { timeline: CallTimeline }) {
+  return (
+    <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-col gap-1">
+        <Link
+          href="/calls"
+          className="inline-flex w-fit items-center gap-1 text-sm text-foreground-muted hover:text-foreground"
+        >
+          <ChevronLeft className="size-4" aria-hidden />
+          All calls
+        </Link>
+        <h2 className="text-lg font-semibold">Call timeline</h2>
+        <p className="font-mono text-sm text-foreground-muted">
+          {timeline.call_sid}
+        </p>
+      </div>
+      <TimelineExport timeline={timeline} />
+    </header>
   );
 }
 
@@ -135,32 +148,29 @@ function TimelineRow({
   const RowTag = canSeek ? 'button' : 'div';
 
   return (
-    <li className={cn(
-      'flex items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-muted/40',
-      canSeek && 'cursor-pointer',
-    )}>
+    <li className="flex items-start gap-3 border-b border-border-subtle py-2.5 last:border-b-0 hover:bg-surface-2/40">
       <RowTag
         type={canSeek ? 'button' : undefined}
         onClick={canSeek ? handleSeek : undefined}
         className={cn(
-          'flex flex-1 items-start gap-3 text-left bg-transparent p-0',
-          canSeek && 'cursor-pointer focus-visible:outline-2 focus-visible:outline-primary',
+          'flex flex-1 items-start gap-3 bg-transparent p-0 text-left',
+          canSeek && 'cursor-pointer focus-visible:outline-2 focus-visible:outline-brand',
         )}
         aria-label={canSeek ? `Seek to ${label} at ${formatOffset(offsetSec)}` : undefined}
       >
         <div
           className={cn(
-            'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full',
-            accent,
+            'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
+            ACCENT[accent],
           )}
         >
-          <Icon className="h-3.5 w-3.5" aria-hidden />
+          <Icon className="size-3.5" aria-hidden />
         </div>
-        <div className="flex min-w-[5rem] shrink-0 flex-col text-xs text-muted-foreground tabular-nums">
+        <div className="flex w-15 shrink-0 flex-col text-right text-xs font-mono text-foreground-muted tabular-nums">
           <LocalTime date={ts} mode="absolute" />
         </div>
         <div className="flex flex-1 flex-col gap-0.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
             {label}
           </p>
           <div className="text-sm">{body}</div>
@@ -171,11 +181,11 @@ function TimelineRow({
           type="button"
           size="icon"
           variant="ghost"
-          className="h-7 w-7 shrink-0"
+          className="size-7 shrink-0"
           aria-label={`Copy ${label} text`}
           onClick={handleCopy}
         >
-          <Copy className="h-3.5 w-3.5" />
+          <Copy className="size-3.5" />
         </Button>
       ) : null}
     </li>
@@ -190,7 +200,7 @@ function formatOffset(seconds: number): string {
 
 type RenderedEvent = {
   Icon: typeof Mic;
-  accent: string;
+  accent: AccentKey;
   label: string;
   body: React.ReactNode;
   // Plain-text version for clipboard. Only set on transcript-style events.
@@ -202,21 +212,21 @@ function renderEvent(event: CallEvent): RenderedEvent {
     case 'start':
       return {
         Icon: PhoneCall,
-        accent: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+        accent: 'confirmed',
         label: 'call started',
         body: 'Twilio media stream opened',
       };
     case 'stop':
       return {
         Icon: PhoneOff,
-        accent: 'bg-muted text-muted-foreground',
+        accent: 'log',
         label: 'call ended',
         body: 'Caller hung up',
       };
     case 'order_confirmed':
       return {
         Icon: CheckCircle2,
-        accent: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        accent: 'ready',
         label: 'order confirmed',
         body: 'Order persisted to Firestore',
       };
@@ -224,9 +234,9 @@ function renderEvent(event: CallEvent): RenderedEvent {
       const text = (event.detail.text as string) || '(empty)';
       return {
         Icon: Mic,
-        accent: 'bg-foreground/10 text-foreground',
+        accent: 'live',
         label: 'caller',
-        body: <span className="italic">“{text}”</span>,
+        body: <span className="italic">&ldquo;{text}&rdquo;</span>,
         copyText: text,
       };
     }
@@ -234,16 +244,16 @@ function renderEvent(event: CallEvent): RenderedEvent {
       const text = (event.detail.text as string) || '';
       return {
         Icon: Mic,
-        accent: 'bg-muted text-muted-foreground',
+        accent: 'log',
         label: 'interim transcript',
-        body: <span className="text-muted-foreground italic">“{text}”</span>,
+        body: <span className="italic text-foreground-muted">&ldquo;{text}&rdquo;</span>,
       };
     }
     case 'llm_turn_start': {
       const transcript = (event.detail.transcript as string) ?? '';
       return {
         Icon: Sparkles,
-        accent: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+        accent: 'preparing',
         label: 'LLM turn start',
         body: transcript ? `→ "${transcript}"` : 'turn opened',
       };
@@ -252,9 +262,9 @@ function renderEvent(event: CallEvent): RenderedEvent {
       const reply = (event.detail.text as string) || event.text || '';
       return {
         Icon: Sparkles,
-        accent: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+        accent: 'preparing',
         label: 'agent',
-        body: <span className="italic">“{reply}”</span>,
+        body: <span className="italic">&ldquo;{reply}&rdquo;</span>,
         copyText: reply,
       };
     }
@@ -270,14 +280,12 @@ function renderEvent(event: CallEvent): RenderedEvent {
           : 'first audio bytes sent';
       return {
         Icon: Volume2,
-        accent: overBudget
-          ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
-          : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        accent: overBudget ? 'live' : 'ready',
         label: 'first audio',
         body: breakdown ? (
           <span>
             {headline}{' '}
-            <span className="text-muted-foreground font-mono text-xs">
+            <span className="font-mono text-xs text-foreground-faint">
               {breakdown}
             </span>
           </span>
@@ -289,14 +297,14 @@ function renderEvent(event: CallEvent): RenderedEvent {
     case 'barge_in':
       return {
         Icon: Zap,
-        accent: 'bg-orange-500/15 text-orange-700 dark:text-orange-400',
+        accent: 'live',
         label: 'barge-in',
         body: 'caller spoke over the AI; in-flight reply cancelled',
       };
     case 'silence_timeout':
       return {
         Icon: AlertTriangle,
-        accent: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+        accent: 'live',
         label: 'silence timeout',
         body: 'no caller activity for 10s — bot prompted',
       };
@@ -304,7 +312,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
       const duration = event.detail.duration_seconds as number | undefined;
       return {
         Icon: Radio,
-        accent: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+        accent: 'confirmed',
         label: 'recording ready',
         body: typeof duration === 'number' ? `${duration}s recording available` : 'recording available',
       };
@@ -319,16 +327,16 @@ function renderEvent(event: CallEvent): RenderedEvent {
         failed: 'Transfer — failed',
         skipped: 'Transfer skipped',
       };
-      const accentByStatus: Record<string, string> = {
-        answered: 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
-        no_answer: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-        busy: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
-        failed: 'bg-destructive/15 text-destructive',
-        skipped: 'bg-muted text-muted-foreground',
+      const accentByStatus: Record<string, AccentKey> = {
+        answered: 'ready',
+        no_answer: 'live',
+        busy: 'live',
+        failed: 'cancelled',
+        skipped: 'log',
       };
       return {
         Icon: PhoneForwarded,
-        accent: accentByStatus[status] ?? 'bg-muted text-muted-foreground',
+        accent: accentByStatus[status] ?? 'log',
         label: labelByStatus[status] ?? 'transfer',
         body: phone ? <span>to {phone}</span> : <span>{status}</span>,
       };
@@ -338,17 +346,17 @@ function renderEvent(event: CallEvent): RenderedEvent {
       const duration = event.detail.duration_seconds as number | undefined;
       return {
         Icon: Voicemail,
-        accent: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+        accent: 'live',
         label: 'voicemail',
         body: (
           <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-foreground-muted">
               {typeof duration === 'number' ? `${duration}s` : 'recording available'}
             </span>
             {transcript ? (
-              <span className="italic">"{transcript}"</span>
+              <span className="italic">&ldquo;{transcript}&rdquo;</span>
             ) : (
-              <span className="text-xs italic text-muted-foreground">
+              <span className="text-xs italic text-foreground-muted">
                 Transcript pending…
               </span>
             )}
@@ -360,14 +368,14 @@ function renderEvent(event: CallEvent): RenderedEvent {
     case 'error':
       return {
         Icon: AlertTriangle,
-        accent: 'bg-destructive/15 text-destructive',
+        accent: 'cancelled',
         label: 'error',
         body: <pre className="whitespace-pre-wrap font-mono text-xs">{event.text}</pre>,
       };
     default:
       return {
         Icon: Sparkles,
-        accent: 'bg-muted text-muted-foreground',
+        accent: 'log',
         label: 'log',
         body: <span className="font-mono text-xs">{event.text}</span>,
       };
