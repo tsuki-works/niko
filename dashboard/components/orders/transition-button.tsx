@@ -12,11 +12,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { useOptimisticStatus } from '@/components/orders/optimistic-status-context';
 import { type Order, type OrderStatus, orderShortId } from '@/lib/schemas/order';
+import { cn } from '@/lib/utils';
+
+type Mode = 'compact' | 'detail';
 
 type TransitionConfig = {
   label: string;
   pendingLabel: string;
-  variant: 'default' | 'outline';
   successMessage: string;
   targetStatus: OrderStatus;
   action: (input: { call_sid: string }) => Promise<TransitionActionResult>;
@@ -27,41 +29,49 @@ type TransitionConfig = {
  * in confirmed/preparing/ready; renders nothing for terminal or
  * not-yet-confirmed orders.
  *
+ * `mode="compact"` (default) is for table rows + the overview kitchen
+ * queue: short labels, 28px tall, secondary treatment. `mode="detail"`
+ * is for the order detail page: full labels, 36px tall, primary
+ * treatment.
+ *
  * No confirmation dialog — kitchen wants single-tap speed. Cancel
  * (which IS destructive) keeps its own dialog in CancelOrderButton.
  */
-export function TransitionButton({ order }: { order: Order }) {
-  const config = configFor(order);
+export function TransitionButton({
+  order,
+  mode = 'compact',
+}: {
+  order: Order;
+  mode?: Mode;
+}) {
+  const config = configFor(order, mode);
   if (!config) return null;
 
-  return <ActiveButton order={order} config={config} />;
+  return <ActiveButton order={order} config={config} mode={mode} />;
 }
 
-function configFor(order: Order): TransitionConfig | null {
+function configFor(order: Order, mode: Mode): TransitionConfig | null {
   switch (order.status) {
     case 'confirmed':
       return {
-        label: 'Start Preparing',
-        pendingLabel: 'Starting…',
-        variant: 'default',
+        label: mode === 'compact' ? 'Start' : 'Start preparing',
+        pendingLabel: mode === 'compact' ? 'Starting…' : 'Starting…',
         successMessage: `Order ${orderShortId(order)} is now preparing`,
         targetStatus: 'preparing',
         action: (input) => markPreparingAction(input),
       };
     case 'preparing':
       return {
-        label: 'Mark Ready',
+        label: mode === 'compact' ? 'Ready' : 'Mark ready',
         pendingLabel: 'Marking…',
-        variant: 'default',
         successMessage: `Order ${orderShortId(order)} is ready`,
         targetStatus: 'ready',
         action: (input) => markReadyAction(input),
       };
     case 'ready':
       return {
-        label: 'Mark Completed',
+        label: mode === 'compact' ? 'Done' : 'Mark completed',
         pendingLabel: 'Completing…',
-        variant: 'outline',
         successMessage: `Order ${orderShortId(order)} is completed`,
         targetStatus: 'completed',
         action: (input) => markCompletedAction(input),
@@ -76,16 +86,16 @@ function configFor(order: Order): TransitionConfig | null {
 function ActiveButton({
   order,
   config,
+  mode,
 }: {
   order: Order;
   config: TransitionConfig;
+  mode: Mode;
 }) {
   const [isPending, startTransition] = useTransition();
   const { addOptimistic, clearOptimistic } = useOptimisticStatus();
 
   function onClick() {
-    // Optimistic update: target status reflects the transition we're
-    // attempting. If the action fails, we drop the override + toast.
     addOptimistic({
       call_sid: order.call_sid,
       status: config.targetStatus,
@@ -103,12 +113,19 @@ function ActiveButton({
     });
   }
 
+  // Compact (table) = secondary look. Detail = primary look.
+  // shadcn's `secondary` variant maps `--secondary` → `--surface-2`
+  // in our globals.css; we add `border` to give the visible outline
+  // the design spec asks for ("subtle background, visible border").
+  const isCompact = mode === 'compact';
+
   return (
     <Button
-      variant={config.variant}
-      size="sm"
+      variant={isCompact ? 'secondary' : 'default'}
+      size={isCompact ? 'sm' : 'lg'}
       onClick={onClick}
       disabled={isPending}
+      className={cn(isCompact && 'border border-border')}
     >
       {isPending ? config.pendingLabel : config.label}
     </Button>

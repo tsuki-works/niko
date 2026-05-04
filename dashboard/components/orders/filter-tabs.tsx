@@ -12,13 +12,13 @@ type Tab = {
 };
 
 const TABS: Tab[] = [
-  { key: 'all', label: 'All', href: '/' },
-  { key: 'in_progress', label: 'Live', href: '/?status=in_progress' },
-  { key: 'confirmed', label: 'Confirmed', href: '/?status=confirmed' },
-  { key: 'preparing', label: 'Preparing', href: '/?status=preparing' },
-  { key: 'ready', label: 'Ready', href: '/?status=ready' },
-  { key: 'completed', label: 'Completed', href: '/?status=completed' },
-  { key: 'cancelled', label: 'Cancelled', href: '/?status=cancelled' },
+  { key: 'all', label: 'All', href: '/orders' },
+  { key: 'in_progress', label: 'Live', href: '/orders?status=in_progress' },
+  { key: 'confirmed', label: 'Confirmed', href: '/orders?status=confirmed' },
+  { key: 'preparing', label: 'Preparing', href: '/orders?status=preparing' },
+  { key: 'ready', label: 'Ready', href: '/orders?status=ready' },
+  { key: 'completed', label: 'Completed', href: '/orders?status=completed' },
+  { key: 'cancelled', label: 'Cancelled', href: '/orders?status=cancelled' },
 ];
 
 export function FilterTabs({
@@ -29,7 +29,10 @@ export function FilterTabs({
   counts: CountsByStatus;
 }) {
   return (
-    <nav className="flex flex-wrap items-center gap-2">
+    <nav
+      aria-label="Filter orders by status"
+      className="flex flex-wrap items-center gap-1 border-t border-border-subtle pt-3"
+    >
       {TABS.map((tab) => {
         const isActive = tab.key === 'all' ? !active : active === tab.key;
         const count = counts[tab.key] ?? 0;
@@ -37,21 +40,21 @@ export function FilterTabs({
           <Link
             key={tab.key}
             href={tab.href}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm transition-colors',
-              isActive
-                ? 'border-foreground/20 bg-foreground text-background'
-                : 'border-border bg-background text-foreground hover:bg-muted',
-            )}
             aria-current={isActive ? 'page' : undefined}
+            className={cn(
+              'inline-flex h-7 items-center gap-2 rounded-sm px-2.5 text-sm transition-colors',
+              isActive
+                ? 'bg-surface-2 text-foreground'
+                : 'text-foreground-muted hover:bg-surface-2/60 hover:text-foreground',
+            )}
           >
             <span>{tab.label}</span>
             <span
               className={cn(
-                'rounded-full px-2 py-0.5 text-xs tabular-nums',
+                'inline-flex h-4 min-w-4 items-center justify-center rounded-xs px-1 text-xs tabular-nums',
                 isActive
-                  ? 'bg-background/20 text-background'
-                  : 'bg-muted text-muted-foreground',
+                  ? 'bg-surface-3 text-foreground-subtle'
+                  : 'bg-surface-1 text-foreground-subtle',
               )}
             >
               {count}

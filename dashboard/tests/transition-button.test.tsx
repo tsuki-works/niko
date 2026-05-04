@@ -49,23 +49,23 @@ afterEach(() => {
 });
 
 it('renders nothing for in_progress orders', () => {
-  const { container } = render(<TransitionButton order={makeOrder('in_progress')} />);
+  const { container } = render(<TransitionButton mode="detail" order={makeOrder('in_progress')} />);
   expect(container).toBeEmptyDOMElement();
 });
 
 it('renders nothing for completed orders', () => {
-  const { container } = render(<TransitionButton order={makeOrder('completed')} />);
+  const { container } = render(<TransitionButton mode="detail" order={makeOrder('completed')} />);
   expect(container).toBeEmptyDOMElement();
 });
 
 it('renders nothing for cancelled orders', () => {
-  const { container } = render(<TransitionButton order={makeOrder('cancelled')} />);
+  const { container } = render(<TransitionButton mode="detail" order={makeOrder('cancelled')} />);
   expect(container).toBeEmptyDOMElement();
 });
 
 it('renders Start Preparing for confirmed orders and calls markPreparingAction on click', async () => {
   vi.mocked(markPreparingAction).mockResolvedValueOnce({ success: true });
-  render(<TransitionButton order={makeOrder('confirmed')} />);
+  render(<TransitionButton mode="detail" order={makeOrder('confirmed')} />);
 
   const button = screen.getByRole('button', { name: /start preparing/i });
   fireEvent.click(button);
@@ -80,7 +80,7 @@ it('renders Start Preparing for confirmed orders and calls markPreparingAction o
 
 it('renders Mark Ready for preparing orders and calls markReadyAction on click', async () => {
   vi.mocked(markReadyAction).mockResolvedValueOnce({ success: true });
-  render(<TransitionButton order={makeOrder('preparing')} />);
+  render(<TransitionButton mode="detail" order={makeOrder('preparing')} />);
 
   const button = screen.getByRole('button', { name: /mark ready/i });
   fireEvent.click(button);
@@ -92,7 +92,7 @@ it('renders Mark Ready for preparing orders and calls markReadyAction on click',
 
 it('renders Mark Completed for ready orders and calls markCompletedAction on click', async () => {
   vi.mocked(markCompletedAction).mockResolvedValueOnce({ success: true });
-  render(<TransitionButton order={makeOrder('ready')} />);
+  render(<TransitionButton mode="detail" order={makeOrder('ready')} />);
 
   const button = screen.getByRole('button', { name: /mark completed/i });
   fireEvent.click(button);
@@ -107,7 +107,7 @@ it('shows error toast when the action returns failure', async () => {
     success: false,
     error: 'order not found',
   });
-  render(<TransitionButton order={makeOrder('confirmed')} />);
+  render(<TransitionButton mode="detail" order={makeOrder('confirmed')} />);
 
   fireEvent.click(screen.getByRole('button', { name: /start preparing/i }));
 
@@ -129,7 +129,7 @@ it('calls the action immediately on tap (optimistic UI inflight)', async () => {
 
   const renderResult = render(
     <OptimisticStatusProvider>
-      <TransitionButton order={makeOrder('confirmed')} />
+      <TransitionButton mode="detail" order={makeOrder('confirmed')} />
     </OptimisticStatusProvider>,
   );
 
@@ -154,7 +154,7 @@ it('shows error toast on action failure (rollback handled by OrdersFeed)', async
 
   render(
     <OptimisticStatusProvider>
-      <TransitionButton order={makeOrder('confirmed')} />
+      <TransitionButton mode="detail" order={makeOrder('confirmed')} />
     </OptimisticStatusProvider>,
   );
 

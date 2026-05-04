@@ -23,16 +23,16 @@ export function OrdersTable({
   if (orders.length === 0) return <EmptyState twilioPhone={twilioPhone} />;
 
   return (
-    <div className="overflow-hidden rounded-xl border">
+    <div className="overflow-hidden">
       <table className="w-full text-left text-sm">
-        <thead className="bg-muted/40 text-muted-foreground">
-          <tr>
+        <thead>
+          <tr className="border-b border-border-subtle text-foreground-muted">
             <Th className="w-28">Order</Th>
             <Th className="w-24">Time</Th>
             <Th>Items</Th>
-            <Th className="w-32 text-right">Subtotal</Th>
-            <Th className="w-32">Status</Th>
-            <Th className="w-36">Action</Th>
+            <Th className="w-28 text-right">Subtotal</Th>
+            <Th className="w-24">Status</Th>
+            <Th className="w-24">Action</Th>
           </tr>
         </thead>
         <tbody>
@@ -51,8 +51,8 @@ export function OrdersTable({
 
 function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
   const isLive = order.status === 'in_progress';
-  const isCancelled = order.status === 'cancelled';
-  const mutedCell = isCancelled ? 'text-muted-foreground' : '';
+  const isFaded = order.status === 'completed' || order.status === 'cancelled';
+  const fadedCell = isFaded ? 'text-foreground-faint' : '';
 
   const itemsSummary =
     order.items.length === 0
@@ -65,28 +65,24 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
     .filter(Boolean)
     .join(' · ');
 
+  const detailHref = `/orders/${encodeURIComponent(order.call_sid)}`;
+
   return (
     <tr
-      className="border-t transition-colors hover:bg-muted/40"
+      className={cn(
+        'border-b border-border-subtle transition-colors hover:bg-surface-2/40',
+        isFresh && 'animate-row-enter',
+      )}
       data-fresh={isFresh ? 'true' : undefined}
     >
-      <Td className={cn('py-3', mutedCell)}>
-        <Link
-          href={`/orders/${encodeURIComponent(order.call_sid)}`}
-          className="flex items-center gap-2 font-medium"
-        >
-          {isLive && (
-            <span
-              aria-hidden
-              className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
-            />
-          )}
+      <Td className={cn('font-mono text-xs', fadedCell)}>
+        <Link href={detailHref} className="block">
           {orderShortId(order)}
         </Link>
       </Td>
-      <Td className={cn('text-muted-foreground', mutedCell)}>
+      <Td className="text-foreground-muted">
         <Link
-          href={`/orders/${encodeURIComponent(order.call_sid)}`}
+          href={detailHref}
           data-testid={`order-time-${order.call_sid}`}
           data-anchor-iso={timeColumnAnchor(order).toISOString()}
         >
@@ -100,31 +96,26 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
           )}
         </Link>
       </Td>
-      <Td className={mutedCell}>
-        <Link
-          href={`/orders/${encodeURIComponent(order.call_sid)}`}
-          className="block"
-        >
-          <div className={isLive ? 'italic' : ''}>
+      <Td className={fadedCell}>
+        <Link href={detailHref} className="block">
+          <div className={cn('truncate', isLive && 'italic')}>
             {isLive ? `Building… ${itemsSummary}` : itemsSummary}
           </div>
           {secondary && (
-            <div className="text-xs text-muted-foreground">{secondary}</div>
+            <div className="text-xs text-foreground-faint">{secondary}</div>
           )}
         </Link>
       </Td>
       <Td
         className={cn(
-          'text-right font-medium tabular-nums',
-          mutedCell,
+          'text-right font-mono font-medium tabular-nums',
+          fadedCell,
         )}
       >
-        <Link href={`/orders/${encodeURIComponent(order.call_sid)}`}>
-          {formatCAD(order.subtotal)}
-        </Link>
+        <Link href={detailHref}>{formatCAD(order.subtotal)}</Link>
       </Td>
       <Td>
-        <Link href={`/orders/${encodeURIComponent(order.call_sid)}`}>
+        <Link href={detailHref}>
           <StatusBadge status={order.status} />
         </Link>
       </Td>
@@ -145,7 +136,7 @@ function Th({
   return (
     <th
       className={cn(
-        'px-4 py-2 text-xs font-medium uppercase tracking-wide',
+        'px-2.5 py-2.5 text-xs font-medium uppercase tracking-wide',
         className,
       )}
     >
@@ -161,16 +152,21 @@ function Td({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <td className={cn('px-4 py-3 align-top', className)}>{children}</td>;
+  return (
+    <td className={cn('px-2.5 py-2.5 align-middle', className)}>{children}</td>
+  );
 }
 
 function EmptyState({ twilioPhone }: { twilioPhone: string }) {
   const display = formatPhone(twilioPhone);
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-16 text-center">
-      <PhoneIncoming className="mb-4 h-8 w-8 text-muted-foreground" />
-      <p className="text-base font-medium">Waiting for first order</p>
-      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+    <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+      <PhoneIncoming
+        className="size-8 text-foreground-faint"
+        aria-hidden
+      />
+      <p className="text-md font-medium">No orders yet</p>
+      <p className="max-w-sm text-sm text-foreground-muted">
         {display
           ? `Calls to ${display} will appear here in real time.`
           : 'No Twilio number is assigned to this restaurant yet — assign one to start receiving calls.'}
