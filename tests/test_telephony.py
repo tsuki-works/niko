@@ -2009,3 +2009,376 @@ async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch
 
     assert captured == ["and a coke"]
 
+
+# ---------------------------------------------------------------------------
+# #177 — silence watchdog cancelled on SpeechStarted / interim transcript
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_silence_watchdog_cancelled_on_interim_transcript(monkeypatch):
+    """#177 — an interim transcript must cancel the silence watchdog so
+    it doesn't fire while the caller is actively speaking."""
+    from unittest.mock import MagicMock
+
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _open_deepgram_connection
+
+    monkeypatch.setattr(router_mod.settings, "deepgram_api_key", "fake-key")
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    captured: dict = {}
+
+    class FakeConn:
+        def on(self, event_type, handler):
+            captured.setdefault(str(event_type), handler)
+
+        async def start(self, *_, **__):
+            return True
+
+    class FakeDGClient:
+        def __init__(self, *_):
+            self.listen = MagicMock()
+            self.listen.asynclive.v.return_value = FakeConn()
+
+    monkeypatch.setattr(router_mod, "DeepgramClient", FakeDGClient)
+
+    await _open_deepgram_connection("CAtest", "r1", lambda t: None, state=state)
+    handler = captured["Results"]
+
+    def _fake_result(text, is_final):
+        r = MagicMock()
+        alt = MagicMock()
+        alt.transcript = text
+        alt.confidence = 0.9
+        r.channel.alternatives = [alt]
+        r.is_final = is_final
+        return r
+
+    # Plant a live silence task on state.
+    async def _never():
+        await asyncio.sleep(60)
+
+    state.silence_task = asyncio.create_task(_never())
+    assert not state.silence_task.done()
+
+    # Interim transcript arrives — watchdog must be cancelled.
+    await handler(None, _fake_result("i'd like a", is_final=False))
+
+    assert state.silence_task is None, (
+        "silence_task must be cleared on interim transcript"
+    )
+
+
+@pytest.mark.asyncio
+async def test_silence_watchdog_cancelled_on_speech_started(monkeypatch):
+    """#177 — SpeechStarted event (VAD) must cancel the silence watchdog
+    before any transcript is even produced."""
+    from unittest.mock import MagicMock
+
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _open_deepgram_connection
+
+    monkeypatch.setattr(router_mod.settings, "deepgram_api_key", "fake-key")
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    captured: dict = {}
+
+    class FakeConn:
+        def on(self, event_type, handler):
+            captured.setdefault(str(event_type), handler)
+
+        async def start(self, *_, **__):
+            return True
+
+    class FakeDGClient:
+        def __init__(self, *_):
+            self.listen = MagicMock()
+            self.listen.asynclive.v.return_value = FakeConn()
+
+    monkeypatch.setattr(router_mod, "DeepgramClient", FakeDGClient)
+
+    await _open_deepgram_connection("CAtest", "r1", lambda t: None, state=state)
+
+    speech_started_handler = captured.get("SpeechStarted")
+    assert speech_started_handler is not None, (
+        "SpeechStarted handler must be registered on the Deepgram connection"
+    )
+
+    # Plant a live silence task.
+    async def _never():
+        await asyncio.sleep(60)
+
+    state.silence_task = asyncio.create_task(_never())
+    assert not state.silence_task.done()
+
+    await speech_started_handler(None, MagicMock())
+
+    assert state.silence_task is None, (
+        "silence_task must be cleared on SpeechStarted"
+    )
+
+
+@pytest.mark.asyncio
+async def test_interim_transcript_also_cancels_tts_mark_timeout(monkeypatch):
+    """#177/#178 — an interim transcript must also cancel the TTS mark
+    fallback timer so the watchdog is not re-armed after the caller speaks."""
+    from unittest.mock import MagicMock
+
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _open_deepgram_connection
+
+    monkeypatch.setattr(router_mod.settings, "deepgram_api_key", "fake-key")
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    captured: dict = {}
+
+    class FakeConn:
+        def on(self, event_type, handler):
+            captured.setdefault(str(event_type), handler)
+
+        async def start(self, *_, **__):
+            return True
+
+    class FakeDGClient:
+        def __init__(self, *_):
+            self.listen = MagicMock()
+            self.listen.asynclive.v.return_value = FakeConn()
+
+    monkeypatch.setattr(router_mod, "DeepgramClient", FakeDGClient)
+
+    await _open_deepgram_connection("CAtest", "r1", lambda t: None, state=state)
+    handler = captured["Results"]
+
+    def _fake_result(text, is_final):
+        r = MagicMock()
+        alt = MagicMock()
+        alt.transcript = text
+        alt.confidence = 0.9
+        r.channel.alternatives = [alt]
+        r.is_final = is_final
+        return r
+
+    async def _never():
+        await asyncio.sleep(60)
+
+    state.tts_mark_timeout_task = asyncio.create_task(_never())
+    assert not state.tts_mark_timeout_task.done()
+
+    await handler(None, _fake_result("i'd like a", is_final=False))
+
+    assert state.tts_mark_timeout_task is None, (
+        "tts_mark_timeout_task must be cleared on interim transcript"
+    )
+
+
+# ---------------------------------------------------------------------------
+# #178 — silence watchdog arms on TTS_TURN_MARK echo, not byte-send
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_silence_watchdog_not_armed_before_tts_mark_echo(monkeypatch):
+    """#178 — the silence watchdog must NOT be armed immediately when the
+    LLM turn task finishes (byte-send); it must wait for the TTS_TURN_MARK
+    echo from Twilio."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _run_llm_tts_turn
+    from app.storage import call_sessions
+
+    arm_calls: list[str] = []
+
+    async def fake_stream_reply(*, transcript, history, order, **kw):
+        yield StreamEvent(text_delta="Sure thing!")
+        yield StreamEvent(
+            final=LLMResponse(reply_text="Sure thing!", order=order, history=history)
+        )
+
+    async def fake_speak(text, websocket, stream_sid, **kw):
+        pass
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+
+    monkeypatch.setattr(router_mod, "stream_reply", fake_stream_reply)
+    monkeypatch.setattr(router_mod, "speak", fake_speak)
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        router_mod,
+        "_arm_silence_watchdog",
+        lambda state, ws: arm_calls.append("armed"),
+    )
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test",
+    )
+
+    await _run_llm_tts_turn("one pepperoni pizza", state, ws)
+
+    # After the turn completes, the watchdog must NOT have been armed yet.
+    assert arm_calls == [], (
+        "silence watchdog must not be armed at byte-send-end; "
+        "should wait for TTS_TURN_MARK echo"
+    )
+    # But a tts_mark_timeout_task MUST be live (fallback timer).
+    assert state.tts_mark_timeout_task is not None, (
+        "tts_mark_timeout_task must be created so watchdog arms eventually "
+        "even if Twilio never echoes the mark"
+    )
+    # Cleanup
+    if state.tts_mark_timeout_task and not state.tts_mark_timeout_task.done():
+        state.tts_mark_timeout_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_silence_watchdog_armed_on_tts_mark_echo(monkeypatch):
+    """#178 — when the WS handler receives a 'tts_turn_end' mark echo,
+    it must call _arm_silence_watchdog and cancel the fallback timer."""
+    import app.telephony.router as router_mod
+    from app.storage import call_sessions
+
+    arm_calls: list[str] = []
+    monkeypatch.setattr(
+        router_mod,
+        "_arm_silence_watchdog",
+        lambda state, ws: arm_calls.append("armed"),
+    )
+
+    fake_dg = AsyncMock()
+    fake_dg.send = AsyncMock()
+    fake_dg.finish = AsyncMock()
+
+    async def fake_open_dg(call_sid, restaurant_id, on_final, **kwargs):
+        return fake_dg
+
+    async def fake_speak(text, websocket, stream_sid, **kw):
+        pass
+
+    monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
+    monkeypatch.setattr("app.telephony.router.speak", fake_speak)
+    monkeypatch.setattr("app.telephony.router.stream_reply", _make_fake_stream_reply())
+    monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
+
+    tts_mark_msg = json.dumps(
+        {"event": "mark", "mark": {"name": "tts_turn_end"}}
+    )
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(
+            json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"})
+        )
+        ws.send_text(json.dumps(_START_MSG))
+        # Echo the TTS mark back as Twilio would after audio finishes.
+        ws.send_text(tts_mark_msg)
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert "armed" in arm_calls, (
+        "silence watchdog must be armed when tts_turn_end mark echo is received"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tts_mark_fallback_arms_watchdog_when_no_echo(monkeypatch):
+    """#178 — if Twilio never echoes TTS_TURN_MARK, the fallback timer
+    must arm the silence watchdog after TTS_MARK_ECHO_TIMEOUT_SECONDS."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import (
+        _CallState,
+        _arm_silence_after_tts_mark_timeout,
+    )
+
+    monkeypatch.setattr(router_mod, "TTS_MARK_ECHO_TIMEOUT_SECONDS", 0.05)
+
+    arm_calls: list[str] = []
+    monkeypatch.setattr(
+        router_mod,
+        "_arm_silence_watchdog",
+        lambda state, ws: arm_calls.append("armed"),
+    )
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _arm_silence_after_tts_mark_timeout(state, ws)
+
+    assert "armed" in arm_calls, (
+        "fallback timer must arm the silence watchdog when mark echo never arrives"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tts_mark_fallback_cancelled_by_caller_speech(monkeypatch):
+    """#177/#178 — when _handle_final_transcript runs (caller spoke),
+    it must cancel the TTS mark fallback timer so the watchdog is not
+    re-armed after the caller is already responding."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _handle_final_transcript
+
+    arm_calls: list[str] = []
+    monkeypatch.setattr(
+        router_mod,
+        "_arm_silence_watchdog",
+        lambda state, ws: arm_calls.append("armed"),
+    )
+    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", AsyncMock())
+    monkeypatch.setattr(router_mod, "_abort_pending_hangup", lambda *a: None)
+    monkeypatch.setattr(router_mod, "clear_twilio_audio", AsyncMock())
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    # Plant a live TTS mark fallback timer.
+    async def _never():
+        await asyncio.sleep(60)
+
+    state.tts_mark_timeout_task = asyncio.create_task(_never())
+    assert not state.tts_mark_timeout_task.done()
+
+    await _handle_final_transcript("a large pepperoni", state, ws)
+
+    assert state.tts_mark_timeout_task is None, (
+        "tts_mark_timeout_task must be cancelled when caller speaks"
+    )
+    assert arm_calls == [], (
+        "silence watchdog must not be armed directly on caller speech"
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_tts_turn_mark_emits_mark_payload():
+    """send_tts_turn_mark must emit the TTS_TURN_MARK name over the WS."""
+    from app.telephony.router import TTS_TURN_MARK, send_tts_turn_mark
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+
+    sent = await send_tts_turn_mark(ws, "MZtest456")
+
+    assert sent is True
+    ws.send_json.assert_awaited_once_with(
+        {
+            "event": "mark",
+            "streamSid": "MZtest456",
+            "mark": {"name": TTS_TURN_MARK},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_tts_turn_mark_returns_false_when_stream_sid_missing():
+    from app.telephony.router import send_tts_turn_mark
+
+    ws = AsyncMock()
+    sent = await send_tts_turn_mark(ws, None)
+    assert sent is False
+    ws.send_json.assert_not_called()
+
