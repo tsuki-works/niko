@@ -8,7 +8,6 @@ import {
   onSnapshot,
   orderBy,
   query,
-  where,
 } from 'firebase/firestore';
 import { Phone } from 'lucide-react';
 
@@ -28,18 +27,29 @@ export function LiveCallsWidget({ initial, restaurantId }: Props) {
   useEffect(() => {
     if (!db) return;
 
+    // Subscribe to the recent window and filter `in_progress` on the
+    // client. A `where('status', '==', 'in_progress')` + `orderBy
+    // ('started_at', 'desc')` query needs a composite index that we
+    // haven't provisioned for `call_sessions` yet, and the index error
+    // crashes the Firestore SDK's internal state for the whole tab.
+    // Mirrors the same client-side filter pattern used in
+    // active-orders-widget.tsx.
     const q = query(
       collection(db, 'restaurants', restaurantId, 'call_sessions').withConverter(
         callSessionConverter,
       ),
-      where('status', '==', 'in_progress'),
       orderBy('started_at', 'desc'),
-      fsLimit(10),
+      fsLimit(50),
     );
 
     const unsub = onSnapshot(
       q,
-      (snap) => setCalls(snap.docs.map((d) => d.data())),
+      (snap) => {
+        const recent = snap.docs.map((d) => d.data());
+        setCalls(
+          recent.filter((c) => c.status === 'in_progress').slice(0, 10),
+        );
+      },
       (err) => console.error('Live calls subscription error', err),
     );
     return unsub;
