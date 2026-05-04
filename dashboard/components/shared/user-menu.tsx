@@ -52,21 +52,21 @@ export function UserMenu({ restaurantName, userEmail, buildSha }: Props) {
       <DropdownMenuTrigger
         className={cn(
           'group/user-menu flex w-full items-center gap-2 rounded-md p-2 text-left text-sm',
-          'transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring',
-          'data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground',
+          'transition-colors hover:bg-surface-2 hover:text-foreground',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+          'data-[state=open]:bg-surface-2 data-[state=open]:text-foreground',
         )}
         aria-label="Account menu"
       >
         <Avatar className="size-8 shrink-0">
-          <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-xs font-medium">
+          <AvatarFallback className="bg-brand-muted text-foreground text-xs font-medium">
             {initials}
           </AvatarFallback>
         </Avatar>
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
           <span className="truncate font-medium">{restaurantName}</span>
           {userEmail ? (
-            <span className="truncate text-xs text-muted-foreground group-hover/user-menu:text-sidebar-accent-foreground/80 group-data-[state=open]/user-menu:text-sidebar-accent-foreground/80">
+            <span className="truncate text-xs text-foreground-muted group-hover/user-menu:text-foreground/80 group-data-[state=open]/user-menu:text-foreground/80">
               {userEmail}
             </span>
           ) : null}

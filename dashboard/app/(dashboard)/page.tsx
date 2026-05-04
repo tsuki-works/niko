@@ -112,7 +112,7 @@ async function safeLiveCallsSeed(): Promise<CallSession[]> {
         }),
       );
   } catch (err) {
-    console.error('[overview] /dev/calls fetch failed', err);
+    console.error('[overview] listRecentCalls failed', err);
     return [];
   }
 }

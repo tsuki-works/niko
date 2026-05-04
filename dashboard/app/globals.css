@@ -37,6 +37,12 @@
   --brand-muted: oklch(0.52 0.16 260 / 0.10);
   --brand-foreground: oklch(0.98 0 0);
 
+  /* Niko moon mark — preserved navy/cream palette so the wordmark
+     icon stays brand-identical across the redesign. Consumed by
+     <NikoMark> via fill/stroke. */
+  --niko-ink: oklch(0.389 0.080 257.7);
+  --niko-paper: oklch(0.850 0.052 85.7);
+
   /* Primary — monochromatic, foreground-inverted */
   --primary: oklch(0.18 0.005 250);
   --primary-foreground: oklch(0.98 0 0);
@@ -109,6 +115,11 @@
   --brand: oklch(0.7 0.14 260);
   --brand-muted: oklch(0.7 0.14 260 / 0.16);
   --brand-foreground: oklch(0.98 0 0);
+
+  /* Niko moon mark — palette inverts in dark mode (cream face,
+     navy crescent + features). */
+  --niko-ink: oklch(0.850 0.052 85.7);
+  --niko-paper: oklch(0.389 0.080 257.7);
 
   --primary: oklch(0.98 0 0);
   --primary-foreground: oklch(0.18 0.005 250);
