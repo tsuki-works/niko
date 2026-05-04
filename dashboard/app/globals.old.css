@@ -1,0 +1,241 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Brand palette (from assets/niko/niko_moon_icon_aligned.svg):
+ *   navy  #28456F → oklch(0.389 0.080 257.7)   primary ink on light
+ *   cream #DDCCA8 → oklch(0.850 0.052 85.7)    primary ink on dark
+ *
+ * Surface strategy:
+ *   - Light mode: very light warm cream background, white cards.
+ *   - Dark mode:  deep navy background (darker than brand for text
+ *     contrast), lifted-navy cards/popovers. Sidebar slightly deeper
+ *     than main surface so the boundary is visible without a hard line.
+ *
+ * Semantic tokens stay in the same warm family:
+ *   - success: warm sage (hue 135)
+ *   - warning: amber (hue 85, shared with cream)
+ *   - destructive: warm clay (hue 28)
+ */
+
+:root {
+  --radius: 0.75rem;
+
+  /* Warm cream surface */
+  --background: oklch(0.98 0.012 85.7);
+  --foreground: oklch(0.28 0.06 257.7);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.28 0.06 257.7);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.28 0.06 257.7);
+
+  /* Brand — navy on cream */
+  --primary: oklch(0.389 0.08 257.7);
+  --primary-foreground: oklch(0.97 0.03 85.7);
+
+  --secondary: oklch(0.93 0.035 85.7);
+  --secondary-foreground: oklch(0.389 0.08 257.7);
+
+  --muted: oklch(0.95 0.022 85.7);
+  --muted-foreground: oklch(0.48 0.05 257.7);
+
+  --accent: oklch(0.93 0.035 85.7);
+  --accent-foreground: oklch(0.389 0.08 257.7);
+
+  --success: oklch(0.68 0.12 135);
+  --success-foreground: oklch(0.99 0.005 135);
+
+  --warning: oklch(0.75 0.15 85);
+  --warning-foreground: oklch(0.28 0.05 85);
+  --fresh-flash: oklch(0.75 0.15 85);
+
+  --destructive: oklch(0.58 0.18 28);
+  --destructive-foreground: oklch(0.99 0.005 28);
+
+  --border: oklch(0.90 0.02 85.7);
+  --input: oklch(0.90 0.02 85.7);
+  --ring: oklch(0.389 0.08 257.7);
+
+  /* Chart palette — warm family */
+  --chart-1: oklch(0.389 0.08 257.7);   /* navy */
+  --chart-2: oklch(0.75 0.15 85);       /* amber */
+  --chart-3: oklch(0.68 0.12 135);      /* sage */
+  --chart-4: oklch(0.58 0.18 28);       /* clay */
+  --chart-5: oklch(0.850 0.052 85.7);   /* cream */
+
+  --sidebar: oklch(0.97 0.015 85.7);
+  --sidebar-foreground: oklch(0.28 0.06 257.7);
+  --sidebar-primary: oklch(0.389 0.08 257.7);
+  --sidebar-primary-foreground: oklch(0.97 0.03 85.7);
+  --sidebar-accent: oklch(0.90 0.04 85.7);
+  --sidebar-accent-foreground: oklch(0.389 0.08 257.7);
+  --sidebar-border: oklch(0.90 0.02 85.7);
+  --sidebar-ring: oklch(0.389 0.08 257.7);
+
+  /* Niko mark — explicit brand hex, swapped for dark mode. `ink` is
+     the drawing color (crescent fill, strokes, eyes, smile); `paper`
+     is the moon face fill. */
+  --niko-ink: #28456F;
+  --niko-paper: #DDCCA8;
+}
+
+.dark {
+  /* Warm-charcoal surfaces — very low chroma at cream hue so any visible
+     tint is a whisper of warmth, never a navy wash. Brand pop comes from
+     text/primary/sidebar-accent, not from painting every surface navy. */
+  --background: oklch(0.18 0.01 85);
+  --foreground: oklch(0.94 0.03 85.7);
+
+  --card: oklch(0.22 0.012 85);
+  --card-foreground: oklch(0.94 0.03 85.7);
+
+  --popover: oklch(0.22 0.012 85);
+  --popover-foreground: oklch(0.94 0.03 85.7);
+
+  /* Primary stays cream — where the brand genuinely "pops" on buttons. */
+  --primary: oklch(0.85 0.052 85.7);
+  --primary-foreground: oklch(0.22 0.08 257.7);
+
+  --secondary: oklch(0.28 0.015 85);
+  --secondary-foreground: oklch(0.94 0.03 85.7);
+
+  --muted: oklch(0.25 0.012 85);
+  --muted-foreground: oklch(0.72 0.03 85.7);
+
+  --accent: oklch(0.28 0.015 85);
+  --accent-foreground: oklch(0.94 0.03 85.7);
+
+  --success: oklch(0.75 0.13 135);
+  --success-foreground: oklch(0.18 0.03 135);
+
+  --warning: oklch(0.80 0.15 85);
+  --warning-foreground: oklch(0.22 0.05 85);
+  --fresh-flash: oklch(0.80 0.15 85);
+
+  --destructive: oklch(0.68 0.19 28);
+  --destructive-foreground: oklch(0.18 0.03 28);
+
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.85 0.052 85.7);
+
+  --chart-1: oklch(0.85 0.052 85.7);
+  --chart-2: oklch(0.80 0.15 85);
+  --chart-3: oklch(0.75 0.13 135);
+  --chart-4: oklch(0.68 0.19 28);
+  --chart-5: oklch(0.50 0.09 257.7);
+
+  /* Sidebar noticeably deeper than main bg so the boundary reads
+     without needing a hard border. */
+  --sidebar: oklch(0.12 0.006 85);
+  --sidebar-foreground: oklch(0.94 0.03 85.7);
+  --sidebar-primary: oklch(0.85 0.052 85.7);
+  --sidebar-primary-foreground: oklch(0.22 0.08 257.7);
+  /* Active nav item — saturated brand navy. This is intentionally the
+     one place saturated blue shows up in dark mode so the active route
+     reads as "the brand highlight" rather than being lost in a navy
+     field. */
+  --sidebar-accent: oklch(0.42 0.09 257.7);
+  --sidebar-accent-foreground: oklch(0.97 0.03 85.7);
+  --sidebar-border: oklch(1 0 0 / 14%);
+  --sidebar-ring: oklch(0.85 0.052 85.7);
+
+  /* Niko mark — inverted in dark mode: ink becomes cream, paper becomes navy. */
+  --niko-ink: #DDCCA8;
+  --niko-paper: #28456F;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-fresh-flash: var(--fresh-flash);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Tabular numbers for prices, counts, IDs — consistent alignment */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* New-order highlight for the orders table.
+   Triggered by data-fresh="true" attribute set by the OrdersTable when
+   useNewOrderAlert flags a row as recently-arrived. Amber tone matches
+   the 'preparing' status badge for visual consistency.
+   8s total: full-strength flash ~150ms in, then linear fade. */
+@keyframes new-order-flash {
+  0% {
+    background-color: color-mix(in oklch, var(--color-fresh-flash) 20%, transparent);
+  }
+  10% {
+    background-color: color-mix(in oklch, var(--color-fresh-flash) 20%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+tr[data-fresh="true"] {
+  animation: new-order-flash 8s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  tr[data-fresh="true"] {
+    animation: none;
+    background-color: color-mix(in oklch, var(--color-fresh-flash) 15%, transparent);
+  }
+}

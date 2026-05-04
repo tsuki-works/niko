@@ -11,13 +11,13 @@ import {
 import { useEffect, useRef, useState } from 'react';
 
 import { FilterTabs, type CountsByStatus } from '@/components/orders/filter-tabs';
-import { LiveIndicator } from '@/components/orders/live-indicator';
 import {
   OptimisticStatusProvider,
   useOptimisticStatus,
 } from '@/components/orders/optimistic-status-context';
 import { OrdersTable } from '@/components/orders/orders-table';
 import { useNewOrderAlert } from '@/components/orders/use-new-order-alert';
+import { PageHeader } from '@/components/shared/page-header';
 import { db } from '@/lib/firebase/client';
 import { orderConverter } from '@/lib/firebase/converters';
 import { formatPhone } from '@/lib/formatters/phone';
@@ -131,15 +131,13 @@ function OrdersFeedInner({
     return unsub;
   }, [statusFilter, restaurantId]);
 
+  const subtitle = twilioPhone
+    ? `${restaurantName} · ${formatPhone(twilioPhone)}`
+    : restaurantName;
+
   return (
     <section className="flex flex-col gap-6 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h2 className="text-2xl font-medium">Orders</h2>
-          <p className="text-sm text-muted-foreground">{restaurantName}</p>
-        </div>
-        <LiveIndicator />
-      </header>
+      <PageHeader title="Orders" subtitle={subtitle} liveIndicator />
 
       <FilterTabs active={statusFilter} counts={initialCounts} />
 

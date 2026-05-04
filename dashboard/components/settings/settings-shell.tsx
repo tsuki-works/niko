@@ -2,20 +2,15 @@ import type { Restaurant } from '@/lib/schemas/restaurant';
 
 import { HoursEditor } from '@/components/settings/hours-editor';
 import { RestaurantInfoForm } from '@/components/settings/restaurant-info-form';
+import { PageHeader } from '@/components/shared/page-header';
 
 export function SettingsShell({ restaurant }: { restaurant: Restaurant }) {
   return (
-    <section className="flex flex-1 flex-col gap-10 p-6 lg:p-10">
-      <header className="flex max-w-3xl flex-col gap-3">
-        <div className="flex items-baseline gap-3">
-          <h2 className="text-3xl font-medium tracking-tight">Settings</h2>
-          <span aria-hidden className="h-px flex-1 translate-y-[-0.5rem] bg-border" />
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Restaurant info, hours, and call-handling fallbacks. Changes take
-          effect on the next call.
-        </p>
-      </header>
+    <section className="flex flex-1 flex-col p-6 lg:p-10">
+      <PageHeader
+        title="Settings"
+        subtitle="Restaurant info, hours, and call-handling fallbacks. Changes take effect on the next call."
+      />
 
       <div className="flex max-w-3xl flex-col gap-12">
         <RestaurantInfoForm restaurant={restaurant} />

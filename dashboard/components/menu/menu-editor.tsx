@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { AddCategoryDialog } from '@/components/menu/add-category-dialog';
 import { AddItemDialog } from '@/components/menu/add-item-dialog';
 import { ItemEditDialog } from '@/components/menu/item-edit-dialog';
+import { PageHeader } from '@/components/shared/page-header';
 import { Button } from '@/components/ui/button';
 import { deleteMenuItemAction } from '@/app/actions/edit-menu';
 import { formatCAD } from '@/lib/formatters/money';
@@ -48,30 +49,30 @@ export function MenuEditor({
   }
 
   return (
-    <section className="flex flex-1 flex-col gap-10 p-6 lg:p-10">
-      <header className="flex max-w-3xl flex-col gap-3">
-        <div className="flex items-baseline gap-3">
-          <h2 className="text-3xl font-medium tracking-tight">Menu</h2>
-          <span aria-hidden className="h-px flex-1 translate-y-[-0.5rem] bg-border" />
+    <section className="flex flex-1 flex-col p-6 lg:p-10">
+      <PageHeader
+        title="Menu"
+        subtitle={
+          <>
+            {restaurantName}
+            <span className="mx-2 text-foreground-faint">·</span>
+            <span className="tabular-nums">{categories.length}</span>{' '}
+            {categories.length === 1 ? 'category' : 'categories'}
+            <span className="mx-2 text-foreground-faint">·</span>
+            <span className="tabular-nums">{itemCount}</span>{' '}
+            {itemCount === 1 ? 'item' : 'items'}
+          </>
+        }
+        actions={
           <Button
             type="button"
-            size="sm"
             variant="outline"
             onClick={() => setAddingCategory(true)}
           >
-            <Plus className="h-4 w-4" /> Add category
+            <Plus className="size-4" /> Add category
           </Button>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {restaurantName}
-          <span className="mx-2 text-muted-foreground/40">·</span>
-          <span className="tabular-nums">{categories.length}</span>{' '}
-          {categories.length === 1 ? 'category' : 'categories'}
-          <span className="mx-2 text-muted-foreground/40">·</span>
-          <span className="tabular-nums">{itemCount}</span>{' '}
-          {itemCount === 1 ? 'item' : 'items'}
-        </p>
-      </header>
+        }
+      />
 
       <div className="flex flex-col gap-14">
         {categories.map((c) => (

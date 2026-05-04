@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 
 import { SettingsShell } from '@/components/settings/settings-shell';
+import { PageHeader } from '@/components/shared/page-header';
 import { getMyRestaurant } from '@/lib/api/restaurant';
 import { getServerSession } from '@/lib/auth/session';
 
@@ -16,11 +17,11 @@ export default async function SettingsPage() {
   } catch (err) {
     console.error('[settings page] /restaurants/me fetch failed', err);
     return (
-      <section className="flex flex-1 flex-col gap-3 p-6 lg:p-10">
-        <h2 className="text-3xl font-medium tracking-tight">Settings</h2>
-        <p className="text-sm text-muted-foreground">
-          Could not reach the backend to load your restaurant configuration.
-        </p>
+      <section className="flex flex-1 flex-col p-6 lg:p-10">
+        <PageHeader
+          title="Settings"
+          subtitle="Could not reach the backend to load your restaurant configuration."
+        />
       </section>
     );
   }

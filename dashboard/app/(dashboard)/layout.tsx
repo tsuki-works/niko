@@ -1,9 +1,7 @@
+import { CircleAlert } from 'lucide-react';
 import { redirect } from 'next/navigation';
 
-import { AppSidebar } from '@/components/app-sidebar';
-import { AwaitingNumberPill } from '@/components/shared/awaiting-number-pill';
-import { SignOutButton } from '@/components/shared/sign-out-button';
-import { ThemeToggle } from '@/components/shared/theme-toggle';
+import { AppSidebar } from '@/components/shared/sidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { getMyRestaurant } from '@/lib/api/restaurant';
 import { humanizeRestaurantId } from '@/lib/formatters/restaurant';
@@ -38,23 +36,32 @@ export default async function DashboardLayout({
   }
 
   return (
-    <SidebarProvider>
+    <SidebarProvider
+      style={
+        {
+          // 200px sidebar per design-system.md (overrides the shadcn default of 14rem).
+          '--sidebar-width': '200px',
+        } as React.CSSProperties
+      }
+    >
       <AppSidebar
         restaurantName={restaurantName}
         userEmail={session.email ?? ''}
         buildSha={process.env.NEXT_PUBLIC_COMMIT_SHA}
       />
       <SidebarInset>
-        <header className="flex items-center justify-between gap-2 border-b px-4 py-3">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-medium">{restaurantName}</h1>
-            {awaitingNumber && <AwaitingNumberPill />}
+        {awaitingNumber ? (
+          <div
+            role="status"
+            className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            <CircleAlert className="size-4 shrink-0" aria-hidden />
+            <span>
+              No Twilio number assigned to this restaurant yet — incoming calls
+              won&apos;t route here until one is provisioned.
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <SignOutButton />
-            <ThemeToggle />
-          </div>
-        </header>
+        ) : null}
         <div className="flex flex-1 flex-col">{children}</div>
       </SidebarInset>
     </SidebarProvider>
