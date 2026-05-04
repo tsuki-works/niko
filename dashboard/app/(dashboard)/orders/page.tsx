@@ -1,0 +1,64 @@
+import { redirect } from 'next/navigation';
+
+import { OrdersFeed } from '@/components/orders/orders-feed';
+import type { CountsByStatus } from '@/components/orders/filter-tabs';
+import { listOrders, parseStatusParam } from '@/lib/api/orders';
+import { getMyRestaurant } from '@/lib/api/restaurant';
+import { getServerSession } from '@/lib/auth/session';
+import { humanizeRestaurantId } from '@/lib/formatters/restaurant';
+import type { Order, OrderStatus } from '@/lib/schemas/order';
+
+export const dynamic = 'force-dynamic';
+
+export default async function OrdersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const session = await getServerSession();
+  if (!session) redirect('/login');
+
+  const { status } = await searchParams;
+  const filter = parseStatusParam(status);
+
+  const all = await listOrders({ limit: 200 });
+  const counts = computeCounts(all);
+  const initial = filter ? all.filter((o) => o.status === filter) : all.slice(0, 50);
+
+  let restaurantName = humanizeRestaurantId(session.restaurantId);
+  let twilioPhone = '';
+  try {
+    const restaurant = await getMyRestaurant();
+    restaurantName = restaurant.name || restaurantName;
+    twilioPhone = restaurant.twilio_phone;
+  } catch (err) {
+    console.error('[orders page] /restaurants/me fetch failed', err);
+  }
+
+  return (
+    <OrdersFeed
+      initial={initial}
+      initialCounts={counts}
+      statusFilter={filter}
+      restaurantId={session.restaurantId}
+      restaurantName={restaurantName}
+      twilioPhone={twilioPhone}
+    />
+  );
+}
+
+function computeCounts(orders: Order[]): CountsByStatus {
+  const base: CountsByStatus = {
+    all: orders.length,
+    in_progress: 0,
+    confirmed: 0,
+    preparing: 0,
+    ready: 0,
+    completed: 0,
+    cancelled: 0,
+  };
+  for (const o of orders) {
+    base[o.status as OrderStatus] += 1;
+  }
+  return base;
+}

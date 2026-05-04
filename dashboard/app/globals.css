@@ -3,183 +3,231 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/*
- * Brand palette (from assets/niko/niko_moon_icon_aligned.svg):
- *   navy  #28456F → oklch(0.389 0.080 257.7)   primary ink on light
- *   cream #DDCCA8 → oklch(0.850 0.052 85.7)    primary ink on dark
- *
- * Surface strategy:
- *   - Light mode: very light warm cream background, white cards.
- *   - Dark mode:  deep navy background (darker than brand for text
- *     contrast), lifted-navy cards/popovers. Sidebar slightly deeper
- *     than main surface so the boundary is visible without a hard line.
- *
- * Semantic tokens stay in the same warm family:
- *   - success: warm sage (hue 135)
- *   - warning: amber (hue 85, shared with cream)
- *   - destructive: warm clay (hue 28)
- */
+/* ─────────────────────────────────────────────────────────────
+   Niko design tokens
+   See design-system.md for principles, rationale, and usage.
+   ───────────────────────────────────────────────────────────── */
 
 :root {
-  --radius: 0.75rem;
+  /* Radius — smaller than ShadCN default; precise > playful */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --radius: var(--radius-md);
 
-  /* Warm cream surface */
-  --background: oklch(0.98 0.012 85.7);
-  --foreground: oklch(0.28 0.06 257.7);
+  /* Light mode — neutral, slightly cool */
+  --background: oklch(1 0 0);
+  --surface-1: oklch(0.98 0.003 250);
+  --surface-2: oklch(0.96 0.003 250);
+  --surface-3: oklch(0.93 0.005 250);
 
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.28 0.06 257.7);
+  --border-subtle: oklch(0 0 0 / 0.06);
+  --border: oklch(0 0 0 / 0.10);
+  --border-strong: oklch(0 0 0 / 0.18);
 
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.28 0.06 257.7);
+  --foreground: oklch(0.18 0.005 250);
+  --foreground-muted: oklch(0.42 0.005 250);
+  --foreground-subtle: oklch(0.58 0.005 250);
+  --foreground-faint: oklch(0.72 0.005 250);
 
-  /* Brand — navy on cream */
-  --primary: oklch(0.389 0.08 257.7);
-  --primary-foreground: oklch(0.97 0.03 85.7);
+  /* Brand — moonlight indigo, used sparingly */
+  --brand: oklch(0.52 0.16 260);
+  --brand-muted: oklch(0.52 0.16 260 / 0.10);
+  --brand-foreground: oklch(0.98 0 0);
 
-  --secondary: oklch(0.93 0.035 85.7);
-  --secondary-foreground: oklch(0.389 0.08 257.7);
+  /* Primary — monochromatic, foreground-inverted */
+  --primary: oklch(0.18 0.005 250);
+  --primary-foreground: oklch(0.98 0 0);
+  --primary-hover: oklch(0.28 0.005 250);
 
-  --muted: oklch(0.95 0.022 85.7);
-  --muted-foreground: oklch(0.48 0.05 257.7);
+  /* Status — primary, badge bg, badge fg per status */
+  --status-live: oklch(0.65 0.18 75);
+  --status-live-bg: oklch(0.94 0.08 75);
+  --status-live-fg: oklch(0.42 0.18 75);
 
-  --accent: oklch(0.93 0.035 85.7);
-  --accent-foreground: oklch(0.389 0.08 257.7);
+  --status-confirmed: oklch(0.6 0.16 235);
+  --status-confirmed-bg: oklch(0.95 0.04 235);
+  --status-confirmed-fg: oklch(0.4 0.16 235);
 
-  --success: oklch(0.68 0.12 135);
-  --success-foreground: oklch(0.99 0.005 135);
+  --status-preparing: oklch(0.55 0.2 290);
+  --status-preparing-bg: oklch(0.95 0.05 290);
+  --status-preparing-fg: oklch(0.42 0.2 290);
 
-  --warning: oklch(0.75 0.15 85);
-  --warning-foreground: oklch(0.28 0.05 85);
-  --fresh-flash: oklch(0.75 0.15 85);
+  --status-ready: oklch(0.6 0.16 155);
+  --status-ready-bg: oklch(0.94 0.07 155);
+  --status-ready-fg: oklch(0.38 0.16 155);
 
-  --destructive: oklch(0.58 0.18 28);
-  --destructive-foreground: oklch(0.99 0.005 28);
+  --status-completed: oklch(0.55 0.005 250);
+  --status-completed-bg: oklch(0.95 0.003 250);
+  --status-completed-fg: oklch(0.45 0.005 250);
 
-  --border: oklch(0.90 0.02 85.7);
-  --input: oklch(0.90 0.02 85.7);
-  --ring: oklch(0.389 0.08 257.7);
+  --status-cancelled: oklch(0.6 0.22 25);
+  --status-cancelled-bg: oklch(0.95 0.04 25);
+  --status-cancelled-fg: oklch(0.45 0.2 25);
 
-  /* Chart palette — warm family */
-  --chart-1: oklch(0.389 0.08 257.7);   /* navy */
-  --chart-2: oklch(0.75 0.15 85);       /* amber */
-  --chart-3: oklch(0.68 0.12 135);      /* sage */
-  --chart-4: oklch(0.58 0.18 28);       /* clay */
-  --chart-5: oklch(0.850 0.052 85.7);   /* cream */
+  /* ShadCN-compatible aliases (so existing components keep working) */
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--foreground-muted);
+  --accent: var(--surface-2);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--status-cancelled);
+  --destructive-foreground: oklch(0.98 0 0);
+  --input: var(--border);
+  --ring: var(--brand);
 
-  --sidebar: oklch(0.97 0.015 85.7);
-  --sidebar-foreground: oklch(0.28 0.06 257.7);
-  --sidebar-primary: oklch(0.389 0.08 257.7);
-  --sidebar-primary-foreground: oklch(0.97 0.03 85.7);
-  --sidebar-accent: oklch(0.90 0.04 85.7);
-  --sidebar-accent-foreground: oklch(0.389 0.08 257.7);
-  --sidebar-border: oklch(0.90 0.02 85.7);
-  --sidebar-ring: oklch(0.389 0.08 257.7);
-
-  /* Niko mark — explicit brand hex, swapped for dark mode. `ink` is
-     the drawing color (crescent fill, strokes, eyes, smile); `paper`
-     is the moon face fill. */
-  --niko-ink: #28456F;
-  --niko-paper: #DDCCA8;
+  /* Charts — derived from status hues so charts and badges feel related */
+  --chart-1: var(--status-confirmed);
+  --chart-2: var(--status-ready);
+  --chart-3: var(--status-preparing);
+  --chart-4: var(--status-live);
+  --chart-5: var(--status-cancelled);
 }
 
 .dark {
-  /* Warm-charcoal surfaces — very low chroma at cream hue so any visible
-     tint is a whisper of warmth, never a navy wash. Brand pop comes from
-     text/primary/sidebar-accent, not from painting every surface navy. */
-  --background: oklch(0.18 0.01 85);
-  --foreground: oklch(0.94 0.03 85.7);
+  --background: oklch(0.14 0.005 250);
+  --surface-1: oklch(0.18 0.005 250);
+  --surface-2: oklch(0.22 0.005 250);
+  --surface-3: oklch(0.26 0.005 250);
 
-  --card: oklch(0.22 0.012 85);
-  --card-foreground: oklch(0.94 0.03 85.7);
+  --border-subtle: oklch(1 0 0 / 0.06);
+  --border: oklch(1 0 0 / 0.10);
+  --border-strong: oklch(1 0 0 / 0.18);
 
-  --popover: oklch(0.22 0.012 85);
-  --popover-foreground: oklch(0.94 0.03 85.7);
+  --foreground: oklch(0.98 0 0);
+  --foreground-muted: oklch(0.72 0.005 250);
+  --foreground-subtle: oklch(0.5 0.005 250);
+  --foreground-faint: oklch(0.35 0.005 250);
 
-  /* Primary stays cream — where the brand genuinely "pops" on buttons. */
-  --primary: oklch(0.85 0.052 85.7);
-  --primary-foreground: oklch(0.22 0.08 257.7);
+  --brand: oklch(0.7 0.14 260);
+  --brand-muted: oklch(0.7 0.14 260 / 0.16);
+  --brand-foreground: oklch(0.98 0 0);
 
-  --secondary: oklch(0.28 0.015 85);
-  --secondary-foreground: oklch(0.94 0.03 85.7);
+  --primary: oklch(0.98 0 0);
+  --primary-foreground: oklch(0.18 0.005 250);
+  --primary-hover: oklch(0.92 0 0);
 
-  --muted: oklch(0.25 0.012 85);
-  --muted-foreground: oklch(0.72 0.03 85.7);
+  --status-live: oklch(0.78 0.16 75);
+  --status-live-bg: oklch(0.78 0.16 75 / 0.18);
+  --status-live-fg: oklch(0.85 0.14 75);
 
-  --accent: oklch(0.28 0.015 85);
-  --accent-foreground: oklch(0.94 0.03 85.7);
+  --status-confirmed: oklch(0.7 0.14 235);
+  --status-confirmed-bg: oklch(0.7 0.14 235 / 0.18);
+  --status-confirmed-fg: oklch(0.78 0.13 235);
 
-  --success: oklch(0.75 0.13 135);
-  --success-foreground: oklch(0.18 0.03 135);
+  --status-preparing: oklch(0.65 0.2 290);
+  --status-preparing-bg: oklch(0.65 0.2 290 / 0.2);
+  --status-preparing-fg: oklch(0.78 0.16 290);
 
-  --warning: oklch(0.80 0.15 85);
-  --warning-foreground: oklch(0.22 0.05 85);
-  --fresh-flash: oklch(0.80 0.15 85);
+  --status-ready: oklch(0.72 0.18 155);
+  --status-ready-bg: oklch(0.72 0.18 155 / 0.2);
+  --status-ready-fg: oklch(0.82 0.16 155);
 
-  --destructive: oklch(0.68 0.19 28);
-  --destructive-foreground: oklch(0.18 0.03 28);
+  --status-completed: oklch(0.5 0.005 250);
+  --status-completed-bg: oklch(0.5 0.005 250 / 0.3);
+  --status-completed-fg: oklch(0.72 0.005 250);
 
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 14%);
-  --ring: oklch(0.85 0.052 85.7);
+  --status-cancelled: oklch(0.65 0.22 25);
+  --status-cancelled-bg: oklch(0.65 0.22 25 / 0.18);
+  --status-cancelled-fg: oklch(0.78 0.18 25);
 
-  --chart-1: oklch(0.85 0.052 85.7);
-  --chart-2: oklch(0.80 0.15 85);
-  --chart-3: oklch(0.75 0.13 135);
-  --chart-4: oklch(0.68 0.19 28);
-  --chart-5: oklch(0.50 0.09 257.7);
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--foreground-muted);
+  --accent: var(--surface-2);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--status-cancelled);
+  --destructive-foreground: oklch(0.98 0 0);
+  --input: var(--border);
+  --ring: var(--brand);
 
-  /* Sidebar noticeably deeper than main bg so the boundary reads
-     without needing a hard border. */
-  --sidebar: oklch(0.12 0.006 85);
-  --sidebar-foreground: oklch(0.94 0.03 85.7);
-  --sidebar-primary: oklch(0.85 0.052 85.7);
-  --sidebar-primary-foreground: oklch(0.22 0.08 257.7);
-  /* Active nav item — saturated brand navy. This is intentionally the
-     one place saturated blue shows up in dark mode so the active route
-     reads as "the brand highlight" rather than being lost in a navy
-     field. */
-  --sidebar-accent: oklch(0.42 0.09 257.7);
-  --sidebar-accent-foreground: oklch(0.97 0.03 85.7);
-  --sidebar-border: oklch(1 0 0 / 14%);
-  --sidebar-ring: oklch(0.85 0.052 85.7);
-
-  /* Niko mark — inverted in dark mode: ink becomes cream, paper becomes navy. */
-  --niko-ink: #DDCCA8;
-  --niko-paper: #28456F;
+  --chart-1: var(--status-confirmed);
+  --chart-2: var(--status-ready);
+  --chart-3: var(--status-preparing);
+  --chart-4: var(--status-live);
+  --chart-5: var(--status-cancelled);
 }
 
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-subtle: var(--foreground-subtle);
+  --color-foreground-faint: var(--foreground-faint);
+
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  --color-border-subtle: var(--border-subtle);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-brand: var(--brand);
+  --color-brand-muted: var(--brand-muted);
+  --color-brand-foreground: var(--brand-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+
+  --color-status-live: var(--status-live);
+  --color-status-live-bg: var(--status-live-bg);
+  --color-status-live-fg: var(--status-live-fg);
+
+  --color-status-confirmed: var(--status-confirmed);
+  --color-status-confirmed-bg: var(--status-confirmed-bg);
+  --color-status-confirmed-fg: var(--status-confirmed-fg);
+
+  --color-status-preparing: var(--status-preparing);
+  --color-status-preparing-bg: var(--status-preparing-bg);
+  --color-status-preparing-fg: var(--status-preparing-fg);
+
+  --color-status-ready: var(--status-ready);
+  --color-status-ready-bg: var(--status-ready-bg);
+  --color-status-ready-fg: var(--status-ready-fg);
+
+  --color-status-completed: var(--status-completed);
+  --color-status-completed-bg: var(--status-completed-bg);
+  --color-status-completed-fg: var(--status-completed-fg);
+
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-cancelled-bg: var(--status-cancelled-bg);
+  --color-status-cancelled-fg: var(--status-cancelled-fg);
+
+  /* ShadCN aliases */
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
-  --color-success: var(--success);
-  --color-success-foreground: var(--success-foreground);
-  --color-warning: var(--warning);
-  --color-warning-foreground: var(--warning-foreground);
-  --color-fresh-flash: var(--fresh-flash);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
@@ -187,55 +235,59 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
+  }
+  *:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Tabular numbers for prices, counts, IDs — consistent alignment */
-  .tabular-nums {
+  /* Tabular numerals on data — applied at the utility level too */
+  .tabular-nums,
+  table td,
+  table th {
     font-variant-numeric: tabular-nums;
   }
 }
 
-/* New-order highlight for the orders table.
-   Triggered by data-fresh="true" attribute set by the OrdersTable when
-   useNewOrderAlert flags a row as recently-arrived. Amber tone matches
-   the 'preparing' status badge for visual consistency.
-   8s total: full-strength flash ~150ms in, then linear fade. */
-@keyframes new-order-flash {
-  0% {
-    background-color: color-mix(in oklch, var(--color-fresh-flash) 20%, transparent);
+@layer utilities {
+  /* Eyebrow label — uppercase tracked label used above values */
+  .text-eyebrow {
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--foreground-muted);
   }
-  10% {
-    background-color: color-mix(in oklch, var(--color-fresh-flash) 20%, transparent);
-  }
-  100% {
-    background-color: transparent;
-  }
-}
 
-tr[data-fresh="true"] {
-  animation: new-order-flash 8s ease-out forwards;
-}
+  /* Live-status pulse — the only continuous motion in the UI */
+  @keyframes niko-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.15); opacity: 0.85; }
+  }
+  .animate-pulse-dot {
+    animation: niko-pulse 1.5s ease-in-out infinite;
+  }
 
-@media (prefers-reduced-motion: reduce) {
-  tr[data-fresh="true"] {
-    animation: none;
-    background-color: color-mix(in oklch, var(--color-fresh-flash) 15%, transparent);
+  /* New row arriving — fade + 4px slide down, fires once */
+  @keyframes niko-row-enter {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-row-enter {
+    animation: niko-row-enter 200ms ease-out;
   }
 }

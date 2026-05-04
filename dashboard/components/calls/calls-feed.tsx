@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 
 import { CallsTable } from '@/components/calls/calls-table';
-import { LiveIndicator } from '@/components/orders/live-indicator';
+import { PageHeader } from '@/components/shared/page-header';
 import { db } from '@/lib/firebase/client';
 import { callSessionConverter } from '@/lib/firebase/call-converters';
 import type { CallSession } from '@/lib/schemas/call';
@@ -69,15 +69,11 @@ export function CallsFeed({ initial, restaurantId, twilioPhone }: Props) {
 
   return (
     <section className="flex flex-1 flex-col gap-4 p-6">
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h1 className="text-lg font-medium">Calls</h1>
-          <p className="text-sm text-muted-foreground">
-            {calls.length} session{calls.length === 1 ? '' : 's'} · live
-          </p>
-        </div>
-        <LiveIndicator />
-      </header>
+      <PageHeader
+        title="Calls"
+        subtitle={`${calls.length} session${calls.length === 1 ? '' : 's'} · live`}
+        liveIndicator
+      />
       <CallsTable calls={calls.map(toRow)} twilioPhone={twilioPhone} />
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}
