@@ -253,6 +253,52 @@ def _system_cache_block(system_prompt: str) -> list[dict[str, Any]]:
     ]
 
 
+def _mark_last_assistant_cache_breakpoint(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Add a second cache_control breakpoint on the last block of the most
+    recent assistant turn.
+
+    The system-prompt breakpoint (breakpoint 1) covers the static prefix.
+    This breakpoint (breakpoint 2) covers the growing conversation prefix,
+    so each new request only re-prefills the single new caller utterance
+    rather than the entire history.  Anthropic supports up to 4 breakpoints
+    per request (#176).
+
+    The assistant turn to mark depends on where we are in history:
+    - If messages ends with an assistant turn (plain text reply, no tool
+      use): mark the last block of messages[-1].
+    - If messages ends with a user turn carrying a tool_result (the pending
+      tool_result shape from _append_user_transcript / tool+text turns):
+      the last assistant turn is messages[-2].
+    - If there is no prior assistant turn (e.g. first turn of a call):
+      return messages unchanged — nothing to cache yet.
+
+    Returns a new list; the input is not mutated.
+    """
+    # Find the index of the last assistant message.
+    last_asst_idx: int | None = None
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i]["role"] == "assistant":
+            last_asst_idx = i
+            break
+
+    if last_asst_idx is None:
+        return messages
+
+    asst_msg = messages[last_asst_idx]
+    content = asst_msg.get("content")
+    if not isinstance(content, list) or not content:
+        return messages
+
+    # Stamp the last block of the assistant content with cache_control.
+    # Build a new content list so the original is not mutated.
+    new_content = [*content[:-1], {**content[-1], "cache_control": {"type": "ephemeral"}}]
+    new_messages = [*messages]
+    new_messages[last_asst_idx] = {**asst_msg, "content": new_content}
+    return new_messages
+
+
 def _append_user_transcript(
     history: list[dict[str, Any]], transcript: str
 ) -> list[dict[str, Any]]:
@@ -362,6 +408,7 @@ def generate_reply(
     api = client or _client()
 
     new_history = _append_user_transcript(history, transcript)
+    new_history = _mark_last_assistant_cache_breakpoint(new_history)
 
     response = api.messages.create(
         model=MODEL,
@@ -452,6 +499,7 @@ async def stream_reply(
     api = client or _get_async_client()
 
     new_history = _append_user_transcript(history, transcript)
+    new_history = _mark_last_assistant_cache_breakpoint(new_history)
 
     text_parts: list[str] = []
     tool_uses: list[dict[str, Any]] = []
