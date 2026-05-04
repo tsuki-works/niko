@@ -55,7 +55,7 @@ function configFor(order: Order, mode: Mode): TransitionConfig | null {
     case 'confirmed':
       return {
         label: mode === 'compact' ? 'Start' : 'Start preparing',
-        pendingLabel: mode === 'compact' ? 'Starting…' : 'Starting…',
+        pendingLabel: 'Starting…',
         successMessage: `Order ${orderShortId(order)} is now preparing`,
         targetStatus: 'preparing',
         action: (input) => markPreparingAction(input),
@@ -113,10 +113,6 @@ function ActiveButton({
     });
   }
 
-  // Compact (table) = secondary look. Detail = primary look.
-  // shadcn's `secondary` variant maps `--secondary` → `--surface-2`
-  // in our globals.css; we add `border` to give the visible outline
-  // the design spec asks for ("subtle background, visible border").
   const isCompact = mode === 'compact';
 
   return (

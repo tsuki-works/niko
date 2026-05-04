@@ -33,7 +33,7 @@ export function OrderDetail({ order }: { order: Order }) {
   return (
     <div className="mx-auto max-w-6xl p-6">
       <Header order={order} />
-      <div className="mt-6 flex flex-col gap-6 min-[960px]:grid min-[960px]:grid-cols-[3fr_2fr] min-[960px]:gap-6">
+      <div className="mt-6 flex flex-col gap-6 min-[960px]:grid min-[960px]:grid-cols-[3fr_2fr]">
         <div className="flex flex-col gap-6">
           <CallerCard order={order} />
           <ItemsList order={order} />

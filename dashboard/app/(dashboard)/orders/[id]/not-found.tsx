@@ -11,7 +11,7 @@ export default function NotFound() {
           This order may have been deleted, or the link is wrong.
         </p>
         <Button asChild className="mt-4">
-          <Link href="/">Back to orders</Link>
+          <Link href="/orders">Back to orders</Link>
         </Button>
       </div>
     </section>
