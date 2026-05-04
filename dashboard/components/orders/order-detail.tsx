@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowLeft, Play } from 'lucide-react';
+import { ChevronLeft, Play, Radio } from 'lucide-react';
 
 import { CallDuration } from '@/components/orders/call-duration';
 import { CancelOrderButton } from '@/components/orders/cancel-order-button';
@@ -21,22 +21,35 @@ import {
   orderShortId,
 } from '@/lib/schemas/order';
 
+const ACTION_STATUSES: ReadonlySet<Order['status']> = new Set([
+  'confirmed',
+  'preparing',
+  'ready',
+]);
+
 export function OrderDetail({ order }: { order: Order }) {
+  const showActionRow = ACTION_STATUSES.has(order.status);
+
   return (
-    <section className="mx-auto flex max-w-4xl flex-col gap-4 p-6">
+    <div className="mx-auto max-w-6xl p-6">
       <Header order={order} />
-      <CallerCard order={order} />
-      <ItemsCard order={order} />
-      <SubtotalCard order={order} />
-      {(order.status === 'confirmed' ||
-        order.status === 'preparing' ||
-        order.status === 'ready') && (
-        <div className="flex flex-wrap items-center gap-2 pt-2">
-          <TransitionButton order={order} />
-          <CancelOrderButton callSid={order.call_sid} />
+      <div className="mt-6 flex flex-col gap-6 min-[960px]:grid min-[960px]:grid-cols-[3fr_2fr]">
+        <div className="flex flex-col gap-6">
+          <CallerCard order={order} />
+          <ItemsList order={order} />
+          <Totals order={order} />
+          {showActionRow && (
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <TransitionButton order={order} mode="detail" />
+              <CancelOrderButton callSid={order.call_sid} />
+            </div>
+          )}
         </div>
-      )}
-    </section>
+        <div className="flex flex-col gap-6">
+          <CallSidebarCard order={order} />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -44,14 +57,16 @@ function Header({ order }: { order: Order }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/" aria-label="Back to orders">
-          <ArrowLeft className="mr-1 h-4 w-4" />
+        <Link href="/orders" aria-label="Back to orders">
+          <ChevronLeft className="size-4" />
           Back
         </Link>
       </Button>
-      <h2 className="text-xl font-medium">Order {orderShortId(order)}</h2>
+      <h2 className="font-mono text-lg font-semibold">
+        Order {orderShortId(order)}
+      </h2>
       <StatusBadge status={order.status} />
-      <div className="ml-auto text-sm text-muted-foreground">
+      <div className="ml-auto text-sm text-foreground-muted">
         {headerTimestamp(order)}
       </div>
     </div>
@@ -119,98 +134,109 @@ function headerTimestamp(order: Order): React.ReactNode {
 
 function CallerCard({ order }: { order: Order }) {
   return (
-    <Card>
-      <div className="flex flex-wrap items-start justify-between gap-4 p-4">
-        <div>
+    <div className="rounded-md border border-border-subtle bg-surface-1 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
           <div className="font-medium">{formatPhone(order.caller_phone)}</div>
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-foreground-muted">
             {order.order_type ? capitalize(order.order_type) : 'Type unknown'}
           </div>
           {order.order_type === 'delivery' && order.delivery_address && (
-            <div className="mt-1 text-sm text-muted-foreground">
+            <div className="mt-1 text-sm text-foreground-muted">
               {order.delivery_address}
             </div>
           )}
         </div>
-        <div className="text-right text-sm text-muted-foreground">
-          <div>
-            <CallDuration order={order} />
-          </div>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled
-                  className="mt-2"
-                  aria-label="Recording playback (coming in Phase 2)"
-                >
-                  <Play className="mr-1 h-4 w-4" />
-                  Recording
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Recording UI coming in Phase 2</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+        <div className="text-right text-sm text-foreground-muted">
+          <CallDuration order={order} />
         </div>
-      </div>
-    </Card>
-  );
-}
-
-function ItemsCard({ order }: { order: Order }) {
-  if (order.items.length === 0) {
-    return (
-      <Card>
-        <div className="p-4 text-sm text-muted-foreground">No items.</div>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <div className="divide-y">
-        {order.items.map((item, idx) => (
-          <div key={idx} className="p-4">
-            <div className="flex items-baseline justify-between gap-4">
-              <div className="font-medium">{formatLineItemTitle(item)}</div>
-              <div className="tabular-nums font-medium">
-                {formatCAD(item.line_total)}
-              </div>
-            </div>
-            {item.modifications.length > 0 && (
-              <ul className="mt-2 space-y-0.5 pl-4 text-sm text-muted-foreground list-disc">
-                {item.modifications.map((mod, i) => (
-                  <li key={i}>{mod}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-function SubtotalCard({ order }: { order: Order }) {
-  return (
-    <div className="rounded-xl border bg-muted/40 p-4">
-      <div className="flex items-baseline justify-between">
-        <div className="font-medium">Subtotal</div>
-        <div className="tabular-nums font-medium">
-          {formatCAD(order.subtotal)}
-        </div>
-      </div>
-      <div className="mt-1 text-xs text-muted-foreground">
-        Tax and total aren&rsquo;t computed in Phase 1.
       </div>
     </div>
   );
 }
 
-function Card({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-xl border bg-card">{children}</div>;
+function ItemsList({ order }: { order: Order }) {
+  if (order.items.length === 0) {
+    return (
+      <p className="text-sm text-foreground-muted">No items.</p>
+    );
+  }
+
+  return (
+    <ul className="flex flex-col">
+      {order.items.map((item, idx) => (
+        <li
+          key={idx}
+          className="border-b border-border-subtle py-3 last:border-b-0"
+        >
+          <div className="flex items-baseline justify-between gap-4">
+            <div className="font-medium">{formatLineItemTitle(item)}</div>
+            <div className="font-mono font-medium tabular-nums">
+              {formatCAD(item.line_total)}
+            </div>
+          </div>
+          {item.modifications.length > 0 && (
+            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-sm text-foreground-muted">
+              {item.modifications.map((mod, i) => (
+                <li key={i}>{mod}</li>
+              ))}
+            </ul>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Totals({ order }: { order: Order }) {
+  return (
+    <div className="rounded-md bg-surface-2 p-4">
+      <div className="flex items-baseline justify-between">
+        <div className="font-medium">Subtotal</div>
+        <div className="font-mono font-medium tabular-nums">
+          {formatCAD(order.subtotal)}
+        </div>
+      </div>
+      <p className="mt-1 text-xs italic text-foreground-subtle">
+        Tax and total aren&rsquo;t computed in this build.
+      </p>
+    </div>
+  );
+}
+
+function CallSidebarCard({ order }: { order: Order }) {
+  return (
+    <div className="rounded-md border border-border-subtle bg-surface-1 p-4">
+      <div className="flex items-center gap-2">
+        <Radio
+          className="size-3 text-foreground-faint"
+          aria-hidden
+        />
+        <span className="text-eyebrow">Call recording</span>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="text-sm text-foreground-muted">
+          <CallDuration order={order} />
+        </div>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled
+                aria-label="Recording playback (coming in Phase 2)"
+              >
+                <Play className="mr-1 size-4" />
+                Play
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Recording UI ships in PR 4 (calls)</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+    </div>
+  );
 }
 
 function capitalize(s: string): string {

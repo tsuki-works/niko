@@ -175,6 +175,12 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
+  /* design-system.md type scale extension. Tailwind v4 ships
+     text-xs/sm/base/lg/xl/2xl by default; --text-md is an addition
+     used for card titles, item names, and empty-state titles. */
+  --text-md: 16px;
+  --text-md--line-height: 22px;
+
   --radius-xs: var(--radius-xs);
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);

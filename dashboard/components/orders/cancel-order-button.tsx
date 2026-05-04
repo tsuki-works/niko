@@ -35,7 +35,9 @@ export function CancelOrderButton({ callSid }: { callSid: string }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline">Cancel order</Button>
+        <Button variant="secondary" size="lg" className="border border-border">
+          Cancel order
+        </Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
