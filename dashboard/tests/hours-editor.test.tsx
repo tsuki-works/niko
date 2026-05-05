@@ -42,9 +42,11 @@ beforeEach(() => {
 });
 
 describe('HoursEditor', () => {
-  it('renders seven day rows', () => {
+  it('renders one row per day of the week', () => {
     render(<HoursEditor restaurant={BASE} />);
-    expect(screen.getAllByRole('row')).toHaveLength(7 + 1); // 7 days + header
+    // Each day-row owns one Closed checkbox; the open/close inputs are
+    // type="time" not "checkbox", so checkbox count == day count.
+    expect(screen.getAllByRole('checkbox')).toHaveLength(7);
   });
 
   it('seeds from hours_structured when present', () => {

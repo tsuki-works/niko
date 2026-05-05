@@ -111,6 +111,7 @@ export function HoursEditor({ restaurant }: { restaurant: Restaurant }) {
                   type="checkbox"
                   checked={day.closed}
                   onChange={(e) => update(key, { closed: e.target.checked })}
+                  aria-label={`${label} closed`}
                   className="size-4 accent-brand"
                 />
                 Closed

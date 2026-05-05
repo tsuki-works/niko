@@ -317,6 +317,15 @@ function renderEvent(event: CallEvent): RenderedEvent {
         body: typeof duration === 'number' ? `${duration}s recording available` : 'recording available',
       };
     }
+    case 'transfer_requested': {
+      const phone = event.detail.fallback_phone as string | undefined;
+      return {
+        Icon: PhoneForwarded,
+        accent: 'preparing',
+        label: 'transfer requested',
+        body: phone ? <span>routing to {phone}…</span> : <span>routing…</span>,
+      };
+    }
     case 'transfer_attempted': {
       const status = (event.detail.status as string | undefined) ?? 'attempted';
       const phone = event.detail.fallback_phone as string | undefined;
