@@ -302,6 +302,49 @@ class _CallState:
     in_flight_transcript: str = ""
 
 
+_KEYTERM_INTENT_VOCAB = [
+    "pickup", "delivery", "large", "small", "medium", "extra",
+    "no", "with", "without", "order", "add",
+]
+
+# Deepgram keyterm limit: 500 entries per request.
+_KEYTERM_MAX = 500
+
+
+def _build_keyterms(restaurant: "Restaurant | None") -> list[str]:
+    """Build a per-restaurant keyterm list for Deepgram Nova-3.
+
+    Combines menu item names with a fixed intent vocabulary so Deepgram
+    biases recognition toward domain-specific words (e.g. "pepper soup"
+    over "pepper shrimp"). Capped at _KEYTERM_MAX entries.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def _add(term: str) -> None:
+        key = term.lower()
+        if term and key not in seen:
+            seen.add(key)
+            terms.append(term)
+
+    # Intent vocab goes first so it survives _KEYTERM_MAX truncation on large menus.
+    for word in _KEYTERM_INTENT_VOCAB:
+        _add(word)
+    if restaurant is not None:
+        for word in restaurant.name.split():
+            _add(word.strip(".,!?"))
+        for k, items in restaurant.menu.items():
+            if k.startswith("_"):
+                # Reserved metadata keys (e.g. _category_order) are not menu items.
+                continue
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                name = item.get("name", "") if isinstance(item, dict) else ""
+                _add(name)
+    return terms[:_KEYTERM_MAX]
+
+
 async def _open_deepgram_connection(
     call_sid: str | None,
     restaurant_id: str | None,
@@ -311,7 +354,7 @@ async def _open_deepgram_connection(
     assert settings.deepgram_api_key, "DEEPGRAM_API_KEY is not set"
 
     dg = DeepgramClient(settings.deepgram_api_key)
-    conn = dg.listen.asynclive.v("1")
+    conn = dg.listen.asyncwebsocket.v("1")
 
     async def on_transcript(self, result, **kwargs):
         alt = result.channel.alternatives[0]
@@ -357,8 +400,9 @@ async def _open_deepgram_connection(
     # utterance_end_ms=1000 layers a prosody-aware end-of-utterance
     # signal on top so we wait for "actually finished" instead of just
     # "stopped making noise".
+    restaurant = state.restaurant if state is not None else None
     options = LiveOptions(
-        model="nova-2",
+        model=settings.deepgram_stt_model,
         encoding="mulaw",
         sample_rate=8000,
         channels=1,
@@ -366,6 +410,10 @@ async def _open_deepgram_connection(
         endpointing=800,
         utterance_end_ms=1000,
         vad_events=True,
+        smart_format=True,
+        language="en-US",
+        numerals=True,
+        keyterm=_build_keyterms(restaurant),
     )
     started = await conn.start(options)
     if not started:
