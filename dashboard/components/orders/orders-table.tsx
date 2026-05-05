@@ -56,8 +56,6 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
   const router = useRouter();
 
   const isLive = order.status === 'in_progress';
-  const isFaded = order.status === 'completed' || order.status === 'cancelled';
-  const fadedCell = isFaded ? 'text-foreground-faint' : '';
 
   const itemsSummary =
     order.items.length === 0
@@ -92,7 +90,7 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
           and the <tr> onClick handles mouse navigation. <TransitionButton>
           in cell 6 stays independently focusable and stops propagation
           on its own click. */}
-      <Td className={cn('font-mono text-xs', fadedCell)}>
+      <Td className="font-mono text-xs text-foreground-muted">
         <Link
           href={detailHref}
           aria-label={`View order ${orderShortId(order)}`}
@@ -116,7 +114,7 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
           )}
         </span>
       </Td>
-      <Td className={fadedCell}>
+      <Td>
         <div className={cn('truncate', isLive && 'italic')}>
           {isLive ? `Building… ${itemsSummary}` : itemsSummary}
         </div>
@@ -124,12 +122,7 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
           <div className="text-xs text-foreground-faint">{secondary}</div>
         )}
       </Td>
-      <Td
-        className={cn(
-          'text-right font-mono font-medium tabular-nums',
-          fadedCell,
-        )}
-      >
+      <Td className="text-right font-mono font-medium tabular-nums">
         {formatCAD(order.subtotal)}
       </Td>
       <Td>

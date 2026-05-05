@@ -58,19 +58,14 @@ export function UserMenu({ restaurantName, userEmail, buildSha }: Props) {
         )}
         aria-label="Account menu"
       >
-        <Avatar className="size-8 shrink-0">
-          <AvatarFallback className="bg-brand-muted text-foreground text-xs font-medium">
+        <Avatar className="size-7 shrink-0 border border-border">
+          <AvatarFallback className="bg-surface-2 text-foreground text-xs font-medium">
             {initials}
           </AvatarFallback>
         </Avatar>
-        <div className="flex min-w-0 flex-1 flex-col leading-tight">
-          <span className="truncate font-medium">{restaurantName}</span>
-          {userEmail ? (
-            <span className="truncate text-xs text-foreground-muted group-hover/user-menu:text-foreground/80 group-data-[state=open]/user-menu:text-foreground/80">
-              {userEmail}
-            </span>
-          ) : null}
-        </div>
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {restaurantName}
+        </span>
         <ChevronsUpDown className="size-4 shrink-0 opacity-60" aria-hidden />
       </DropdownMenuTrigger>
 
@@ -83,7 +78,7 @@ export function UserMenu({ restaurantName, userEmail, buildSha }: Props) {
         <DropdownMenuLabel className="flex flex-col gap-0.5">
           <span className="truncate font-medium">{restaurantName}</span>
           {userEmail ? (
-            <span className="truncate text-xs font-normal text-muted-foreground">
+            <span className="truncate text-sm font-normal text-foreground-muted">
               {userEmail}
             </span>
           ) : null}
@@ -166,13 +161,9 @@ function ThemeSubMenu() {
 }
 
 function computeInitials(restaurantName: string, userEmail: string): string {
-  const fromName = restaurantName
-    .trim()
-    .split(/\s+/)
-    .filter((w) => w.length > 0)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? '')
-    .join('');
-  if (fromName) return fromName;
-  return userEmail.charAt(0).toUpperCase() || '?';
+  const trimmedName = restaurantName.trim();
+  if (trimmedName) return trimmedName[0].toUpperCase();
+  const trimmedEmail = userEmail.trim();
+  if (trimmedEmail) return trimmedEmail[0].toUpperCase();
+  return '?';
 }
