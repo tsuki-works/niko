@@ -35,6 +35,10 @@ function normalize(raw: Record<string, unknown>): Record<string, unknown> {
     ...raw,
     created_at: unwrapTimestamp(raw.created_at),
     confirmed_at: unwrapTimestamp(raw.confirmed_at),
+    preparing_at: unwrapTimestamp(raw.preparing_at),
+    ready_at: unwrapTimestamp(raw.ready_at),
+    completed_at: unwrapTimestamp(raw.completed_at),
+    cancelled_at: unwrapTimestamp(raw.cancelled_at),
   };
 }
 
@@ -74,6 +78,10 @@ export function parseOrderFromJson(raw: unknown, contextLabel = 'api'): Order {
           ...(raw as Record<string, unknown>),
           created_at: toDate((raw as Record<string, unknown>).created_at),
           confirmed_at: toDate((raw as Record<string, unknown>).confirmed_at),
+          preparing_at: toDate((raw as Record<string, unknown>).preparing_at),
+          ready_at: toDate((raw as Record<string, unknown>).ready_at),
+          completed_at: toDate((raw as Record<string, unknown>).completed_at),
+          cancelled_at: toDate((raw as Record<string, unknown>).cancelled_at),
         }
       : raw;
 
