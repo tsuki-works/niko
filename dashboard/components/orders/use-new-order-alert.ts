@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 
 import type { Order } from '@/lib/schemas/order';
 
@@ -29,6 +29,27 @@ const TONE_NOTE_DURATION_MS = 100;
 // Two-note ding-dong: C5 then A4. Pleasant, doesn't sound like a system error.
 const NOTE_HZ = [523.25, 440.0] as const;
 
+type FreshIdsAction =
+  | { type: 'add'; ids: string[] }
+  | { type: 'remove'; id: string };
+
+function freshIdsReducer(
+  state: ReadonlySet<string>,
+  action: FreshIdsAction,
+): ReadonlySet<string> {
+  if (action.type === 'add') {
+    const next = new Set(state);
+    for (const id of action.ids) next.add(id);
+    return next;
+  }
+  if (action.type === 'remove') {
+    const next = new Set(state);
+    next.delete(action.id);
+    return next;
+  }
+  return state;
+}
+
 export function useNewOrderAlert(
   orders: Pick<Order, 'call_sid' | 'status'>[],
   options?: NewOrderAlertOptions,
@@ -40,19 +61,17 @@ export function useNewOrderAlert(
   const audioContextRef = useRef<AudioContext | null>(null);
   const wakeLockSentinelRef = useRef<WakeLockSentinel | null>(null);
   const audioPrimedRef = useRef<boolean>(false);
+  // Tracks whether the detection effect has run for the first time. Accessed
+  // only inside effects, never during render, so this is safe.
+  const initializedRef = useRef(false);
 
-  const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(new Set());
+  const [freshIds, dispatch] = useReducer(
+    freshIdsReducer,
+    new Set<string>() as ReadonlySet<string>,
+  );
   const freshTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
-
-  // Initialize seenIds from the first orders snapshot — treat the
-  // initially-rendered list as already seen so we don't fire on page load.
-  const initializedRef = useRef(false);
-  if (!initializedRef.current) {
-    initializedRef.current = true;
-    for (const o of orders) seenIds.current.add(o.call_sid);
-  }
 
   const getAudioContext = (): AudioContext | null => {
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
@@ -97,6 +116,14 @@ export function useNewOrderAlert(
 
   // Detect new orders + fire the alert
   useEffect(() => {
+    // On the first run, seed seenIds from the current snapshot so the
+    // initially-rendered list is treated as already seen (no alert on load).
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      for (const o of orders) seenIds.current.add(o.call_sid);
+      return;
+    }
+
     const newIds: string[] = [];
     for (const o of orders) {
       if (!seenIds.current.has(o.call_sid)) {
@@ -107,19 +134,11 @@ export function useNewOrderAlert(
 
     if (newIds.length === 0) return;
 
-    setFreshIds((prev) => {
-      const next = new Set(prev);
-      for (const id of newIds) next.add(id);
-      return next;
-    });
+    dispatch({ type: 'add', ids: newIds });
 
     for (const id of newIds) {
       const t = setTimeout(() => {
-        setFreshIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
+        dispatch({ type: 'remove', id });
         freshTimersRef.current.delete(id);
       }, FRESH_DURATION_MS);
       freshTimersRef.current.set(id, t);
