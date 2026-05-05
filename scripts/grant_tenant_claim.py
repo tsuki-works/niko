@@ -48,9 +48,7 @@ def _ensure_app() -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--email", required=True, help="Email of the existing Firebase Auth user"
-    )
+    parser.add_argument("--email", required=True, help="Email of the existing Firebase Auth user")
     parser.add_argument(
         "--rid",
         required=True,

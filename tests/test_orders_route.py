@@ -66,36 +66,33 @@ def _fake_firestore_with_orders(docs: list[dict]) -> MagicMock:
 
     # Path: restaurants/{rid}/orders → order_by → limit → stream
     (
-        fake_client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .order_by.return_value
-        .limit.return_value
-        .stream.return_value
+        fake_client.collection.return_value.document.return_value.collection.return_value.order_by.return_value.limit.return_value.stream.return_value
     ) = iter(snapshots)
     storage.set_client(fake_client)
     return fake_client
 
 
 def test_list_orders_returns_recent_orders():
-    _fake_firestore_with_orders([
-        {
-            "call_sid": "CA1",
-            "items": [
-                {
-                    "name": "Pepperoni",
-                    "category": "pizza",
-                    "size": "medium",
-                    "quantity": 1,
-                    "unit_price": 17.99,
-                    "modifications": [],
-                }
-            ],
-            "order_type": "pickup",
-            "status": "confirmed",
-        },
-        {"call_sid": "CA2", "items": []},
-    ])
+    _fake_firestore_with_orders(
+        [
+            {
+                "call_sid": "CA1",
+                "items": [
+                    {
+                        "name": "Pepperoni",
+                        "category": "pizza",
+                        "size": "medium",
+                        "quantity": 1,
+                        "unit_price": 17.99,
+                        "modifications": [],
+                    }
+                ],
+                "order_type": "pickup",
+                "status": "confirmed",
+            },
+            {"call_sid": "CA2", "items": []},
+        ]
+    )
 
     response = client.get("/orders")
 
@@ -117,11 +114,7 @@ def test_list_orders_addresses_authenticated_tenant():
 
     fake.collection.assert_called_with("restaurants")
     fake.collection.return_value.document.assert_called_with(_DEMO_RID)
-    (
-        fake.collection.return_value
-        .document.return_value
-        .collection.assert_called_with("orders")
-    )
+    (fake.collection.return_value.document.return_value.collection.assert_called_with("orders"))
 
 
 def test_list_orders_ignores_query_param_attempts_to_cross_tenant():
@@ -151,11 +144,9 @@ def test_list_orders_respects_limit_query_param():
 
     assert response.status_code == 200
     (
-        fake.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .order_by.return_value
-        .limit.assert_called_with(10)
+        fake.collection.return_value.document.return_value.collection.return_value.order_by.return_value.limit.assert_called_with(
+            10
+        )
     )
 
 
@@ -189,18 +180,8 @@ def test_seed_order_persists_when_dev_flag_on(dev_endpoints_enabled):
     # Seed orders land under the demo tenant's nested path.
     fake.collection.assert_called_with("restaurants")
     fake.collection.return_value.document.assert_called_with(_DEMO_RID)
-    (
-        fake.collection.return_value
-        .document.return_value
-        .collection.assert_called_with("orders")
-    )
-    set_call = (
-        fake.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .set
-    )
+    (fake.collection.return_value.document.return_value.collection.assert_called_with("orders"))
+    set_call = fake.collection.return_value.document.return_value.collection.return_value.document.return_value.set
     set_call.assert_called_once()
 
 
@@ -234,21 +215,12 @@ def _fake_firestore_with_single_order(doc: dict | None) -> MagicMock:
         snapshot.exists = False
 
     (
-        fake_client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .get.return_value
+        fake_client.collection.return_value.document.return_value.collection.return_value.document.return_value.get.return_value
     ) = snapshot
 
     # Wire the list path too so the stream doesn't raise on accidental calls.
     (
-        fake_client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .order_by.return_value
-        .limit.return_value
-        .stream.return_value
+        fake_client.collection.return_value.document.return_value.collection.return_value.order_by.return_value.limit.return_value.stream.return_value
     ) = iter([])
 
     storage.set_client(fake_client)

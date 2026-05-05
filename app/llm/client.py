@@ -81,10 +81,7 @@ UPDATE_ORDER_TOOL: dict[str, Any] = {
                         "modifications": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": (
-                                "Customizations like 'extra cheese' or "
-                                "'no onions'."
-                            ),
+                            "description": ("Customizations like 'extra cheese' or 'no onions'."),
                         },
                     },
                     "required": ["name", "category", "quantity", "unit_price"],
@@ -253,9 +250,7 @@ def _system_cache_block(system_prompt: str) -> list[dict[str, Any]]:
     ]
 
 
-def _append_user_transcript(
-    history: list[dict[str, Any]], transcript: str
-) -> list[dict[str, Any]]:
+def _append_user_transcript(history: list[dict[str, Any]], transcript: str) -> list[dict[str, Any]]:
     """Append the caller's transcript to history with valid alternation.
 
     Anthropic requires strict user/assistant alternation. After a turn
@@ -280,8 +275,7 @@ def _append_user_transcript(
 
 
 _INVALID_ADDRESS_NOTE = (
-    "Delivery address incomplete — please ask the caller for the full "
-    "street address."
+    "Delivery address incomplete — please ask the caller for the full street address."
 )
 
 
@@ -605,7 +599,9 @@ async def stream_reply(
                     usage = getattr(msg, "usage", None) if msg is not None else None
                     if usage is not None:
                         fu_cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
-                        fu_cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
+                        fu_cache_creation_tokens = (
+                            getattr(usage, "cache_creation_input_tokens", 0) or 0
+                        )
                 elif etype == "content_block_start":
                     block = getattr(event, "content_block", None)
                     if getattr(block, "type", None) == "text" and fu_t_first_text_block is None:

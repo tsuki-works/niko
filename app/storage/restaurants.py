@@ -120,12 +120,7 @@ def get_restaurant_by_twilio_phone(e164: str) -> Optional[Restaurant]:
     if cached is not None:
         return cached
     try:
-        query = (
-            _get_client()
-            .collection(_COLLECTION)
-            .where("twilio_phone", "==", e164)
-            .limit(1)
-        )
+        query = _get_client().collection(_COLLECTION).where("twilio_phone", "==", e164).limit(1)
         docs = list(query.stream())
     except Exception:
         logger.exception("restaurants: phone lookup failed phone=%s", e164)

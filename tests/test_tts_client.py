@@ -2,6 +2,7 @@
 
 All tests mock httpx and WebSocket — no real API calls made.
 """
+
 import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,8 +16,10 @@ from app.tts.client import speak
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _AsyncStreamCtx:
     """Async context manager that returns a pre-built mock response."""
+
     def __init__(self, response):
         self._response = response
 
@@ -63,6 +66,7 @@ def _patch_settings():
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_speak_sends_media_events():
@@ -238,6 +242,7 @@ def test_get_client_returns_same_instance_across_calls():
 
 def test_get_client_constructs_with_expected_timeouts():
     import httpx
+
     c = tts_module._get_client()
     assert isinstance(c, httpx.AsyncClient)
     # httpx.Timeout exposes per-stage attributes; the values match what
@@ -318,7 +323,10 @@ async def test_speak_skips_on_first_byte_for_empty_chunks():
 
     calls: list[int] = []
     await speak(
-        "Hello", ws, stream_sid="MZ123", client=mock_client,
+        "Hello",
+        ws,
+        stream_sid="MZ123",
+        client=mock_client,
         on_first_byte=lambda: calls.append(1),
     )
     assert calls == [1]
@@ -337,7 +345,10 @@ async def test_speak_swallows_on_first_byte_exception():
 
     # Should not raise
     await speak(
-        "Hello", ws, stream_sid="MZ123", client=mock_client,
+        "Hello",
+        ws,
+        stream_sid="MZ123",
+        client=mock_client,
         on_first_byte=bad_cb,
     )
     ws.send_json.assert_called_once()

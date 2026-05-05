@@ -233,8 +233,7 @@ def _format_menu(restaurant: Restaurant) -> str:
         if not isinstance(items, list) or not items:
             continue
         available_items = [
-            i for i in items
-            if not (isinstance(i, dict) and i.get("available", True) is False)
+            i for i in items if not (isinstance(i, dict) and i.get("available", True) is False)
         ]
         if not available_items:
             continue
@@ -286,7 +285,7 @@ def build_system_prompt(restaurant: Restaurant) -> str:
         intro_line = "Place a pickup order from the menu below."
         delivery_handling = (
             "- If the caller asks for delivery, say something like\n"
-            "  \"We're actually pickup-only — would pickup work for you?\"\n"
+            '  "We\'re actually pickup-only — would pickup work for you?"\n'
             "  and continue from there. Do not capture a delivery address;\n"
             "  do not set order_type to delivery."
         )

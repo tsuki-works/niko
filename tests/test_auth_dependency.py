@@ -52,9 +52,7 @@ def test_returns_tenant_from_bearer_token_when_no_cookie():
         "app.auth.dependency.firebase_auth.verify_id_token",
         return_value=_claims(role="tsuki_admin"),
     ) as mock:
-        tenant = current_tenant(
-            __session=None, authorization="Bearer raw-id-token"
-        )
+        tenant = current_tenant(__session=None, authorization="Bearer raw-id-token")
 
     mock.assert_called_once_with("raw-id-token")
     assert tenant.is_admin is True
@@ -62,12 +60,13 @@ def test_returns_tenant_from_bearer_token_when_no_cookie():
 
 def test_prefers_cookie_over_bearer_when_both_present():
     """Cookie wins so the dashboard's session lifetime governs."""
-    with patch(
-        "app.auth.dependency.firebase_auth.verify_session_cookie",
-        return_value=_claims(),
-    ) as cookie_mock, patch(
-        "app.auth.dependency.firebase_auth.verify_id_token"
-    ) as token_mock:
+    with (
+        patch(
+            "app.auth.dependency.firebase_auth.verify_session_cookie",
+            return_value=_claims(),
+        ) as cookie_mock,
+        patch("app.auth.dependency.firebase_auth.verify_id_token") as token_mock,
+    ):
         current_tenant(__session="cookie", authorization="Bearer raw")
 
     cookie_mock.assert_called_once()

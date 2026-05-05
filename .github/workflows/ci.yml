@@ -36,6 +36,9 @@ jobs:
       - name: Ruff lint
         run: ruff check .
 
+      - name: Ruff format check
+        run: ruff format --check .
+
       # Live-marked tests (live_llm, live_discord) are deselected — they
       # need real API keys and would either skip or burn credits in CI.
       - name: Pytest

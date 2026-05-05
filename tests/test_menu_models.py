@@ -66,11 +66,11 @@ def test_category_create_rejects_invalid_keys():
     from app.restaurants.models import CategoryCreate
 
     invalid = [
-        "Pizzas",          # uppercase
-        "fried rice",      # space
-        "fried-rice",      # hyphen
-        "_underscore",     # underscore prefix reserved for internal keys
-        "",                # empty
+        "Pizzas",  # uppercase
+        "fried rice",  # space
+        "fried-rice",  # hyphen
+        "_underscore",  # underscore prefix reserved for internal keys
+        "",  # empty
     ]
     for key in invalid:
         with pytest.raises(Exception):

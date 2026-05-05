@@ -111,14 +111,10 @@ def _backend_url() -> str:
 
 def _purchase_number(twilio: TwilioClient, area_code: str) -> str:
     """Buy a US/CA local number in ``area_code``. Returns the E.164 string."""
-    available = twilio.available_phone_numbers("CA").local.list(
-        area_code=area_code, limit=1
-    )
+    available = twilio.available_phone_numbers("CA").local.list(area_code=area_code, limit=1)
     if not available:
         # Fall back to US if the area code has no Canadian inventory.
-        available = twilio.available_phone_numbers("US").local.list(
-            area_code=area_code, limit=1
-        )
+        available = twilio.available_phone_numbers("US").local.list(area_code=area_code, limit=1)
     if not available:
         raise SystemExit(f"No numbers available in area code {area_code}")
     candidate = available[0].phone_number
@@ -140,9 +136,7 @@ def _configure_voice_webhook(twilio: TwilioClient, e164: str, backend_url: str) 
     numbers = twilio.incoming_phone_numbers.list(phone_number=e164, limit=1)
     if not numbers:
         raise SystemExit(f"twilio: number {e164} not found on this account")
-    twilio.incoming_phone_numbers(numbers[0].sid).update(
-        voice_url=voice_url, voice_method="POST"
-    )
+    twilio.incoming_phone_numbers(numbers[0].sid).update(voice_url=voice_url, voice_method="POST")
     logger.info("twilio: %s voice webhook → %s", e164, voice_url)
 
 

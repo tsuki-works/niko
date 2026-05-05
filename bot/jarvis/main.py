@@ -65,8 +65,7 @@ async def serve_http(app, port: int) -> None:
 def _build_handler(settings: Settings) -> OnMessageHandler:
     if not settings.anthropic_api_key:
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is required for PR 2 chat. "
-            "Set it in .env or Secret Manager."
+            "ANTHROPIC_API_KEY is required for PR 2 chat. Set it in .env or Secret Manager."
         )
     anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
     fs_kwargs = {}
@@ -75,9 +74,7 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
     firestore_client = AsyncFirestoreClient(**fs_kwargs)
     memory = ThreadMemory(firestore_client)
 
-    rate_limiter = InMemoryRateLimiter(
-        max_per_window=20, window_seconds=3600.0
-    )
+    rate_limiter = InMemoryRateLimiter(max_per_window=20, window_seconds=3600.0)
 
     tool_registry: Optional[ToolRegistry] = None
     github_client = None
@@ -103,9 +100,7 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
                 repo=settings.github_repo,
             )
         )
-        tool_registry.register(
-            build_search_repo_docs_tool(docs_root=Path("docs"))
-        )
+        tool_registry.register(build_search_repo_docs_tool(docs_root=Path("docs")))
         tool_registry.register(
             build_get_pr_tool(
                 github_client=github_client,
@@ -126,9 +121,7 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
             )
         )
         tool_registry.register(build_get_recent_messages_tool())
-        logger.info(
-            "tool registry: %s", ", ".join(tool_registry.names())
-        )
+        logger.info("tool registry: %s", ", ".join(tool_registry.names()))
     else:
         tool_registry = chat_only_registry
         logger.info(
@@ -136,9 +129,7 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
             ", ".join(tool_registry.names()),
         )
 
-    async def agent_fn(
-        *, system_prompt, history, user_message, tool_registry, tool_context
-    ):
+    async def agent_fn(*, system_prompt, history, user_message, tool_registry, tool_context):
         async for d in agent_respond(
             anthropic_client=anthropic_client,
             system_prompt=system_prompt,
@@ -203,12 +194,8 @@ async def run() -> None:
 
     app = build_app(commit_sha=settings.commit_sha)
 
-    gateway_task = asyncio.create_task(
-        bot.start(settings.discord_bot_token), name="gateway"
-    )
-    http_task = asyncio.create_task(
-        serve_http(app, settings.jarvis_http_port), name="http"
-    )
+    gateway_task = asyncio.create_task(bot.start(settings.discord_bot_token), name="gateway")
+    http_task = asyncio.create_task(serve_http(app, settings.jarvis_http_port), name="http")
 
     try:
         done, pending = await asyncio.wait(

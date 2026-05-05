@@ -33,9 +33,7 @@ async def test_get_recent_commits_returns_compact_records():
         },
     ]
     gh = _gh_with_response(raw)
-    desc = build_get_recent_commits_tool(
-        github_client=gh, repo="tsuki-works/niko"
-    )
+    desc = build_get_recent_commits_tool(github_client=gh, repo="tsuki-works/niko")
     out = await desc.fn(n=2, branch="master")
     assert len(out) == 2
     assert out[0]["sha"] == "abc123de"  # short sha
@@ -51,9 +49,7 @@ async def test_get_recent_commits_returns_compact_records():
 
 async def test_get_recent_commits_defaults_to_master_and_10():
     gh = _gh_with_response([])
-    desc = build_get_recent_commits_tool(
-        github_client=gh, repo="tsuki-works/niko"
-    )
+    desc = build_get_recent_commits_tool(github_client=gh, repo="tsuki-works/niko")
     await desc.fn()
     params = gh.get.await_args.kwargs["params"]
     assert params["sha"] == "master"
@@ -62,9 +58,7 @@ async def test_get_recent_commits_defaults_to_master_and_10():
 
 async def test_get_recent_commits_clamps_n():
     gh = _gh_with_response([])
-    desc = build_get_recent_commits_tool(
-        github_client=gh, repo="tsuki-works/niko"
-    )
+    desc = build_get_recent_commits_tool(github_client=gh, repo="tsuki-works/niko")
     # Anthropic models occasionally pass big numbers; we cap to 50.
     await desc.fn(n=10000)
     assert gh.get.await_args.kwargs["params"]["per_page"] == 50
@@ -75,9 +69,7 @@ async def test_get_recent_commits_clamps_n():
 
 async def test_get_recent_commits_descriptor_metadata():
     gh = _gh_with_response([])
-    desc = build_get_recent_commits_tool(
-        github_client=gh, repo="tsuki-works/niko"
-    )
+    desc = build_get_recent_commits_tool(github_client=gh, repo="tsuki-works/niko")
     assert desc.name == "get_recent_commits"
     assert "commit" in desc.description.lower()
     assert "n" in desc.input_schema["properties"]
@@ -229,9 +221,7 @@ async def test_open_issue_drops_labels_not_in_allowlist():
         repo="o/r",
         allowed_labels=["bug", "feature"],
     )
-    out = await desc.fn(
-        title="t", body="b", labels=["bug", "production-incident", "paid"]
-    )
+    out = await desc.fn(title="t", body="b", labels=["bug", "production-incident", "paid"])
     payload = gh.post.await_args.kwargs["json"]
     assert payload["labels"] == ["bug"]
     assert out["dropped_labels"] == ["production-incident", "paid"]
@@ -269,9 +259,7 @@ async def test_open_issue_handles_no_labels_kwarg():
 
 async def test_open_issue_descriptor_metadata():
     gh = AsyncMock()
-    desc = build_open_issue_tool(
-        github_client=gh, repo="o/r", allowed_labels=["bug"]
-    )
+    desc = build_open_issue_tool(github_client=gh, repo="o/r", allowed_labels=["bug"])
     assert desc.name == "open_issue"
     assert "open" in desc.description.lower() or "create" in desc.description.lower()
     props = desc.input_schema["properties"]

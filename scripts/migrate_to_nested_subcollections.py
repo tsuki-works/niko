@@ -52,10 +52,7 @@ def _migrate_orders(client: firestore.Client, dry_run: bool) -> int:
         rid = data.get("restaurant_id") or DEMO_RID
         call_sid = data.get("call_sid") or snap.id
         target = (
-            client.collection("restaurants")
-            .document(rid)
-            .collection("orders")
-            .document(call_sid)
+            client.collection("restaurants").document(rid).collection("orders").document(call_sid)
         )
         if dry_run:
             logger.info("[dry-run] orders/%s → restaurants/%s/orders/%s", snap.id, rid, call_sid)
@@ -94,9 +91,7 @@ def _migrate_call_sessions(client: firestore.Client, dry_run: bool) -> tuple[int
         parents_moved += 1
 
         events_ref = (
-            client.collection("call_sessions")
-            .document(parent_snap.id)
-            .collection("events")
+            client.collection("call_sessions").document(parent_snap.id).collection("events")
         )
         for ev_snap in events_ref.stream():
             ev_data = ev_snap.to_dict() or {}

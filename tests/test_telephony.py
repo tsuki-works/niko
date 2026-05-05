@@ -69,9 +69,7 @@ _STOP_MSG = {"event": "stop", "stop": {"accountSid": "ACtest", "callSid": "CAtes
 def _make_fake_stream_reply(reply="Hi, welcome to Niko's Pizza Kitchen!"):
     async def fake_stream_reply(*, transcript, history, order, **kw):
         yield StreamEvent(text_delta=reply)
-        yield StreamEvent(
-            final=LLMResponse(reply_text=reply, order=order, history=history)
-        )
+        yield StreamEvent(final=LLMResponse(reply_text=reply, order=order, history=history))
 
     return fake_stream_reply
 
@@ -95,9 +93,7 @@ def mock_pipeline(monkeypatch):
 
     monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
     monkeypatch.setattr("app.telephony.router.speak", fake_speak)
-    monkeypatch.setattr(
-        "app.telephony.router.stream_reply", _make_fake_stream_reply()
-    )
+    monkeypatch.setattr("app.telephony.router.stream_reply", _make_fake_stream_reply())
     monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
@@ -110,22 +106,18 @@ def mock_pipeline(monkeypatch):
 
 
 def test_voice_returns_xml(monkeypatch):
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     response = client.post("/voice", data=_VOICE_FORM)
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/xml")
 
 
 def test_voice_twiml_contains_media_stream_no_say(monkeypatch):
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     response = client.post("/voice", data=_VOICE_FORM)
     body = response.text
     assert "<Response>" in body
-    assert "<Say" not in body          # greeting is now via ElevenLabs on start event
+    assert "<Say" not in body  # greeting is now via ElevenLabs on start event
     assert "<Connect" in body
     assert "<Stream" in body
     # TestClient sets Host: testserver
@@ -136,9 +128,7 @@ def test_voice_passes_restaurant_id_as_stream_parameter(monkeypatch):
     """PR B (#79): /voice resolves the tenant by ``To`` and forwards the
     id to /media-stream via a Stream <Parameter>. Twilio echoes it back
     on the start event under ``customParameters.restaurant_id``."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     response = client.post("/voice", data=_VOICE_FORM)
     body = response.text
     assert "<Parameter" in body
@@ -153,9 +143,7 @@ def test_voice_stream_omits_track_attribute(monkeypatch):
     trial-account interstitial. To get agent audio into the recording
     we capture TTS bytes inside ``speak()`` instead — see the WS
     handler in the same module."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     response = client.post("/voice", data=_VOICE_FORM)
     body = response.text
     assert "<Stream " in body
@@ -194,9 +182,7 @@ def test_voice_uses_firestore_lookup_when_present(monkeypatch):
 def test_voice_rejects_unmapped_number(monkeypatch):
     """Inbound to a number with no tenant mapping plays a brief hangup
     message instead of dead air."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     response = client.post(
         "/voice",
         data={"CallSid": "CAtest", "From": "+10000000000", "To": "+19999999999"},
@@ -246,26 +232,26 @@ def test_media_stream_begins_recording_on_start(mock_pipeline, monkeypatch):
     seeded = Restaurant(
         id="niko-pizza-kitchen",
         name="Niko",
-        display_phone="+1", twilio_phone=_DEMO_TO,
-        address="a", hours="h",
+        display_phone="+1",
+        twilio_phone=_DEMO_TO,
+        address="a",
+        hours="h",
         menu={"pizzas": [], "sides": [], "drinks": []},
         recording_retention_days=42,
     )
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant", lambda _rid: seeded
-    )
-    monkeypatch.setattr(
-        restaurants_storage, "load_or_fallback_demo", lambda _rid: seeded
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant", lambda _rid: seeded)
+    monkeypatch.setattr(restaurants_storage, "load_or_fallback_demo", lambda _rid: seeded)
 
     captured: list[dict] = []
 
     def fake_begin(*, call_sid, restaurant_id, retention_days):
-        captured.append({
-            "call_sid": call_sid,
-            "restaurant_id": restaurant_id,
-            "retention_days": retention_days,
-        })
+        captured.append(
+            {
+                "call_sid": call_sid,
+                "restaurant_id": restaurant_id,
+                "retention_days": retention_days,
+            }
+        )
         return MagicMock(broken=False)
 
     monkeypatch.setattr(recordings_mod, "begin_recording", fake_begin)
@@ -296,16 +282,21 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
     captured: list[tuple[bytes, bytes]] = []
 
     monkeypatch.setattr(
-        recordings_mod, "begin_recording",
+        recordings_mod,
+        "begin_recording",
         lambda *, call_sid, restaurant_id, retention_days: fake_session,
     )
     monkeypatch.setattr(
-        recordings_mod, "append_chunks",
-        lambda session, inbound_mu_law, outbound_mu_law:
-            captured.append((inbound_mu_law, outbound_mu_law)),
+        recordings_mod,
+        "append_chunks",
+        lambda session, inbound_mu_law, outbound_mu_law: captured.append(
+            (inbound_mu_law, outbound_mu_law)
+        ),
     )
     monkeypatch.setattr(
-        recordings_mod, "finalize_recording", lambda _s: ("", 0),
+        recordings_mod,
+        "finalize_recording",
+        lambda _s: ("", 0),
     )
 
     fake_dg = AsyncMock()
@@ -320,10 +311,9 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
 
     monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
     monkeypatch.setattr("app.telephony.router.speak", fake_speak)
-    monkeypatch.setattr(
-        "app.telephony.router.stream_reply", _make_fake_stream_reply()
-    )
+    monkeypatch.setattr("app.telephony.router.stream_reply", _make_fake_stream_reply())
     from app.storage import call_sessions
+
     monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
@@ -335,14 +325,32 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
     with client.websocket_connect("/media-stream") as ws:
         ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
         ws.send_text(json.dumps(_START_MSG))
-        ws.send_text(json.dumps({
-            "event": "media",
-            "media": {"track": "inbound", "chunk": "1", "timestamp": "5", "payload": inbound_payload},
-        }))
-        ws.send_text(json.dumps({
-            "event": "media",
-            "media": {"track": "outbound", "chunk": "2", "timestamp": "10", "payload": outbound_payload},
-        }))
+        ws.send_text(
+            json.dumps(
+                {
+                    "event": "media",
+                    "media": {
+                        "track": "inbound",
+                        "chunk": "1",
+                        "timestamp": "5",
+                        "payload": inbound_payload,
+                    },
+                }
+            )
+        )
+        ws.send_text(
+            json.dumps(
+                {
+                    "event": "media",
+                    "media": {
+                        "track": "outbound",
+                        "chunk": "2",
+                        "timestamp": "10",
+                        "payload": outbound_payload,
+                    },
+                }
+            )
+        )
         ws.send_text(json.dumps(_STOP_MSG))
 
     assert (b"\xff" * 8, b"") in captured
@@ -357,12 +365,14 @@ def test_media_stream_finalizes_recording_on_stop(monkeypatch):
 
     fake_session = MagicMock(broken=False)
     monkeypatch.setattr(
-        recordings_mod, "begin_recording",
+        recordings_mod,
+        "begin_recording",
         lambda *, call_sid, restaurant_id, retention_days: fake_session,
     )
     monkeypatch.setattr(recordings_mod, "append_chunks", lambda *a, **kw: None)
     monkeypatch.setattr(
-        recordings_mod, "finalize_recording",
+        recordings_mod,
+        "finalize_recording",
         lambda session: ("gs://niko-recordings/niko-pizza-kitchen/CAtest123.mp3", 12),
     )
 
@@ -383,7 +393,8 @@ def test_media_stream_finalizes_recording_on_stop(monkeypatch):
 
     captured: list[dict] = []
     monkeypatch.setattr(
-        call_sessions, "mark_recording_ready",
+        call_sessions,
+        "mark_recording_ready",
         lambda call_sid, rid, **kw: captured.append({"call_sid": call_sid, "rid": rid, **kw}),
     )
 
@@ -423,9 +434,7 @@ def test_ai_greeting_spawned_on_start(monkeypatch):
     async def recording_stream_reply(*, transcript, history, order, **kw):
         calls.append(transcript)
         yield StreamEvent(text_delta="Hello!")
-        yield StreamEvent(
-            final=LLMResponse(reply_text="Hello!", order=order, history=history)
-        )
+        yield StreamEvent(final=LLMResponse(reply_text="Hello!", order=order, history=history))
 
     monkeypatch.setattr("app.telephony.router._open_deepgram_connection", fake_open_dg)
     monkeypatch.setattr("app.telephony.router.speak", fake_speak)
@@ -462,7 +471,15 @@ def test_stop_event_persists_ready_order(monkeypatch):
 
     ready_order = Order(
         call_sid="CAtest123",
-        items=[LineItem(name="Pepperoni", category=ItemCategory.PIZZA, size="large", quantity=1, unit_price=21.99)],
+        items=[
+            LineItem(
+                name="Pepperoni",
+                category=ItemCategory.PIZZA,
+                size="large",
+                quantity=1,
+                unit_price=21.99,
+            )
+        ],
         order_type=OrderType.PICKUP,
     )
 
@@ -630,9 +647,7 @@ async def test_clear_twilio_audio_sends_clear_event_with_stream_sid():
 
     await clear_twilio_audio(ws, "MZtest456")
 
-    ws.send_json.assert_awaited_once_with(
-        {"event": "clear", "streamSid": "MZtest456"}
-    )
+    ws.send_json.assert_awaited_once_with({"event": "clear", "streamSid": "MZtest456"})
 
 
 @pytest.mark.asyncio
@@ -651,9 +666,7 @@ async def test_clear_twilio_audio_skips_when_stream_sid_missing():
 def test_looks_like_goodbye_matches_terminal_phrases():
     from app.telephony.router import _looks_like_goodbye
 
-    assert _looks_like_goodbye(
-        "Great, your order is in — we'll have it ready for you soon!"
-    )
+    assert _looks_like_goodbye("Great, your order is in — we'll have it ready for you soon!")
     assert _looks_like_goodbye("Perfect, see you soon!")
     assert _looks_like_goodbye("Thanks for calling!")
     assert _looks_like_goodbye("Have a great day.")
@@ -663,13 +676,9 @@ def test_looks_like_goodbye_rejects_questions():
     """A reply that ends with '?' is still asking the caller something."""
     from app.telephony.router import _looks_like_goodbye
 
-    assert not _looks_like_goodbye(
-        "Got that. Anything else, or are you all set?"
-    )
+    assert not _looks_like_goodbye("Got that. Anything else, or are you all set?")
     # Even with goodbye-shaped phrasing earlier, trailing '?' = still asking.
-    assert not _looks_like_goodbye(
-        "Your order is in — does that all sound right?"
-    )
+    assert not _looks_like_goodbye("Your order is in — does that all sound right?")
 
 
 def test_looks_like_goodbye_rejects_simple_acknowledgements():
@@ -756,6 +765,7 @@ async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
 def test_looks_like_goodbye_excludes_coming_right_up():
     """'coming right up' is mid-order, not a wrap-up — must NOT trigger fallback."""
     from app.telephony.router import _looks_like_goodbye
+
     assert _looks_like_goodbye("One large Margherita coming right up.") is False
     assert _looks_like_goodbye("Two Cokes coming right up!") is False
 
@@ -763,6 +773,7 @@ def test_looks_like_goodbye_excludes_coming_right_up():
 def test_looks_like_goodbye_remaining_patterns_still_match():
     """Positive coverage so a drive-by removal of a pattern is caught."""
     from app.telephony.router import _looks_like_goodbye
+
     assert _looks_like_goodbye("Thanks for ordering, see you soon!")
     assert _looks_like_goodbye("Your order is in — we'll have it ready shortly.")
     assert _looks_like_goodbye("Thanks for calling!")
@@ -773,6 +784,7 @@ def test_looks_like_goodbye_remaining_patterns_still_match():
 def test_hangup_grace_seconds_is_five():
     """Grace window must be 5s so callers can add late items."""
     from app.telephony.router import HANGUP_GRACE_SECONDS
+
     assert HANGUP_GRACE_SECONDS == 5.0
 
 
@@ -932,9 +944,7 @@ def _make_fake_stream_reply_deltas(*deltas: str, final_text: str = ""):
     async def fake(*, transcript, history, order, **kw):
         for d in deltas:
             yield StreamEvent(text_delta=d)
-        yield StreamEvent(
-            final=LLMResponse(reply_text=final, order=order, history=history)
-        )
+        yield StreamEvent(final=LLMResponse(reply_text=final, order=order, history=history))
 
     return fake
 
@@ -1103,7 +1113,7 @@ def test_voice_twiml_includes_stream_ended_action():
 
     assert resp.status_code == 200
     body = resp.text
-    assert '<Connect' in body
+    assert "<Connect" in body
     assert 'action="/voice/stream-ended"' in body
     assert 'method="POST"' in body
 
@@ -1446,12 +1456,15 @@ def test_voicemail_recorded_uploads_and_marks_session(monkeypatch):
     from app.storage import call_sessions, recordings
 
     upload_calls: list[dict] = []
+
     def fake_upload(**kwargs):
         upload_calls.append(kwargs)
         return f"gs://test/voicemail/{kwargs['restaurant_id']}/{kwargs['call_sid']}.mp3"
 
     monkeypatch.setattr(
-        recordings, "upload_voicemail_from_twilio", fake_upload,
+        recordings,
+        "upload_voicemail_from_twilio",
+        fake_upload,
     )
     monkeypatch.setattr(settings, "twilio_account_sid", "ACfake")
     monkeypatch.setattr(settings, "twilio_auth_token", "tokenfake")
@@ -1525,13 +1538,16 @@ def test_voicemail_recorded_handles_upload_failure_gracefully(monkeypatch):
 
     def boom(**kw):
         raise RuntimeError("gcs is angry")
+
     monkeypatch.setattr(recordings, "upload_voicemail_from_twilio", boom)
     monkeypatch.setattr(settings, "twilio_account_sid", "AC")
     monkeypatch.setattr(settings, "twilio_auth_token", "tok")
 
     mark_calls = []
     monkeypatch.setattr(
-        call_sessions, "mark_voicemail_left", lambda *a, **kw: mark_calls.append(kw),
+        call_sessions,
+        "mark_voicemail_left",
+        lambda *a, **kw: mark_calls.append(kw),
     )
 
     client = TestClient(app)
@@ -1618,8 +1634,13 @@ def test_voice_routes_to_voicemail_when_after_hours(monkeypatch):
 
     closed_day = DayHours(open="00:00", close="00:00", closed=True)
     h = HoursStructured(
-        mon=closed_day, tue=closed_day, wed=closed_day, thu=closed_day,
-        fri=closed_day, sat=closed_day, sun=closed_day,
+        mon=closed_day,
+        tue=closed_day,
+        wed=closed_day,
+        thu=closed_day,
+        fri=closed_day,
+        sat=closed_day,
+        sun=closed_day,
     )
     fake = Restaurant(
         id="r1",
@@ -1723,8 +1744,8 @@ def test_voicemail_recorded_is_idempotent_on_twilio_retry(monkeypatch):
     )
 
     sessions = [
-        None,                                          # 1st call: no session yet
-        {"voicemail_recording_sid": "REabc"},          # 2nd call: already processed
+        None,  # 1st call: no session yet
+        {"voicemail_recording_sid": "REabc"},  # 2nd call: already processed
     ]
     monkeypatch.setattr(
         call_sessions,
@@ -1916,9 +1937,7 @@ async def test_run_llm_tts_turn_clears_in_flight_transcript_on_final(monkeypatch
     from app.telephony.router import _CallState, _run_llm_tts_turn
 
     async def fake_stream_reply(*, transcript, history, order, **kw):
-        yield StreamEvent(
-            final=LLMResponse(reply_text="ok", order=order, history=history)
-        )
+        yield StreamEvent(final=LLMResponse(reply_text="ok", order=order, history=history))
 
     async def fake_speak(*a, **kw):
         pass
@@ -2026,4 +2045,3 @@ async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch
             pass
 
     assert captured == ["and a coke"]
-

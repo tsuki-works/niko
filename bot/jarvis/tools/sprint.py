@@ -65,9 +65,7 @@ def _flatten(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_get_current_sprint_tool(
-    *, github_client: Any, project_id: str
-) -> ToolDescriptor:
+def build_get_current_sprint_tool(*, github_client: Any, project_id: str) -> ToolDescriptor:
     async def get_current_sprint() -> dict[str, Any]:
         data = await github_client.graphql(_QUERY, variables={"id": project_id})
         nodes = (((data or {}).get("node") or {}).get("items") or {}).get("nodes") or []
@@ -81,19 +79,13 @@ def build_get_current_sprint_tool(
         if not open_items:
             return {"selected_by": "empty", "items": []}
 
-        phases = [
-            _phase_number(i.get("phase")) for i in open_items
-        ]
+        phases = [_phase_number(i.get("phase")) for i in open_items]
         present = [p for p in phases if p is not None]
         if not present:
             return {"selected_by": "no_phase_field", "items": open_items}
 
         lowest = min(present)
-        items_at_lowest = [
-            i
-            for i, p in zip(open_items, phases)
-            if p == lowest
-        ]
+        items_at_lowest = [i for i, p in zip(open_items, phases) if p == lowest]
         return {"selected_by": "lowest_open_phase", "items": items_at_lowest}
 
     return ToolDescriptor(

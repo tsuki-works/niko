@@ -4,6 +4,7 @@ Hand-rolls a tiny fake matching the shape of google.cloud.logging entries —
 ``payload`` (str) + ``timestamp`` (datetime). The module is hermetic; we
 never touch the real Cloud Logging API in tests.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -72,9 +73,8 @@ def _full_call_entries(call_sid: str, base_minute: int) -> list[FakeEntry]:
 
 
 def test_parse_events_groups_by_call_sid():
-    entries = (
-        _full_call_entries("CAfirst", base_minute=10)
-        + _full_call_entries("CAsecond", base_minute=30)
+    entries = _full_call_entries("CAfirst", base_minute=10) + _full_call_entries(
+        "CAsecond", base_minute=30
     )
     grouped = dev_calls.parse_events(entries)
 
@@ -100,7 +100,9 @@ def test_parse_events_skips_lines_without_call_sid():
 
 
 def test_classify_transcript_final_extracts_text():
-    payload = "INFO:app.telephony.router:transcript [final] call_sid=CA123 text='extra olives please'"
+    payload = (
+        "INFO:app.telephony.router:transcript [final] call_sid=CA123 text='extra olives please'"
+    )
     kind, detail = dev_calls._classify(payload)
 
     assert kind == "transcript_final"
@@ -176,8 +178,7 @@ def test_summarize_call_without_stop_is_in_progress():
 
 def test_list_recent_calls_orders_newest_first():
     fake = FakeLoggingClient(
-        _full_call_entries("CAearly", base_minute=10)
-        + _full_call_entries("CAlate", base_minute=30)
+        _full_call_entries("CAearly", base_minute=10) + _full_call_entries("CAlate", base_minute=30)
     )
     summaries = dev_calls.list_recent_calls(hours=24, client=fake)
 

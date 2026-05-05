@@ -20,7 +20,7 @@ def test_ulaw2lin_16_decodes_two_bytes():
     """Sanity: lookup-table decode produces 2 bytes per μ-law byte."""
     from app.storage.recordings import _ulaw2lin_16
 
-    assert len(_ulaw2lin_16(b"\xff\xff")) == 4   # 2 samples × 2 bytes
+    assert len(_ulaw2lin_16(b"\xff\xff")) == 4  # 2 samples × 2 bytes
     assert len(_ulaw2lin_16(b"")) == 0
 
 
@@ -88,7 +88,7 @@ def test_make_encoder_is_mono():
     from app.storage.recordings import _make_encoder
 
     enc = _make_encoder()
-    pcm = b"\x00" * (8000 * 2)   # 1 second of mono PCM silence
+    pcm = b"\x00" * (8000 * 2)  # 1 second of mono PCM silence
     mp3 = enc.encode(pcm)
     mp3 += enc.flush()
 
@@ -108,9 +108,7 @@ def test_begin_recording_creates_session_with_blob_name_and_retention():
     No GCS calls at begin — the upload happens at finalize."""
     from app.storage import recordings
 
-    session = recordings.begin_recording(
-        call_sid="CAtest", restaurant_id="rid1", retention_days=7
-    )
+    session = recordings.begin_recording(call_sid="CAtest", restaurant_id="rid1", retention_days=7)
 
     assert session.call_sid == "CAtest"
     assert session.restaurant_id == "rid1"
@@ -129,9 +127,7 @@ def test_begin_recording_creates_session_with_blob_name_and_retention():
 def test_append_chunks_extends_inbound_buffer():
     from app.storage import recordings
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=90
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=90)
     recordings.append_chunks(session, b"\xff" * 8, b"")
 
     # 8 μ-law bytes → 16 PCM bytes (2 bytes per sample)
@@ -145,12 +141,10 @@ def test_append_chunks_pads_outbound_to_inbound_position():
     aligned to wall-clock time without per-chunk timestamps."""
     from app.storage import recordings
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=90
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=90)
     # Caller silence for "100 samples" arrives first.
     recordings.append_chunks(session, b"\xff" * 100, b"")
-    assert len(session.inbound_pcm) == 200   # 100 samples × 2 bytes
+    assert len(session.inbound_pcm) == 200  # 100 samples × 2 bytes
     assert len(session.outbound_pcm) == 0
 
     # Now the agent says something — outbound chunk = 5 samples of TTS.
@@ -166,9 +160,7 @@ def test_append_chunks_pads_outbound_to_inbound_position():
 def test_append_chunks_skips_when_session_broken():
     from app.storage import recordings
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=90
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=90)
     session.broken = True
     recordings.append_chunks(session, b"\xff" * 100, b"\x80" * 100)
 
@@ -179,9 +171,7 @@ def test_append_chunks_skips_when_session_broken():
 def test_append_chunks_handles_empty_payloads():
     from app.storage import recordings
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=90
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=90)
     recordings.append_chunks(session, b"", b"")
 
     assert session.inbound_pcm == bytearray()
@@ -204,15 +194,19 @@ def test_finalize_recording_mixes_encodes_and_uploads(monkeypatch):
 
     fake_blob = type("FakeBlob", (), {})()
     fake_blob.custom_time = None
+
     def fake_upload(data, content_type):
         captured["data"] = data
         captured["content_type"] = content_type
+
     fake_blob.upload_from_string = fake_upload
 
     fake_bucket = type("FakeBucket", (), {})()
+
     def get_blob(name):
         captured["blob_name"] = name
         return fake_blob
+
     fake_bucket.blob = get_blob
 
     fake_client = type("FakeClient", (), {})()
@@ -220,9 +214,7 @@ def test_finalize_recording_mixes_encodes_and_uploads(monkeypatch):
 
     monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=7
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=7)
     # Simulate 1 second of overlapping audio: feed the agent (outbound)
     # chunk *first*, while inbound is still empty, so the alignment
     # logic doesn't shift it. Then feed 1 second of caller audio.
@@ -246,7 +238,11 @@ def test_finalize_recording_mixes_encodes_and_uploads(monkeypatch):
     # Output is real MP3 bytes
     assert captured["data"][0] == 0xFF and (captured["data"][1] & 0xE0) == 0xE0
     # custom_time is set to now() + retention_days
-    assert before + timedelta(days=7) - timedelta(seconds=2) <= fake_blob.custom_time <= after + timedelta(days=7)
+    assert (
+        before + timedelta(days=7) - timedelta(seconds=2)
+        <= fake_blob.custom_time
+        <= after + timedelta(days=7)
+    )
 
 
 def test_finalize_recording_returns_empty_when_no_audio(monkeypatch):
@@ -255,13 +251,12 @@ def test_finalize_recording_returns_empty_when_no_audio(monkeypatch):
     from app.storage import recordings
 
     monkeypatch.setattr(
-        recordings, "_get_storage_client",
+        recordings,
+        "_get_storage_client",
         lambda: (_ for _ in ()).throw(AssertionError("must not touch GCS")),
     )
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=90
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=90)
     url, duration = recordings.finalize_recording(session)
 
     assert url == ""
@@ -272,13 +267,12 @@ def test_finalize_recording_skips_when_broken(monkeypatch):
     from app.storage import recordings
 
     monkeypatch.setattr(
-        recordings, "_get_storage_client",
+        recordings,
+        "_get_storage_client",
         lambda: (_ for _ in ()).throw(AssertionError("must not touch GCS on broken")),
     )
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=90
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=90)
     session.inbound_pcm.extend(b"\x00" * 100)
     session.broken = True
 
@@ -295,8 +289,10 @@ def test_finalize_recording_swallows_upload_failure(monkeypatch):
 
     fake_blob = type("FakeBlob", (), {})()
     fake_blob.custom_time = None
+
     def fake_upload(data, content_type):
         raise RuntimeError("upload exploded")
+
     fake_blob.upload_from_string = fake_upload
 
     fake_bucket = type("FakeBucket", (), {})()
@@ -307,9 +303,7 @@ def test_finalize_recording_swallows_upload_failure(monkeypatch):
 
     monkeypatch.setattr(recordings, "_get_storage_client", lambda: fake_client)
 
-    session = recordings.begin_recording(
-        call_sid="CAt", restaurant_id="rid", retention_days=90
-    )
+    session = recordings.begin_recording(call_sid="CAt", restaurant_id="rid", retention_days=90)
     session.inbound_pcm.extend(b"\x00" * 1000)
 
     url, duration = recordings.finalize_recording(session)
@@ -333,7 +327,7 @@ def test_delete_recording_calls_blob_delete(monkeypatch):
     fake_blob.delete = lambda: deleted.append("called")
 
     fake_bucket = type("FakeBucket", (), {})()
-    fake_bucket.blob = lambda name: (deleted.append(name) or fake_blob)
+    fake_bucket.blob = lambda name: deleted.append(name) or fake_blob
 
     fake_client = type("FakeClient", (), {})()
     fake_client.bucket = lambda name: fake_bucket
@@ -351,8 +345,10 @@ def test_delete_recording_idempotent_on_404(monkeypatch):
     from app.storage import recordings
 
     fake_blob = type("FakeBlob", (), {})()
+
     def raise_notfound():
         raise NotFound("gone")
+
     fake_blob.delete = raise_notfound
 
     fake_bucket = type("FakeBucket", (), {})()
@@ -386,15 +382,19 @@ def test_generate_signed_url_uses_v4_get_30min_and_iam_signblob(monkeypatch):
     captured: dict = {}
 
     fake_blob = type("FakeBlob", (), {})()
+
     def fake_signed(**kwargs):
         captured.update(kwargs)
         return "https://signed.googleapis.com/?sig=fake"
+
     fake_blob.generate_signed_url = fake_signed
 
     fake_bucket = type("FakeBucket", (), {})()
+
     def get_blob(name):
         captured["blob_name"] = name
         return fake_blob
+
     fake_bucket.blob = get_blob
 
     fake_client = type("FakeClient", (), {})()
@@ -408,8 +408,10 @@ def test_generate_signed_url_uses_v4_get_30min_and_iam_signblob(monkeypatch):
         refresh=lambda _request: None,
     )
     import google.auth as gauth_mod
+
     monkeypatch.setattr(gauth_mod, "default", lambda: (fake_creds, "niko-tsuki"))
     from google.auth.transport import requests as _gauth_req
+
     monkeypatch.setattr(_gauth_req, "Request", lambda: object())
 
     url = recordings.generate_signed_url(call_sid="CAt", restaurant_id="rid")

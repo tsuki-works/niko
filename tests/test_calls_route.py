@@ -41,11 +41,13 @@ def test_get_call_recording_returns_302_to_signed_url(override_owner, monkeypatc
     from app.storage import call_sessions, recordings
 
     monkeypatch.setattr(
-        call_sessions, "get_session",
+        call_sessions,
+        "get_session",
         lambda call_sid, rid: {"recording_url": f"gs://niko-recordings/{rid}/CAt.mp3"},
     )
     monkeypatch.setattr(
-        recordings, "generate_signed_url",
+        recordings,
+        "generate_signed_url",
         lambda *, call_sid, restaurant_id: "https://signed.example/?sig=fake",
     )
 
@@ -58,7 +60,8 @@ def test_get_call_recording_404_when_url_missing(override_owner, monkeypatch):
     from app.storage import call_sessions
 
     monkeypatch.setattr(
-        call_sessions, "get_session",
+        call_sessions,
+        "get_session",
         lambda call_sid, rid: {"recording_url": None},
     )
     r = client.get("/calls/CAt/recording")
@@ -71,7 +74,8 @@ def test_get_call_recording_502_when_url_not_gs(override_owner, monkeypatch):
     from app.storage import call_sessions
 
     monkeypatch.setattr(
-        call_sessions, "get_session",
+        call_sessions,
+        "get_session",
         lambda call_sid, rid: {"recording_url": "https://api.twilio.com/legacy.mp3"},
     )
     r = client.get("/calls/CAt/recording", follow_redirects=False)
@@ -87,17 +91,20 @@ def test_delete_call_recording_owner_returns_204(override_owner, monkeypatch):
     from app.storage import call_sessions, recordings
 
     monkeypatch.setattr(
-        call_sessions, "get_session",
+        call_sessions,
+        "get_session",
         lambda call_sid, rid: {"recording_url": f"gs://niko-recordings/{rid}/CAt.mp3"},
     )
     deleted: list[dict] = []
     cleared: list[dict] = []
     monkeypatch.setattr(
-        recordings, "delete_recording",
+        recordings,
+        "delete_recording",
         lambda *, call_sid, restaurant_id: deleted.append({"sid": call_sid, "rid": restaurant_id}),
     )
     monkeypatch.setattr(
-        call_sessions, "mark_recording_deleted",
+        call_sessions,
+        "mark_recording_deleted",
         lambda call_sid, rid: cleared.append({"sid": call_sid, "rid": rid}),
     )
 
@@ -115,9 +122,7 @@ def test_delete_call_recording_non_owner_returns_403(override_staff):
 def test_delete_call_recording_404_when_call_missing(override_owner, monkeypatch):
     from app.storage import call_sessions
 
-    monkeypatch.setattr(
-        call_sessions, "get_session", lambda call_sid, rid: None
-    )
+    monkeypatch.setattr(call_sessions, "get_session", lambda call_sid, rid: None)
     r = client.delete("/calls/CAt/recording")
     assert r.status_code == 404
 
@@ -130,7 +135,8 @@ def test_delete_call_recording_idempotent_on_no_recording(override_owner, monkey
     from app.storage import call_sessions, recordings
 
     monkeypatch.setattr(
-        call_sessions, "get_session",
+        call_sessions,
+        "get_session",
         lambda call_sid, rid: {"recording_url": None},
     )
     monkeypatch.setattr(recordings, "delete_recording", lambda **kw: None)

@@ -114,9 +114,7 @@ def _looks_like_goodbye(reply: str) -> bool:
     return any(pat in lower for pat in _GOODBYE_PATTERNS)
 
 
-def _bg_call_event(
-    call_sid: str | None, restaurant_id: str | None, **kwargs
-) -> None:
+def _bg_call_event(call_sid: str | None, restaurant_id: str | None, **kwargs) -> None:
     """Fire-and-forget Firestore write so the audio loop never blocks on it.
 
     The storage module catches its own exceptions, so failures here just
@@ -132,15 +130,11 @@ def _bg_call_event(
     except RuntimeError:
         return
     loop.create_task(
-        asyncio.to_thread(
-            call_sessions.record_event, call_sid, restaurant_id, **kwargs
-        )
+        asyncio.to_thread(call_sessions.record_event, call_sid, restaurant_id, **kwargs)
     )
 
 
-async def send_end_of_call_mark(
-    websocket: WebSocket, stream_sid: str | None
-) -> bool:
+async def send_end_of_call_mark(websocket: WebSocket, stream_sid: str | None) -> bool:
     """Append a named ``mark`` event to Twilio's outgoing media stream.
 
     Twilio echoes the same mark back over the WebSocket once its audio
@@ -162,9 +156,7 @@ async def send_end_of_call_mark(
     except WebSocketDisconnect:
         return False
     except Exception:
-        logger.exception(
-            "mark: failed to send end_of_call mark stream_sid=%s", stream_sid
-        )
+        logger.exception("mark: failed to send end_of_call mark stream_sid=%s", stream_sid)
         return False
 
 
@@ -199,9 +191,7 @@ async def _hang_up_after_grace(state: _CallState) -> None:
                 state.call_sid,
             )
         except Exception:
-            logger.exception(
-                "auto-hangup: WS close failed call_sid=%s", state.call_sid
-            )
+            logger.exception("auto-hangup: WS close failed call_sid=%s", state.call_sid)
 
 
 async def _hang_up_after_mark_timeout(state: _CallState) -> None:
@@ -222,8 +212,7 @@ async def _hang_up_after_mark_timeout(state: _CallState) -> None:
     if not state.pending_hangup or not state.call_sid:
         return
     logger.warning(
-        "auto-hangup: mark echo timed out after %.1fs, falling back to "
-        "grace window call_sid=%s",
+        "auto-hangup: mark echo timed out after %.1fs, falling back to grace window call_sid=%s",
         MARK_ECHO_TIMEOUT_SECONDS,
         state.call_sid,
     )
@@ -269,17 +258,17 @@ async def clear_twilio_audio(websocket: WebSocket, stream_sid: str | None) -> No
 
 @dataclass
 class _CallState:
-    call_sid:     str | None       = None
-    stream_sid:   str | None       = None
-    order:        Order | None     = None
-    history:      list[dict]       = field(default_factory=list)
-    restaurant:   Restaurant | None = None     # tenant for this call (#79)
-    system_prompt: str             = ""        # built from restaurant on start
-    llm_task:          asyncio.Task | None = None   # current LLM→TTS turn
-    silence_task:      asyncio.Task | None = None   # silence watchdog
-    hangup_task:       asyncio.Task | None = None   # pending auto-hangup (#78)
-    mark_timeout_task: asyncio.Task | None = None   # mark-echo fallback (#114)
-    pending_hangup: bool           = False     # set when goodbye mark sent (#78)
+    call_sid: str | None = None
+    stream_sid: str | None = None
+    order: Order | None = None
+    history: list[dict] = field(default_factory=list)
+    restaurant: Restaurant | None = None  # tenant for this call (#79)
+    system_prompt: str = ""  # built from restaurant on start
+    llm_task: asyncio.Task | None = None  # current LLM→TTS turn
+    silence_task: asyncio.Task | None = None  # silence watchdog
+    hangup_task: asyncio.Task | None = None  # pending auto-hangup (#78)
+    mark_timeout_task: asyncio.Task | None = None  # mark-echo fallback (#114)
+    pending_hangup: bool = False  # set when goodbye mark sent (#78)
     recording_session: "RecordingUploadSession | None" = None
     should_hangup: asyncio.Event = field(default_factory=asyncio.Event)
     # WS reference so _hang_up_after_grace can close the connection
@@ -405,14 +394,10 @@ def _arm_silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
     if state.llm_task and state.llm_task.cancelled():
         return  # barge-in — caller spoke again, no watchdog needed
     _cancel_silence_task(state)
-    state.silence_task = asyncio.get_event_loop().create_task(
-        _silence_watchdog(state, websocket)
-    )
+    state.silence_task = asyncio.get_event_loop().create_task(_silence_watchdog(state, websocket))
 
 
-async def _run_llm_tts_turn(
-    transcript: str, state: _CallState, websocket: WebSocket
-) -> None:
+async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSocket) -> None:
     turn_start = time.monotonic()
     logger.info("llm_turn start call_sid=%s transcript=%r", state.call_sid, transcript)
     _bg_call_event(
@@ -547,9 +532,7 @@ async def _run_llm_tts_turn(
                 #     The model sometimes says the right closing line
                 #     without remembering to flip status.
                 if state.order is not None and state.stream_sid:
-                    explicitly_confirmed = (
-                        state.order.status == OrderStatus.CONFIRMED
-                    )
+                    explicitly_confirmed = state.order.status == OrderStatus.CONFIRMED
                     fallback_confirmed = (
                         state.order.is_ready_to_confirm()
                         and state.order.status != OrderStatus.CANCELLED
@@ -567,9 +550,7 @@ async def _run_llm_tts_turn(
                             state.order = state.order.model_copy(
                                 update={"status": OrderStatus.CONFIRMED}
                             )
-                        sent = await send_end_of_call_mark(
-                            websocket, state.stream_sid
-                        )
+                        sent = await send_end_of_call_mark(websocket, state.stream_sid)
                         if sent:
                             state.pending_hangup = True
                             if state.mark_timeout_task and not state.mark_timeout_task.done():
@@ -596,9 +577,7 @@ async def _run_llm_tts_turn(
         raise
 
 
-async def _handle_final_transcript(
-    text: str, state: _CallState, websocket: WebSocket
-) -> None:
+async def _handle_final_transcript(text: str, state: _CallState, websocket: WebSocket) -> None:
     interrupted = bool(state.llm_task and not state.llm_task.done())
     if interrupted:
         state.llm_task.cancel()
@@ -610,9 +589,7 @@ async def _handle_final_transcript(
     # turn that never made it into history."
     if state.in_flight_transcript.strip():
         text = f"{state.in_flight_transcript} {text}".strip()
-    silence_was_active = bool(
-        state.silence_task and not state.silence_task.done()
-    )
+    silence_was_active = bool(state.silence_task and not state.silence_task.done())
     _cancel_silence_task(state)
     # Caller spoke — abort any pending auto-hangup (#78). Even if they
     # spoke during the grace window after a confirmation, we want to
@@ -623,17 +600,11 @@ async def _handle_final_transcript(
         # us pause instead of getting talked over (#74).
         await clear_twilio_audio(websocket, state.stream_sid)
     state.in_flight_transcript = text
-    state.llm_task = asyncio.create_task(
-        _run_llm_tts_turn(text, state, websocket)
-    )
-    state.llm_task.add_done_callback(
-        lambda _t: _arm_silence_watchdog(state, websocket)
-    )
+    state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
+    state.llm_task.add_done_callback(lambda _t: _arm_silence_watchdog(state, websocket))
 
 
-_UNCONFIGURED_TWIML_MESSAGE = (
-    "Sorry, this number is not currently configured. Goodbye."
-)
+_UNCONFIGURED_TWIML_MESSAGE = "Sorry, this number is not currently configured. Goodbye."
 
 
 def _resolve_restaurant_for_voice(
@@ -684,9 +655,7 @@ async def voice(request: Request) -> Response:
 
     twiml = VoiceResponse()
     if restaurant is None:
-        logger.warning(
-            "voice: no restaurant for To=%s — rejecting call", to_e164 or "(missing)"
-        )
+        logger.warning("voice: no restaurant for To=%s — rejecting call", to_e164 or "(missing)")
         twiml.say(_UNCONFIGURED_TWIML_MESSAGE)
         twiml.hangup()
         return Response(content=str(twiml), media_type="application/xml")
@@ -764,9 +733,7 @@ async def stream_ended(request: Request) -> Response:
         session_doc = call_sessions.get_session_by_call_sid(call_sid)
         rid: str | None = (session_doc or {}).get("restaurant_id")
     except Exception:
-        logger.exception(
-            "stream_ended: session lookup failed call_sid=%s", call_sid
-        )
+        logger.exception("stream_ended: session lookup failed call_sid=%s", call_sid)
         rid = None
 
     if rid is None:
@@ -790,7 +757,10 @@ async def stream_ended(request: Request) -> Response:
         # Transfer requested but no number to dial → mark + voicemail.
         try:
             call_sessions.mark_transfer_attempted(
-                call_sid, rid, status="skipped", fallback_phone=None,
+                call_sid,
+                rid,
+                status="skipped",
+                fallback_phone=None,
             )
         except Exception:
             logger.exception(
@@ -953,7 +923,9 @@ async def voicemail_transcription(
     if transcript:
         try:
             call_sessions.update_voicemail_transcript(
-                call_sid, rid, transcript=transcript,
+                call_sid,
+                rid,
+                transcript=transcript,
             )
         except Exception:
             logger.exception(
@@ -1056,9 +1028,7 @@ async def media_stream(websocket: WebSocket) -> None:
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)
                 )
-                state.llm_task.add_done_callback(
-                    lambda _t: _arm_silence_watchdog(state, websocket)
-                )
+                state.llm_task.add_done_callback(lambda _t: _arm_silence_watchdog(state, websocket))
 
             elif event == "media":
                 payload = base64.b64decode(msg["media"]["payload"])
@@ -1075,9 +1045,7 @@ async def media_stream(websocket: WebSocket) -> None:
                     inbound_chunk = b""
                     outbound_chunk = b""
                 if state.recording_session is not None:
-                    recordings.append_chunks(
-                        state.recording_session, inbound_chunk, outbound_chunk
-                    )
+                    recordings.append_chunks(state.recording_session, inbound_chunk, outbound_chunk)
 
             elif event == "mark":
                 # Twilio echoes our outgoing marks once the audio queued
@@ -1094,9 +1062,7 @@ async def media_stream(websocket: WebSocket) -> None:
                     state.mark_timeout_task = None
                     if state.hangup_task and not state.hangup_task.done():
                         state.hangup_task.cancel()
-                    state.hangup_task = asyncio.create_task(
-                        _hang_up_after_grace(state)
-                    )
+                    state.hangup_task = asyncio.create_task(_hang_up_after_grace(state))
 
             elif event == "stop":
                 logger.info("media-stream stop call_sid=%s", state.call_sid)
@@ -1127,14 +1093,10 @@ async def media_stream(websocket: WebSocket) -> None:
             try:
                 persist_on_confirm(state.order)
                 logger.info("order confirmed call_sid=%s", state.call_sid)
-                _bg_call_event(
-                    state.call_sid, _state_rid(state), kind="order_confirmed"
-                )
+                _bg_call_event(state.call_sid, _state_rid(state), kind="order_confirmed")
                 order_confirmed = True
             except (OrderNotReadyError, Exception) as exc:
-                logger.error(
-                    "order persist failed call_sid=%s: %s", state.call_sid, exc
-                )
+                logger.error("order persist failed call_sid=%s: %s", state.call_sid, exc)
         rid_for_close = _state_rid(state)
         if state.call_sid and rid_for_close:
             try:
@@ -1154,6 +1116,7 @@ async def media_stream(websocket: WebSocket) -> None:
         # event so the action callback can branch on it.
         if state.call_sid and rid_for_close:
             from app.telephony.transfer_triggers import should_trigger_transfer
+
             transfer_reason = should_trigger_transfer(
                 consecutive_low_confidence_turns=state.consecutive_low_confidence_turns,
                 last_transcript=state.last_caller_transcript,
@@ -1195,5 +1158,3 @@ async def media_stream(websocket: WebSocket) -> None:
                 )
         if dg_conn is not None:
             await dg_conn.finish()
-
-

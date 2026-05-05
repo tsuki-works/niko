@@ -110,12 +110,8 @@ async def test_append_turn_persists_via_update():
 
 
 async def test_append_turn_caps_at_max_turns():
-    existing = [
-        {"role": "user", "content": f"msg {i}"} for i in range(MAX_TURNS)
-    ]
-    client, doc_ref = _make_doc_ref_with_snapshot(
-        {"thread_id": "123", "turns": existing}
-    )
+    existing = [{"role": "user", "content": f"msg {i}"} for i in range(MAX_TURNS)]
+    client, doc_ref = _make_doc_ref_with_snapshot({"thread_id": "123", "turns": existing})
     mem = ThreadMemory(client)
     await mem.append_turn(thread_id="123", role="assistant", content="newest")
     payload = doc_ref.update.await_args.args[0]

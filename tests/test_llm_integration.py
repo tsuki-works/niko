@@ -79,9 +79,7 @@ _DEMO_SYSTEM_PROMPT = build_system_prompt(_DEMO_RESTAURANT)
 # Pickup-only variant: same menu, but offers_delivery=False so the
 # system prompt branches into the soft-pivot flow. Used by the
 # pickup_only_soft_pivot scenario in delivery_transcripts.py.
-_DEMO_PICKUP_ONLY_RESTAURANT = _DEMO_RESTAURANT.model_copy(
-    update={"offers_delivery": False}
-)
+_DEMO_PICKUP_ONLY_RESTAURANT = _DEMO_RESTAURANT.model_copy(update={"offers_delivery": False})
 _DEMO_PICKUP_ONLY_SYSTEM_PROMPT = build_system_prompt(_DEMO_PICKUP_ONLY_RESTAURANT)
 
 
@@ -93,7 +91,9 @@ def test_pickup_order_round_trip():
     transcript = "Hi, I'd like a large pepperoni pizza for pickup please."
 
     result = generate_reply(
-        transcript=transcript, history=[], order=order,
+        transcript=transcript,
+        history=[],
+        order=order,
         system_prompt=_DEMO_SYSTEM_PROMPT,
     )
 
@@ -103,9 +103,7 @@ def test_pickup_order_round_trip():
 
     assert len(result.reply_text) > 5, "Haiku should produce a spoken reply"
     assert result.order.call_sid == "CAintegration-pickup", "call_sid preserved"
-    assert len(result.order.items) >= 1, (
-        "Expected Haiku to record the pepperoni via update_order"
-    )
+    assert len(result.order.items) >= 1, "Expected Haiku to record the pepperoni via update_order"
 
 
 def test_greeting_does_not_mutate_order():
@@ -115,7 +113,9 @@ def test_greeting_does_not_mutate_order():
     transcript = "Hello?"
 
     result = generate_reply(
-        transcript=transcript, history=[], order=order,
+        transcript=transcript,
+        history=[],
+        order=order,
         system_prompt=_DEMO_SYSTEM_PROMPT,
     )
 
@@ -134,7 +134,9 @@ def test_off_menu_item_is_declined_without_adding():
     transcript = "Hi, can I get some sushi please?"
 
     result = generate_reply(
-        transcript=transcript, history=[], order=order,
+        transcript=transcript,
+        history=[],
+        order=order,
         system_prompt=_DEMO_SYSTEM_PROMPT,
     )
 
@@ -143,9 +145,7 @@ def test_off_menu_item_is_declined_without_adding():
     print(f"\n--- Order items ---\n{result.order.items}")
 
     assert len(result.reply_text) > 5, "Haiku should respond"
-    assert len(result.order.items) == 0, (
-        "Off-menu requests must not be added to the order"
-    )
+    assert len(result.order.items) == 0, "Off-menu requests must not be added to the order"
 
 
 def test_caller_changes_mind_replaces_pizza():
@@ -163,9 +163,9 @@ def test_caller_changes_mind_replaces_pizza():
     )
     print(f"\n--- Turn 1 reply ---\n{first.reply_text}")
     print(f"\n--- Turn 1 order ---\n{first.order.model_dump_json(indent=2)}")
-    assert any(
-        "pepperoni" in item.name.lower() for item in first.order.items
-    ), "Turn 1 should record the pepperoni"
+    assert any("pepperoni" in item.name.lower() for item in first.order.items), (
+        "Turn 1 should record the pepperoni"
+    )
 
     second = generate_reply(
         transcript="Actually, scratch that — make it a large veggie supreme instead.",
@@ -177,9 +177,7 @@ def test_caller_changes_mind_replaces_pizza():
     print(f"\n--- Turn 2 order ---\n{second.order.model_dump_json(indent=2)}")
 
     pizza_names = [item.name.lower() for item in second.order.items]
-    assert any("veggie" in name for name in pizza_names), (
-        "Turn 2 should record the veggie supreme"
-    )
+    assert any("veggie" in name for name in pizza_names), "Turn 2 should record the veggie supreme"
     assert not any("pepperoni" in name for name in pizza_names), (
         "Turn 2 should have replaced the pepperoni, not kept both"
     )
@@ -197,7 +195,9 @@ async def test_stream_reply_yields_deltas_before_final():
     final = None
 
     async for event in stream_reply(
-        transcript=transcript, history=[], order=order,
+        transcript=transcript,
+        history=[],
+        order=order,
         system_prompt=_DEMO_SYSTEM_PROMPT,
     ):
         if event.text_delta is not None:
@@ -224,6 +224,7 @@ async def test_stream_reply_yields_deltas_before_final():
 # `pytest` invocation. The module-level skipif still applies — without the
 # API key we skip even when -m live_llm is passed.
 
+
 @pytest.mark.live_llm
 @pytest.mark.parametrize(
     "scenario",
@@ -240,25 +241,33 @@ def test_caller_correction_lands_in_final_order(scenario: CorrectionScenario):
 
     for turn in scenario.initial_turns:
         result = generate_reply(
-            transcript=turn, history=history, order=order,
+            transcript=turn,
+            history=history,
+            order=order,
             system_prompt=_DEMO_SYSTEM_PROMPT,
         )
         order = result.order
         history = result.history
-        print(f"\n--- Seed turn ({scenario.id}) ---\nCaller: {turn}\n"
-              f"Haiku: {result.reply_text}\n"
-              f"Order: {order.model_dump_json(indent=2)}")
+        print(
+            f"\n--- Seed turn ({scenario.id}) ---\nCaller: {turn}\n"
+            f"Haiku: {result.reply_text}\n"
+            f"Order: {order.model_dump_json(indent=2)}"
+        )
 
     correction = scenario.correction_transcript
     result = generate_reply(
-        transcript=correction, history=history, order=order,
+        transcript=correction,
+        history=history,
+        order=order,
         system_prompt=_DEMO_SYSTEM_PROMPT,
     )
     order = result.order
 
-    print(f"\n--- Correction ({scenario.id}) ---\nCaller: {correction}\n"
-          f"Haiku: {result.reply_text}\n"
-          f"Final order: {order.model_dump_json(indent=2)}")
+    print(
+        f"\n--- Correction ({scenario.id}) ---\nCaller: {correction}\n"
+        f"Haiku: {result.reply_text}\n"
+        f"Final order: {order.model_dump_json(indent=2)}"
+    )
 
     scenario.assert_end_state(order)
 
@@ -301,9 +310,11 @@ def test_pickup_delivery_flow(scenario: CorrectionScenario):
         )
         order = result.order
         history = result.history
-        print(f"\n--- Seed turn ({scenario.id}) ---\nCaller: {turn}\n"
-              f"Haiku: {result.reply_text}\n"
-              f"Order: {order.model_dump_json(indent=2)}")
+        print(
+            f"\n--- Seed turn ({scenario.id}) ---\nCaller: {turn}\n"
+            f"Haiku: {result.reply_text}\n"
+            f"Order: {order.model_dump_json(indent=2)}"
+        )
 
     trigger = scenario.correction_transcript
     result = generate_reply(
@@ -314,8 +325,10 @@ def test_pickup_delivery_flow(scenario: CorrectionScenario):
     )
     order = result.order
 
-    print(f"\n--- Trigger ({scenario.id}) ---\nCaller: {trigger}\n"
-          f"Haiku: {result.reply_text}\n"
-          f"Final order: {order.model_dump_json(indent=2)}")
+    print(
+        f"\n--- Trigger ({scenario.id}) ---\nCaller: {trigger}\n"
+        f"Haiku: {result.reply_text}\n"
+        f"Final order: {order.model_dump_json(indent=2)}"
+    )
 
     scenario.assert_end_state(order)

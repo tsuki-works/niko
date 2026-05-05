@@ -35,10 +35,7 @@ class SmsResult(BaseModel):
 def _twilio_client() -> TwilioClient:
     """Construct a Twilio client at call time so tests can patch this."""
     if not settings.twilio_account_sid or not settings.twilio_auth_token:
-        raise SmsError(
-            "Twilio credentials missing — set TWILIO_ACCOUNT_SID and "
-            "TWILIO_AUTH_TOKEN."
-        )
+        raise SmsError("Twilio credentials missing — set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.")
     return TwilioClient(settings.twilio_account_sid, settings.twilio_auth_token)
 
 
@@ -57,10 +54,7 @@ def send_sms(
     key. Raises ``SmsError`` on Twilio failure or missing order.
     """
     if ":" not in idempotency_key:
-        raise SmsError(
-            f"idempotency_key must be 'call_sid:template_name', "
-            f"got {idempotency_key!r}"
-        )
+        raise SmsError(f"idempotency_key must be 'call_sid:template_name', got {idempotency_key!r}")
     call_sid, template_name = idempotency_key.split(":", 1)
 
     order = order_storage.get_order(call_sid, tenant_id)

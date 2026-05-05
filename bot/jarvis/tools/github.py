@@ -21,12 +21,8 @@ def _clamp_n(n: int) -> int:
     return n
 
 
-def build_get_recent_commits_tool(
-    *, github_client: Any, repo: str
-) -> ToolDescriptor:
-    async def get_recent_commits(
-        n: int = 10, branch: str = "master"
-    ) -> list[dict[str, Any]]:
+def build_get_recent_commits_tool(*, github_client: Any, repo: str) -> ToolDescriptor:
+    async def get_recent_commits(n: int = 10, branch: str = "master") -> list[dict[str, Any]]:
         clamped = _clamp_n(n)
         raw = await github_client.get(
             f"/repos/{repo}/commits",
@@ -35,15 +31,9 @@ def build_get_recent_commits_tool(
         return [
             {
                 "sha": (c.get("sha") or "")[:8],
-                "title": (c.get("commit", {}).get("message") or "").split(
-                    "\n", 1
-                )[0],
-                "author": c.get("commit", {})
-                .get("author", {})
-                .get("name"),
-                "date": c.get("commit", {})
-                .get("author", {})
-                .get("date"),
+                "title": (c.get("commit", {}).get("message") or "").split("\n", 1)[0],
+                "author": c.get("commit", {}).get("author", {}).get("name"),
+                "date": c.get("commit", {}).get("author", {}).get("date"),
                 "url": c.get("html_url"),
             }
             for c in (raw or [])
@@ -76,9 +66,7 @@ def build_get_recent_commits_tool(
     )
 
 
-def build_get_pr_tool(
-    *, github_client: Any, repo: str
-) -> ToolDescriptor:
+def build_get_pr_tool(*, github_client: Any, repo: str) -> ToolDescriptor:
     async def get_pr(number: int) -> dict[str, Any]:
         raw = await github_client.get(f"/repos/{repo}/pulls/{number}")
         return {
@@ -113,21 +101,15 @@ def build_get_pr_tool(
     )
 
 
-def build_get_issue_tool(
-    *, github_client: Any, repo: str
-) -> ToolDescriptor:
+def build_get_issue_tool(*, github_client: Any, repo: str) -> ToolDescriptor:
     async def get_issue(number: int) -> dict[str, Any]:
         raw = await github_client.get(f"/repos/{repo}/issues/{number}")
         return {
             "title": raw.get("title"),
             "state": raw.get("state"),
             "body": raw.get("body") or "",
-            "labels": [
-                (lbl or {}).get("name") for lbl in (raw.get("labels") or [])
-            ],
-            "assignees": [
-                (a or {}).get("login") for a in (raw.get("assignees") or [])
-            ],
+            "labels": [(lbl or {}).get("name") for lbl in (raw.get("labels") or [])],
+            "assignees": [(a or {}).get("login") for a in (raw.get("assignees") or [])],
             "url": raw.get("html_url"),
         }
 
@@ -161,9 +143,7 @@ def build_open_issue_tool(
     allowed_set = set(allowed_labels)
     allowed_for_doc = ", ".join(sorted(allowed_set)) or "(none)"
 
-    async def open_issue(
-        title: str, body: str, labels: list[str] | None = None
-    ) -> dict[str, Any]:
+    async def open_issue(title: str, body: str, labels: list[str] | None = None) -> dict[str, Any]:
         requested = list(labels or [])
         accepted = [lbl for lbl in requested if lbl in allowed_set]
         dropped = [lbl for lbl in requested if lbl not in allowed_set]
@@ -208,8 +188,7 @@ def build_open_issue_tool(
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        f"Optional labels. Allowed: {allowed_for_doc}. "
-                        "Other labels are dropped."
+                        f"Optional labels. Allowed: {allowed_for_doc}. Other labels are dropped."
                     ),
                 },
             },

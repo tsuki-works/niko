@@ -37,9 +37,7 @@ def test_health_returns_ok():
 def test_voice_returns_twiml(monkeypatch):
     """Inbound to the demo Twilio number resolves via the MENU fallback
     (Firestore returns None in unit tests) and opens a Media Stream."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     response = client.post(
         "/voice",
         data={

@@ -60,5 +60,7 @@ def test_settings_missing_required_raises(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
     monkeypatch.delenv("DISCORD_GUILD_ID", raising=False)
-    with pytest.raises(Exception):  # pydantic.ValidationError; broad to avoid pinning the import path
+    with pytest.raises(
+        Exception
+    ):  # pydantic.ValidationError; broad to avoid pinning the import path
         Settings()

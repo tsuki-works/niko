@@ -69,7 +69,7 @@ import lameenc
 _MP3_BITRATE_KBPS = 32
 _MP3_QUALITY = 2
 _PCM_SAMPLE_RATE = 8000  # Twilio media is 8 kHz μ-law
-_PCM_CHANNELS = 1        # caller + agent summed to mono in _mix_pcm_streams
+_PCM_CHANNELS = 1  # caller + agent summed to mono in _mix_pcm_streams
 
 
 def _make_encoder() -> "lameenc.Encoder":
@@ -112,6 +112,7 @@ class RecordingUploadSession:
     the pod dies before finalize). Acceptable for v1 since instance
     death during a live WS is rare.
     """
+
     call_sid: str
     restaurant_id: str
     blob_name: str
@@ -207,9 +208,7 @@ def _mix_pcm_streams(inbound: bytes, outbound: bytes) -> bytes:
     return bytes(out)
 
 
-def _upload_blob(
-    *, blob_name: str, mp3_bytes: bytes, retention_days: int
-) -> None:
+def _upload_blob(*, blob_name: str, mp3_bytes: bytes, retention_days: int) -> None:
     """One-shot blob upload with custom_time set for per-tenant retention."""
     bucket = _get_storage_client().bucket(settings.recordings_bucket)
     blob = bucket.blob(blob_name)
@@ -248,9 +247,7 @@ def finalize_recording(
             retention_days=session.retention_days,
         )
     except Exception:
-        logger.exception(
-            "recording: finalize/upload failed call_sid=%s", session.call_sid
-        )
+        logger.exception("recording: finalize/upload failed call_sid=%s", session.call_sid)
         session.broken = True
         return ("", 0)
 
@@ -271,9 +268,7 @@ def delete_recording(*, call_sid: str, restaurant_id: str) -> None:
     try:
         blob.delete()
     except NotFound:
-        logger.info(
-            "recording: delete on missing blob (idempotent) call_sid=%s", call_sid
-        )
+        logger.info("recording: delete on missing blob (idempotent) call_sid=%s", call_sid)
 
 
 def upload_voicemail_from_twilio(
@@ -306,9 +301,7 @@ def upload_voicemail_from_twilio(
     return f"gs://{settings.recordings_bucket}/{blob_name}"
 
 
-def generate_signed_url(
-    *, call_sid: str, restaurant_id: str, ttl_minutes: int = 30
-) -> str:
+def generate_signed_url(*, call_sid: str, restaurant_id: str, ttl_minutes: int = 30) -> str:
     """Return a V4 signed GET URL for the recording blob. TTL defaults
     to 30 minutes — long enough for a typical playback session, short
     enough that a leaked URL ages out fast.
@@ -345,5 +338,3 @@ def generate_signed_url(
         service_account_email=getattr(credentials, "service_account_email", None),
         access_token=getattr(credentials, "token", None),
     )
-
-
