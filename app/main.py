@@ -126,9 +126,7 @@ class RestaurantUpdate(BaseModel):
         if v is None or v == "":
             return v
         if not _E164.match(v):
-            raise ValueError(
-                f"fallback_phone must be E.164 (+1...), got {v!r}"
-            )
+            raise ValueError(f"fallback_phone must be E.164 (+1...), got {v!r}")
         return v
 
 
@@ -288,9 +286,7 @@ def list_orders(
     """
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=400, detail="limit must be 1..200")
-    orders = order_storage.list_recent_orders(
-        restaurant_id=tenant.restaurant_id, limit=limit
-    )
+    orders = order_storage.list_recent_orders(restaurant_id=tenant.restaurant_id, limit=limit)
     return {"orders": [o.model_dump(mode="json") for o in orders]}
 
 
@@ -301,9 +297,7 @@ def _load_tenant_order(call_sid: str, tenant: Tenant) -> Order:
     belongs to a different tenant — both are indistinguishable to the
     caller, which is the desired tenant-isolation property (matches
     the pattern in /dev/calls/{call_sid})."""
-    order = order_storage.get_order(
-        call_sid=call_sid, restaurant_id=tenant.restaurant_id
-    )
+    order = order_storage.get_order(call_sid=call_sid, restaurant_id=tenant.restaurant_id)
     if order is None:
         raise HTTPException(status_code=404, detail="order not found")
     return order
@@ -409,16 +403,13 @@ def dev_list_calls(
     _require_dev_endpoints()
     if limit < 1 or limit > 200:
         raise HTTPException(status_code=400, detail="limit must be 1..200")
-    sessions = call_sessions.list_recent_sessions(
-        restaurant_id=tenant.restaurant_id, limit=limit
-    )
+    sessions = call_sessions.list_recent_sessions(restaurant_id=tenant.restaurant_id, limit=limit)
     return {
         "calls": [
             {
                 "call_sid": s.get("call_sid"),
                 "started_at": _iso(s.get("started_at")),
-                "ended_at": _iso(s.get("ended_at"))
-                or _iso(s.get("last_event_at")),
+                "ended_at": _iso(s.get("ended_at")) or _iso(s.get("last_event_at")),
                 "transcript_count": s.get("transcript_count", 0),
                 "has_error": s.get("has_error", False),
                 "status": s.get("status", "in_progress"),

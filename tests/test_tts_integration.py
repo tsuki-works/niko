@@ -9,6 +9,7 @@ Usage:
 
 Audio is saved to tts_test_output.wav (mulaw 8 kHz, decoded to PCM16).
 """
+
 import base64
 import struct
 from pathlib import Path
@@ -45,6 +46,7 @@ def _mulaw_to_pcm16(mulaw_data: bytes) -> bytes:
 def _save_audio(audio_bytes: bytes) -> Path:
     """Save audio as a WAV by decoding the raw mulaw stream to PCM16."""
     import wave
+
     path = Path("tts_test_output.wav")
     pcm = _mulaw_to_pcm16(audio_bytes)
     with wave.open(str(path), "wb") as wf:
@@ -73,9 +75,7 @@ async def test_speak_returns_audio_chunks(tts_phrase):
         assert event["streamSid"] == "TEST-STREAM-SID"
         assert len(base64.b64decode(event["media"]["payload"])) > 0
 
-    audio_bytes = b"".join(
-        base64.b64decode(e["media"]["payload"]) for e in received
-    )
+    audio_bytes = b"".join(base64.b64decode(e["media"]["payload"]) for e in received)
     output_path = _save_audio(audio_bytes)
 
     print(f"Chunks received : {len(received)}")

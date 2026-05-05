@@ -52,9 +52,7 @@ def persist_on_confirm(order: Order) -> Order:
     """
 
     if order.status is OrderStatus.CANCELLED:
-        raise OrderNotReadyError(
-            f"Cannot confirm order {order.call_sid!r}: status is cancelled"
-        )
+        raise OrderNotReadyError(f"Cannot confirm order {order.call_sid!r}: status is cancelled")
 
     if not order.is_ready_to_confirm():
         raise OrderNotReadyError(
@@ -127,9 +125,7 @@ def _transition(
         )
 
     now = datetime.now(timezone.utc)
-    updated = order.model_copy(
-        update={"status": target, timestamp_field: now}
-    )
+    updated = order.model_copy(update={"status": target, timestamp_field: now})
     order_storage.save_order(updated)
     return updated
 

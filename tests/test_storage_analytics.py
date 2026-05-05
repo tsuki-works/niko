@@ -35,11 +35,7 @@ def _wire_orders(orders: list[Order]) -> None:
         snap.to_dict.return_value = o.model_dump(mode="python")
         snapshots.append(snap)
     (
-        fs.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .where.return_value
-        .stream
+        fs.collection.return_value.document.return_value.collection.return_value.where.return_value.stream
     ).return_value = iter(snapshots)
 
 

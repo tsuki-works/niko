@@ -37,12 +37,7 @@ def _fake_client() -> MagicMock:
 def _order_doc(client: MagicMock):
     """Address the same ``restaurants/{rid}/orders/{call_sid}`` doc the
     storage module addresses."""
-    return (
-        client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-    )
+    return client.collection.return_value.document.return_value.collection.return_value.document.return_value
 
 
 def _pepperoni() -> LineItem:
@@ -137,9 +132,7 @@ def test_persist_on_confirm_is_idempotent_on_already_confirmed_order():
 
     client = _fake_client()
     original_ts = datetime(2026, 4, 25, 12, 0, 0, tzinfo=timezone.utc)
-    order = _ready_pickup_order(
-        status=OrderStatus.CONFIRMED, confirmed_at=original_ts
-    )
+    order = _ready_pickup_order(status=OrderStatus.CONFIRMED, confirmed_at=original_ts)
 
     confirmed = persist_on_confirm(order)
 
@@ -248,6 +241,7 @@ def _confirmed_pickup_order(**overrides) -> Order:
 
 def test_mark_preparing_transitions_confirmed_to_preparing():
     from app.orders.lifecycle import mark_preparing
+
     client = _fake_client()
     order = _confirmed_pickup_order()
 
@@ -262,6 +256,7 @@ def test_mark_preparing_transitions_confirmed_to_preparing():
 
 def test_mark_preparing_rejects_wrong_source_state():
     from app.orders.lifecycle import OrderTransitionError, mark_preparing
+
     _fake_client()
     order = _ready_pickup_order()  # status=IN_PROGRESS
 
@@ -271,11 +266,10 @@ def test_mark_preparing_rejects_wrong_source_state():
 
 def test_mark_preparing_is_idempotent():
     from app.orders.lifecycle import mark_preparing
+
     client = _fake_client()
     original_ts = datetime(2026, 4, 28, 13, 0, 0, tzinfo=timezone.utc)
-    order = _confirmed_pickup_order(
-        status=OrderStatus.PREPARING, preparing_at=original_ts
-    )
+    order = _confirmed_pickup_order(status=OrderStatus.PREPARING, preparing_at=original_ts)
 
     updated = mark_preparing(order)
 
@@ -288,6 +282,7 @@ def test_mark_preparing_is_idempotent():
 
 def test_mark_ready_transitions_preparing_to_ready():
     from app.orders.lifecycle import mark_ready
+
     client = _fake_client()
     order = _confirmed_pickup_order(
         status=OrderStatus.PREPARING,
@@ -303,6 +298,7 @@ def test_mark_ready_transitions_preparing_to_ready():
 
 def test_mark_ready_rejects_wrong_source_state():
     from app.orders.lifecycle import OrderTransitionError, mark_ready
+
     _fake_client()
     order = _confirmed_pickup_order()  # status=CONFIRMED, not PREPARING
 
@@ -312,11 +308,10 @@ def test_mark_ready_rejects_wrong_source_state():
 
 def test_mark_ready_is_idempotent():
     from app.orders.lifecycle import mark_ready
+
     client = _fake_client()
     original_ts = datetime(2026, 4, 28, 13, 30, 0, tzinfo=timezone.utc)
-    order = _confirmed_pickup_order(
-        status=OrderStatus.READY, ready_at=original_ts
-    )
+    order = _confirmed_pickup_order(status=OrderStatus.READY, ready_at=original_ts)
 
     updated = mark_ready(order)
 
@@ -329,6 +324,7 @@ def test_mark_ready_is_idempotent():
 
 def test_mark_completed_transitions_ready_to_completed():
     from app.orders.lifecycle import mark_completed
+
     client = _fake_client()
     order = _confirmed_pickup_order(
         status=OrderStatus.READY,
@@ -344,6 +340,7 @@ def test_mark_completed_transitions_ready_to_completed():
 
 def test_mark_completed_rejects_wrong_source_state():
     from app.orders.lifecycle import OrderTransitionError, mark_completed
+
     _fake_client()
     order = _confirmed_pickup_order()  # status=CONFIRMED, not READY
 
@@ -353,11 +350,10 @@ def test_mark_completed_rejects_wrong_source_state():
 
 def test_mark_completed_is_idempotent():
     from app.orders.lifecycle import mark_completed
+
     client = _fake_client()
     original_ts = datetime(2026, 4, 28, 14, 0, 0, tzinfo=timezone.utc)
-    order = _confirmed_pickup_order(
-        status=OrderStatus.COMPLETED, completed_at=original_ts
-    )
+    order = _confirmed_pickup_order(status=OrderStatus.COMPLETED, completed_at=original_ts)
 
     updated = mark_completed(order)
 
@@ -370,6 +366,7 @@ def test_mark_completed_is_idempotent():
 
 def test_cancel_order_transitions_from_in_progress():
     from app.orders.lifecycle import cancel_order
+
     client = _fake_client()
     order = _ready_pickup_order()  # status=IN_PROGRESS
 
@@ -382,6 +379,7 @@ def test_cancel_order_transitions_from_in_progress():
 
 def test_cancel_order_transitions_from_preparing():
     from app.orders.lifecycle import cancel_order
+
     _fake_client()
     order = _confirmed_pickup_order(
         status=OrderStatus.PREPARING,
@@ -397,6 +395,7 @@ def test_cancel_order_transitions_from_preparing():
 
 def test_cancel_order_rejects_already_completed_order():
     from app.orders.lifecycle import OrderTransitionError, cancel_order
+
     _fake_client()
     order = _confirmed_pickup_order(
         status=OrderStatus.COMPLETED,
@@ -409,11 +408,10 @@ def test_cancel_order_rejects_already_completed_order():
 
 def test_cancel_order_is_idempotent():
     from app.orders.lifecycle import cancel_order
+
     client = _fake_client()
     original_ts = datetime(2026, 4, 28, 13, 0, 0, tzinfo=timezone.utc)
-    order = _confirmed_pickup_order(
-        status=OrderStatus.CANCELLED, cancelled_at=original_ts
-    )
+    order = _confirmed_pickup_order(status=OrderStatus.CANCELLED, cancelled_at=original_ts)
 
     updated = cancel_order(order)
 
@@ -429,6 +427,7 @@ def test_cancel_order_is_idempotent():
 def test_persist_on_confirm_sends_order_confirmation_sms():
     """After Firestore write, persist_on_confirm fires the SMS."""
     from unittest.mock import patch
+
     _fake_client()
     order = _ready_pickup_order(caller_phone="+15551234567")
 
@@ -447,6 +446,7 @@ def test_persist_on_confirm_skips_sms_when_no_caller_phone():
     """An order without caller_phone (rare — the call had bad caller ID)
     is still confirmable; we just don't send a confirmation SMS."""
     from unittest.mock import patch
+
     _fake_client()
     order = _ready_pickup_order(caller_phone=None)
 
@@ -462,6 +462,7 @@ def test_persist_on_confirm_swallows_sms_errors():
     from unittest.mock import patch
 
     from app.sms.exceptions import SmsError
+
     _fake_client()
     order = _ready_pickup_order(caller_phone="+15551234567")
 
@@ -475,6 +476,7 @@ def test_persist_on_confirm_swallows_non_sms_errors_too():
     """Defensive: even non-SmsError raised by send_sms (or by the
     template renderer) must not roll back the order."""
     from unittest.mock import patch
+
     _fake_client()
     order = _ready_pickup_order(caller_phone="+15551234567")
 

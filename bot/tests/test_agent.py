@@ -131,9 +131,7 @@ async def test_respond_dispatches_tool_and_loops():
     # First response: model emits a tool_use block (no text).
     final1 = FakeMessage(
         content=[
-            FakeToolUseBlock(
-                type="tool_use", id="tu_1", name="ping", input={"x": 1}
-            ),
+            FakeToolUseBlock(type="tool_use", id="tu_1", name="ping", input={"x": 1}),
         ]
     )
     # Second response: model emits the final text answer.
@@ -214,11 +212,7 @@ async def test_respond_aborts_at_max_tool_steps():
         return {"ok": True}
 
     reg = ToolRegistry()
-    reg.register(
-        ToolDescriptor(
-            name="ping", description="d", input_schema={}, fn=ping
-        )
-    )
+    reg.register(ToolDescriptor(name="ping", description="d", input_schema={}, fn=ping))
 
     chunks = []
     async for delta in respond(
@@ -241,11 +235,7 @@ async def test_respond_handles_unknown_tool_name():
     """If the model invents a tool name, the registry returns an error
     JSON and the loop continues; the model gets a chance to recover."""
     final1 = FakeMessage(
-        content=[
-            FakeToolUseBlock(
-                type="tool_use", id="tu_1", name="nope", input={}
-            )
-        ]
+        content=[FakeToolUseBlock(type="tool_use", id="tu_1", name="nope", input={})]
     )
     final2 = FakeMessage(content=[FakeTextBlock(type="text", text="sorry")])
     client, calls = _make_anthropic_with_responses(
@@ -297,9 +287,7 @@ async def test_respond_handles_text_and_tool_in_same_response():
     final1 = FakeMessage(
         content=[
             FakeTextBlock(type="text", text="checking…"),
-            FakeToolUseBlock(
-                type="tool_use", id="tu_1", name="ping", input={}
-            ),
+            FakeToolUseBlock(type="tool_use", id="tu_1", name="ping", input={}),
         ]
     )
     final2 = FakeMessage(content=[FakeTextBlock(type="text", text="done")])
@@ -314,11 +302,7 @@ async def test_respond_handles_text_and_tool_in_same_response():
         return {"ok": True}
 
     reg = ToolRegistry()
-    reg.register(
-        ToolDescriptor(
-            name="ping", description="d", input_schema={}, fn=ping
-        )
-    )
+    reg.register(ToolDescriptor(name="ping", description="d", input_schema={}, fn=ping))
 
     out = []
     async for delta in respond(

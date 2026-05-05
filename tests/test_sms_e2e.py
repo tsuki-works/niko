@@ -52,12 +52,7 @@ def test_confirm_to_sms_full_path():
     ).model_dump(mode="python")
     snapshot.to_dict.return_value = confirmed_dump
     (
-        fs_client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .get
-        .return_value
+        fs_client.collection.return_value.document.return_value.collection.return_value.document.return_value.get.return_value
     ) = snapshot
 
     with (

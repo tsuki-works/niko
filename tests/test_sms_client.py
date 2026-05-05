@@ -39,12 +39,7 @@ def _fake_storage(order: Order | None) -> MagicMock:
         snapshot.exists = True
         snapshot.to_dict.return_value = order.model_dump(mode="python")
     (
-        client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .get
-        .return_value
+        client.collection.return_value.document.return_value.collection.return_value.document.return_value.get.return_value
     ) = snapshot
     return client
 
@@ -115,7 +110,9 @@ def test_send_sms_short_circuits_when_record_already_exists():
 
     twilio_factory.return_value.messages.create.assert_not_called()
     assert result.sid == "SMexisting"
-    assert result.status == "sent"  # short-circuit returns "sent" since record's presence implies success
+    assert (
+        result.status == "sent"
+    )  # short-circuit returns "sent" since record's presence implies success
 
 
 def test_send_sms_writes_record_back_to_firestore_on_success():
@@ -138,13 +135,7 @@ def test_send_sms_writes_record_back_to_firestore_on_success():
         )
 
     # Confirm the doc was set with the new record under sms_sent
-    set_call = (
-        client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .set
-    )
+    set_call = client.collection.return_value.document.return_value.collection.return_value.document.return_value.set
     set_call.assert_called_once()
     payload = set_call.call_args.args[0]
     assert "order_confirmation" in payload["sms_sent"]

@@ -67,9 +67,7 @@ def _legacy_parent(client: firestore.Client, call_sid: str):
     return client.collection(_LEGACY_COLLECTION).document(call_sid)
 
 
-def _nested_parent(
-    client: firestore.Client, restaurant_id: str, call_sid: str
-):
+def _nested_parent(client: firestore.Client, restaurant_id: str, call_sid: str):
     return (
         client.collection(_RESTAURANTS_COLLECTION)
         .document(restaurant_id)
@@ -166,9 +164,7 @@ def record_event(
         )
 
 
-def list_recent_sessions(
-    restaurant_id: str, limit: int = 50
-) -> list[dict[str, Any]]:
+def list_recent_sessions(restaurant_id: str, limit: int = 50) -> list[dict[str, Any]]:
     """Return one restaurant's parent docs ordered by ``started_at`` desc.
 
     Reads from the nested canonical path. The legacy flat collection is
@@ -185,9 +181,7 @@ def list_recent_sessions(
     return [snap.to_dict() for snap in query.stream()]
 
 
-def get_session_events(
-    call_sid: str, restaurant_id: str
-) -> Optional[list[dict[str, Any]]]:
+def get_session_events(call_sid: str, restaurant_id: str) -> Optional[list[dict[str, Any]]]:
     """Return the timeline of events for one call_sid, oldest-first.
 
     ``None`` when the parent doc doesn't exist (call_sid never tracked).
@@ -248,9 +242,7 @@ def mark_recording_ready(
         nested.update(patch)
         nested.collection(_EVENTS_SUBCOLLECTION).add(event_payload)
     except Exception:
-        logger.exception(
-            "call_sessions: mark_recording_ready failed call_sid=%s", call_sid
-        )
+        logger.exception("call_sessions: mark_recording_ready failed call_sid=%s", call_sid)
 
 
 def mark_recording_deleted(call_sid: str, restaurant_id: str) -> None:
@@ -287,9 +279,7 @@ def mark_recording_deleted(call_sid: str, restaurant_id: str) -> None:
         nested.update(patch)
         nested.collection(_EVENTS_SUBCOLLECTION).add(event_payload)
     except Exception:
-        logger.exception(
-            "call_sessions: mark_recording_deleted failed call_sid=%s", call_sid
-        )
+        logger.exception("call_sessions: mark_recording_deleted failed call_sid=%s", call_sid)
 
 
 def mark_transfer_attempted(
@@ -400,9 +390,7 @@ def update_voicemail_transcript(
         )
 
 
-def get_session(
-    call_sid: str, restaurant_id: str
-) -> Optional[dict[str, Any]]:
+def get_session(call_sid: str, restaurant_id: str) -> Optional[dict[str, Any]]:
     """Return the parent call session doc, or None if it doesn't exist."""
     client = _get_client()
     snap = _nested_parent(client, restaurant_id, call_sid).get()
@@ -429,9 +417,7 @@ def get_session_by_call_sid(call_sid: str) -> Optional[dict[str, Any]]:
             return None
         return snap.to_dict()
     except Exception:
-        logger.exception(
-            "call_sessions: get_session_by_call_sid failed call_sid=%s", call_sid
-        )
+        logger.exception("call_sessions: get_session_by_call_sid failed call_sid=%s", call_sid)
         return None
 
 
@@ -458,6 +444,4 @@ def mark_call_ended(
         _legacy_parent(client, call_sid).update(patch)
         _nested_parent(client, restaurant_id, call_sid).update(patch)
     except Exception:
-        logger.exception(
-            "call_sessions: mark_call_ended failed call_sid=%s", call_sid
-        )
+        logger.exception("call_sessions: mark_call_ended failed call_sid=%s", call_sid)

@@ -54,14 +54,10 @@ def _twilio_client() -> TwilioClient:
 
 def _search(twilio: TwilioClient, area_code: str, limit: int) -> tuple[str, list]:
     """Return (country, numbers). Try CA first, fall back to US."""
-    available = twilio.available_phone_numbers("CA").local.list(
-        area_code=area_code, limit=limit
-    )
+    available = twilio.available_phone_numbers("CA").local.list(area_code=area_code, limit=limit)
     if available:
         return "CA", available
-    available = twilio.available_phone_numbers("US").local.list(
-        area_code=area_code, limit=limit
-    )
+    available = twilio.available_phone_numbers("US").local.list(area_code=area_code, limit=limit)
     return "US", available
 
 
@@ -109,12 +105,8 @@ def main() -> int:
         region = getattr(n, "region", None) or ""
         loc = f" ({locality}, {region})" if locality or region else ""
         logger.info("  %d. %s — %s%s", idx, n.phone_number, n.friendly_name, loc)
-    logger.info(
-        "\nTo provision with a specific number, pass it to provision_restaurant:"
-    )
-    logger.info(
-        "  python -m scripts.provision_restaurant ... --phone-number <E.164>"
-    )
+    logger.info("\nTo provision with a specific number, pass it to provision_restaurant:")
+    logger.info("  python -m scripts.provision_restaurant ... --phone-number <E.164>")
     return 0
 
 

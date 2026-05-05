@@ -29,12 +29,10 @@ def _assert_delivery_address_complete(final: Order) -> None:
     assert final.delivery_address is not None, "Expected an address"
     addr_lower = final.delivery_address.lower()
     assert "14" in addr_lower, (
-        f"Expected captured address to contain '14'; got "
-        f"{final.delivery_address!r}"
+        f"Expected captured address to contain '14'; got {final.delivery_address!r}"
     )
     assert "spadina" in addr_lower, (
-        f"Expected captured address to contain 'Spadina'; got "
-        f"{final.delivery_address!r}"
+        f"Expected captured address to contain 'Spadina'; got {final.delivery_address!r}"
     )
 
 
@@ -42,17 +40,13 @@ def _assert_uhh_then_real(final: Order) -> None:
     assert final.order_type is OrderType.DELIVERY, (
         f"Expected order_type=delivery; got {final.order_type}"
     )
-    assert final.delivery_address is not None, (
-        "Expected an address after the re-ask"
-    )
+    assert final.delivery_address is not None, "Expected an address after the re-ask"
     addr_lower = final.delivery_address.lower()
     assert "uhh" not in addr_lower, (
-        f"'uhh' should have been rejected and replaced; got "
-        f"{final.delivery_address!r}"
+        f"'uhh' should have been rejected and replaced; got {final.delivery_address!r}"
     )
     assert "14" in addr_lower, (
-        f"Expected the corrected address to contain '14'; got "
-        f"{final.delivery_address!r}"
+        f"Expected the corrected address to contain '14'; got {final.delivery_address!r}"
     )
 
 
@@ -61,8 +55,7 @@ def _assert_pickup_only_soft_pivot(final: Order) -> None:
         f"Expected order_type=pickup; got {final.order_type}"
     )
     assert final.delivery_address in (None, ""), (
-        f"Expected no delivery_address on pickup-only flow; got "
-        f"{final.delivery_address!r}"
+        f"Expected no delivery_address on pickup-only flow; got {final.delivery_address!r}"
     )
 
 
@@ -73,9 +66,7 @@ SCENARIOS: list[CorrectionScenario] = [
     CorrectionScenario(
         id="delivery_address_complete",
         initial_turns=[],
-        correction_transcript=(
-            "I'd like a large margherita for delivery to 14 Spadina Avenue."
-        ),
+        correction_transcript=("I'd like a large margherita for delivery to 14 Spadina Avenue."),
         assert_end_state=_assert_delivery_address_complete,
     ),
     CorrectionScenario(

@@ -41,9 +41,7 @@ async def test_returns_in_progress_items():
         }
     }
     gh = _gh_with_response(data)
-    desc = build_get_current_sprint_tool(
-        github_client=gh, project_id="PVT_x"
-    )
+    desc = build_get_current_sprint_tool(github_client=gh, project_id="PVT_x")
     out = await desc.fn()
     assert out["selected_by"] == "in_progress"
     assert len(out["items"]) == 1
@@ -90,9 +88,7 @@ async def test_falls_back_to_lowest_open_phase_when_none_in_progress():
         }
     }
     gh = _gh_with_response(data)
-    desc = build_get_current_sprint_tool(
-        github_client=gh, project_id="PVT_x"
-    )
+    desc = build_get_current_sprint_tool(github_client=gh, project_id="PVT_x")
     out = await desc.fn()
     assert out["selected_by"] == "lowest_open_phase"
     titles = [item["title"] for item in out["items"]]
@@ -102,9 +98,7 @@ async def test_falls_back_to_lowest_open_phase_when_none_in_progress():
 
 async def test_handles_empty_board():
     gh = _gh_with_response({"node": {"items": {"nodes": []}}})
-    desc = build_get_current_sprint_tool(
-        github_client=gh, project_id="PVT_x"
-    )
+    desc = build_get_current_sprint_tool(github_client=gh, project_id="PVT_x")
     out = await desc.fn()
     assert out["selected_by"] == "empty"
     assert out["items"] == []
@@ -112,9 +106,7 @@ async def test_handles_empty_board():
 
 async def test_descriptor_metadata():
     gh = _gh_with_response({"node": {"items": {"nodes": []}}})
-    desc = build_get_current_sprint_tool(
-        github_client=gh, project_id="PVT_x"
-    )
+    desc = build_get_current_sprint_tool(github_client=gh, project_id="PVT_x")
     assert desc.name == "get_current_sprint"
     assert "sprint" in desc.description.lower()
     # No required input — the tool takes no args.

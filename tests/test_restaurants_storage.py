@@ -90,29 +90,19 @@ def test_get_restaurant_caches_within_ttl():
 def test_get_restaurant_by_twilio_phone_returns_doc():
     client = _fake_client()
     snap = _fake_doc(_restaurant_payload())
-    query = (
-        client.collection.return_value
-        .where.return_value
-        .limit.return_value
-    )
+    query = client.collection.return_value.where.return_value.limit.return_value
     query.stream.return_value = iter([snap])
 
     result = storage.get_restaurant_by_twilio_phone("+16479058093")
 
     assert result is not None
     assert result.id == "niko-pizza-kitchen"
-    client.collection.return_value.where.assert_called_with(
-        "twilio_phone", "==", "+16479058093"
-    )
+    client.collection.return_value.where.assert_called_with("twilio_phone", "==", "+16479058093")
 
 
 def test_get_restaurant_by_twilio_phone_returns_none_when_no_match():
     client = _fake_client()
-    query = (
-        client.collection.return_value
-        .where.return_value
-        .limit.return_value
-    )
+    query = client.collection.return_value.where.return_value.limit.return_value
     query.stream.return_value = iter([])
 
     assert storage.get_restaurant_by_twilio_phone("+19990000000") is None
@@ -176,8 +166,8 @@ def test_get_restaurant_returns_none_when_firestore_raises(caplog):
     """A transient Firestore error must not crash the call flow — the
     router treats ``None`` as a fallback signal."""
     client = _fake_client()
-    client.collection.return_value.document.return_value.get.side_effect = (
-        RuntimeError("firestore unavailable")
+    client.collection.return_value.document.return_value.get.side_effect = RuntimeError(
+        "firestore unavailable"
     )
 
     with caplog.at_level("ERROR"):
@@ -216,8 +206,13 @@ def test_restaurant_recording_retention_default_is_90():
     from app.restaurants.models import Restaurant
 
     r = Restaurant(
-        id="x", name="X", display_phone="+1", twilio_phone="+1",
-        address="a", hours="h", menu={"pizzas": [], "sides": [], "drinks": []},
+        id="x",
+        name="X",
+        display_phone="+1",
+        twilio_phone="+1",
+        address="a",
+        hours="h",
+        menu={"pizzas": [], "sides": [], "drinks": []},
     )
     assert r.recording_retention_days == 90
 
@@ -226,8 +221,12 @@ def test_restaurant_recording_retention_accepts_override():
     from app.restaurants.models import Restaurant
 
     r = Restaurant(
-        id="x", name="X", display_phone="+1", twilio_phone="+1",
-        address="a", hours="h",
+        id="x",
+        name="X",
+        display_phone="+1",
+        twilio_phone="+1",
+        address="a",
+        hours="h",
         menu={"pizzas": [], "sides": [], "drinks": []},
         recording_retention_days=30,
     )
@@ -242,8 +241,12 @@ def test_restaurant_recording_retention_rejects_zero_or_negative():
 
     with pytest.raises(ValidationError):
         Restaurant(
-            id="x", name="X", display_phone="+1", twilio_phone="+1",
-            address="a", hours="h",
+            id="x",
+            name="X",
+            display_phone="+1",
+            twilio_phone="+1",
+            address="a",
+            hours="h",
             menu={"pizzas": [], "sides": [], "drinks": []},
             recording_retention_days=0,
         )
@@ -280,7 +283,11 @@ def test_restaurant_has_optional_hours_structured_and_fallback_phone():
         sun=DayHours(open="11:00", close="22:00", closed=True),
     )
     full = Restaurant.model_validate(
-        {**legacy_doc, "hours_structured": structured.model_dump(), "fallback_phone": "+15559999999"},
+        {
+            **legacy_doc,
+            "hours_structured": structured.model_dump(),
+            "fallback_phone": "+15559999999",
+        },
     )
     assert full.hours_structured is not None
     assert full.hours_structured.sun.closed is True

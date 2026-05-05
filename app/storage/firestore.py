@@ -78,9 +78,7 @@ def save_order(order: Order) -> str:
 
     client = _get_client()
     payload = order.model_dump(mode="python")
-    _orders_collection(client, order.restaurant_id).document(order.call_sid).set(
-        payload
-    )
+    _orders_collection(client, order.restaurant_id).document(order.call_sid).set(payload)
     return order.call_sid
 
 
@@ -92,17 +90,13 @@ def get_order(call_sid: str, restaurant_id: str) -> Optional[Order]:
     """
 
     client = _get_client()
-    snapshot = (
-        _orders_collection(client, restaurant_id).document(call_sid).get()
-    )
+    snapshot = _orders_collection(client, restaurant_id).document(call_sid).get()
     if not snapshot.exists:
         return None
     return Order.model_validate(snapshot.to_dict())
 
 
-def list_recent_orders(
-    restaurant_id: str, limit: int = 50
-) -> list[Order]:
+def list_recent_orders(restaurant_id: str, limit: int = 50) -> list[Order]:
     """Return one restaurant's recent orders, newest-first, up to ``limit``."""
 
     client = _get_client()

@@ -32,9 +32,7 @@ def test_limit_blocks_after_max():
 def test_old_entries_drop_when_window_passes():
     """Inject a clock so we can travel forward without sleeping."""
     now = [0.0]
-    rl = InMemoryRateLimiter(
-        max_per_window=2, window_seconds=10.0, clock=lambda: now[0]
-    )
+    rl = InMemoryRateLimiter(max_per_window=2, window_seconds=10.0, clock=lambda: now[0])
     assert rl.check_and_record(user_id=1) is True
     assert rl.check_and_record(user_id=1) is True
     assert rl.check_and_record(user_id=1) is False  # at limit

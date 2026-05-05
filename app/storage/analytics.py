@@ -37,9 +37,7 @@ def _window(now: datetime | None = None) -> _Window:
     # Compute "today" boundary in the restaurant's local timezone, then
     # convert back to UTC for the Firestore query.
     local_now = now.astimezone(_LOCAL_TZ)
-    local_today_start = local_now.replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    local_today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start_utc = local_today_start.astimezone(timezone.utc)
     return _Window(
         today_start=today_start_utc,
@@ -85,8 +83,10 @@ def summarize_orders(*, restaurant_id: str) -> OrderSummary:
         # opportunities — confirmed, preparing, ready, completed.
         # Excludes IN_PROGRESS (call live) and CANCELLED (no revenue).
         aov_orders = [
-            o for o in seven_day
-            if o.status in {
+            o
+            for o in seven_day
+            if o.status
+            in {
                 OrderStatus.CONFIRMED,
                 OrderStatus.PREPARING,
                 OrderStatus.READY,
@@ -94,14 +94,10 @@ def summarize_orders(*, restaurant_id: str) -> OrderSummary:
             }
         ]
         if aov_orders:
-            aov = round(
-                sum(o.subtotal for o in aov_orders) / len(aov_orders), 2
-            )
+            aov = round(sum(o.subtotal for o in aov_orders) / len(aov_orders), 2)
         else:
             aov = 0.0
-        completed = sum(
-            1 for o in seven_day if o.status is OrderStatus.COMPLETED
-        )
+        completed = sum(1 for o in seven_day if o.status is OrderStatus.COMPLETED)
         # Denominator: orders that had a chance to complete — i.e. anything
         # past the in-progress (call-live) state. Cancelled orders count
         # against the rate.
@@ -117,9 +113,7 @@ def summarize_orders(*, restaurant_id: str) -> OrderSummary:
                 OrderStatus.CANCELLED,
             }
         )
-        completion_rate = (
-            completed / had_chance_to_complete if had_chance_to_complete else 0.0
-        )
+        completion_rate = completed / had_chance_to_complete if had_chance_to_complete else 0.0
     else:
         aov = 0.0
         completion_rate = 0.0

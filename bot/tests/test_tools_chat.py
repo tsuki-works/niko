@@ -82,9 +82,7 @@ async def test_resolves_channel_by_name_and_returns_messages():
 
 
 async def test_resolves_channel_with_hash_prefix():
-    chan = FakeTextChannel(
-        channel_id=11, name="blockers", messages=[FakeMessage(content="x")]
-    )
+    chan = FakeTextChannel(channel_id=11, name="blockers", messages=[FakeMessage(content="x")])
     guild = FakeGuild(text_channels=[chan])
     desc = build_get_recent_messages_tool()
     out = await desc.fn(channel="#blockers", n=5, context=_ctx_with_guild(guild))
@@ -92,9 +90,7 @@ async def test_resolves_channel_with_hash_prefix():
 
 
 async def test_resolves_channel_by_numeric_id():
-    chan = FakeTextChannel(
-        channel_id=99, name="alerts", messages=[FakeMessage(content="a")]
-    )
+    chan = FakeTextChannel(channel_id=99, name="alerts", messages=[FakeMessage(content="a")])
     guild = FakeGuild(text_channels=[chan])
     desc = build_get_recent_messages_tool()
     out = await desc.fn(channel="99", n=5, context=_ctx_with_guild(guild))
@@ -108,9 +104,7 @@ async def test_returns_error_when_no_guild():
 
 
 async def test_returns_error_when_channel_not_found():
-    chan = FakeTextChannel(
-        channel_id=10, name="general", messages=[FakeMessage(content="x")]
-    )
+    chan = FakeTextChannel(channel_id=10, name="general", messages=[FakeMessage(content="x")])
     guild = FakeGuild(text_channels=[chan])
     desc = build_get_recent_messages_tool()
     out = await desc.fn(channel="ghost", n=5, context=_ctx_with_guild(guild))
@@ -124,14 +118,10 @@ async def test_clamps_n_to_safe_range():
     guild = FakeGuild(text_channels=[chan])
     desc = build_get_recent_messages_tool()
     # n=10000 should clamp to 100 (max)
-    out_max = await desc.fn(
-        channel="general", n=10000, context=_ctx_with_guild(guild)
-    )
+    out_max = await desc.fn(channel="general", n=10000, context=_ctx_with_guild(guild))
     assert len(out_max) == 100
     # n=0 should clamp to 1
-    out_min = await desc.fn(
-        channel="general", n=0, context=_ctx_with_guild(guild)
-    )
+    out_min = await desc.fn(channel="general", n=0, context=_ctx_with_guild(guild))
     assert len(out_min) == 1
 
 

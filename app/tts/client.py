@@ -47,8 +47,7 @@ def _api_key() -> str:
     key = settings.deepgram_api_key
     if not key:
         raise RuntimeError(
-            "DEEPGRAM_API_KEY not set — cannot call TTS. "
-            "Fetch credentials via /shared-creds."
+            "DEEPGRAM_API_KEY not set — cannot call TTS. Fetch credentials via /shared-creds."
         )
     return key
 
@@ -110,9 +109,7 @@ async def speak(
     _client = client if client is not None else _get_client()
     first_byte_fired = False
 
-    async with _client.stream(
-        "POST", url, headers=headers, params=params, json=body
-    ) as response:
+    async with _client.stream("POST", url, headers=headers, params=params, json=body) as response:
         if response.status_code != 200:
             error_body = await response.aread()
             logger.error(
@@ -122,8 +119,7 @@ async def speak(
                 error_body.decode(errors="replace")[:200],
             )
             raise RuntimeError(
-                f"Deepgram returned {response.status_code}: "
-                f"{error_body.decode(errors='replace')}"
+                f"Deepgram returned {response.status_code}: {error_body.decode(errors='replace')}"
             )
 
         async for chunk in response.aiter_bytes():
@@ -134,9 +130,7 @@ async def speak(
                 try:
                     on_first_byte()
                 except Exception:
-                    logger.exception(
-                        "tts: on_first_byte callback raised stream_sid=%s", stream_sid
-                    )
+                    logger.exception("tts: on_first_byte callback raised stream_sid=%s", stream_sid)
             payload = base64.b64encode(chunk).decode()
             try:
                 await websocket.send_json(
@@ -152,12 +146,10 @@ async def speak(
             if recording_session is not None:
                 try:
                     from app.storage import recordings as _recordings
-                    _recordings.append_chunks(
-                        recording_session, b"", chunk
-                    )
+
+                    _recordings.append_chunks(recording_session, b"", chunk)
                 except Exception:
                     logger.exception(
-                        "tts: failed to feed chunk into recording session "
-                        "stream_sid=%s",
+                        "tts: failed to feed chunk into recording session stream_sid=%s",
                         stream_sid,
                     )
