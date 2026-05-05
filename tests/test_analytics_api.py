@@ -5,9 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth.dependency import current_tenant, Tenant
+from app.auth.dependency import Tenant, current_tenant
 from app.main import app
-from app.storage import analytics, firestore as order_storage
+from app.storage import analytics
+from app.storage import firestore as order_storage
 
 
 @pytest.fixture

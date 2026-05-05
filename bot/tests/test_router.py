@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
 import pytest
-
 from jarvis.router import RoutingDecision, classify_incoming
 
 

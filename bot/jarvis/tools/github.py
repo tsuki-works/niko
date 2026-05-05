@@ -123,7 +123,7 @@ def build_get_issue_tool(
             "state": raw.get("state"),
             "body": raw.get("body") or "",
             "labels": [
-                (l or {}).get("name") for l in (raw.get("labels") or [])
+                (lbl or {}).get("name") for lbl in (raw.get("labels") or [])
             ],
             "assignees": [
                 (a or {}).get("login") for a in (raw.get("assignees") or [])
@@ -165,8 +165,8 @@ def build_open_issue_tool(
         title: str, body: str, labels: list[str] | None = None
     ) -> dict[str, Any]:
         requested = list(labels or [])
-        accepted = [l for l in requested if l in allowed_set]
-        dropped = [l for l in requested if l not in allowed_set]
+        accepted = [lbl for lbl in requested if lbl in allowed_set]
+        dropped = [lbl for lbl in requested if lbl not in allowed_set]
 
         payload: dict[str, Any] = {"title": title, "body": body}
         if accepted:

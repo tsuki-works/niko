@@ -4,9 +4,9 @@ Each function is a pure check that returns True if its trigger condition
 is met for a given snapshot of call state."""
 
 from app.telephony.transfer_triggers import (
+    TransferReason,
     detect_human_intent_in_text,
     should_trigger_transfer,
-    TransferReason,
 )
 
 

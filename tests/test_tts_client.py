@@ -11,7 +11,6 @@ from starlette.websockets import WebSocketDisconnect
 import app.tts.client as tts_module
 from app.tts.client import speak
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

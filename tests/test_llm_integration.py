@@ -23,6 +23,8 @@ from app.orders.models import Order
 from app.restaurants.models import Restaurant
 from tests.fixtures.correction_transcripts import (
     SCENARIOS as CORRECTION_SCENARIOS,
+)
+from tests.fixtures.correction_transcripts import (
     CorrectionScenario,
 )
 from tests.fixtures.delivery_transcripts import SCENARIOS as DELIVERY_SCENARIOS

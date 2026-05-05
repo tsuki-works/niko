@@ -1436,7 +1436,7 @@ def test_apply_validation_passes_through_explicit_address_clears():
     (e.g. swapping from delivery to pickup), that's a legitimate clear,
     not a rejection. The patch must pass through unchanged with no
     rejection note. Regression guard for the PD-D4 -> PD-D5 fix."""
-    from app.llm.client import _apply_validation, _INVALID_ADDRESS_NOTE
+    from app.llm.client import _INVALID_ADDRESS_NOTE, _apply_validation
 
     # Explicit None passes through, no rejection note.
     cleaned, notes = _apply_validation({
