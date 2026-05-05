@@ -2063,7 +2063,6 @@ def test_open_deepgram_connection_uses_nova3(monkeypatch):
     """_open_deepgram_connection passes nova-3-general (or configured model)
     to LiveOptions."""
     import app.telephony.router as router_mod
-    from app.telephony.router import _open_deepgram_connection
 
     captured_options: list = []
 
@@ -2082,8 +2081,7 @@ def test_open_deepgram_connection_uses_nova3(monkeypatch):
 
     monkeypatch.setattr(router_mod, "DeepgramClient", lambda _key: FakeDG())
 
-    import asyncio
-    asyncio.run(_open_deepgram_connection("CAtest", "rid", lambda t: None))
+    asyncio.run(router_mod._open_deepgram_connection("CAtest", "rid", lambda t: None))
 
     assert len(captured_options) == 1
     opts = captured_options[0]
@@ -2100,7 +2098,6 @@ async def test_open_deepgram_connection_includes_menu_keyterms(monkeypatch):
     carries a populated Restaurant — exercises the path _build_keyterms takes
     when given a real menu, so a regression that drops menu items would be caught."""
     import app.telephony.router as router_mod
-    from app.telephony.router import _open_deepgram_connection, _CallState
     from app.restaurants.models import Restaurant
 
     captured_options: list = []
@@ -2139,9 +2136,9 @@ async def test_open_deepgram_connection_includes_menu_keyterms(monkeypatch):
             ],
         },
     )
-    state = _CallState(restaurant=restaurant)
+    state = router_mod._CallState(restaurant=restaurant)
 
-    await _open_deepgram_connection("CAtest", "test-r", lambda t: None, state=state)
+    await router_mod._open_deepgram_connection("CAtest", "test-r", lambda t: None, state=state)
 
     assert len(captured_options) == 1
     opts = captured_options[0]
