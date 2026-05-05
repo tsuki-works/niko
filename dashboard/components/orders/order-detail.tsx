@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ChevronLeft, Play, Radio } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Radio } from 'lucide-react';
 
 import { CallDuration } from '@/components/orders/call-duration';
 import { CancelOrderButton } from '@/components/orders/cancel-order-button';
@@ -7,12 +7,6 @@ import { StatusBadge } from '@/components/orders/status-badge';
 import { TransitionButton } from '@/components/orders/transition-button';
 import { LocalTime } from '@/components/shared/local-time';
 import { Button } from '@/components/ui/button';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { formatCAD } from '@/lib/formatters/money';
 import { formatPhone } from '@/lib/formatters/phone';
 import {
@@ -218,22 +212,15 @@ function CallSidebarCard({ order }: { order: Order }) {
         <div className="text-sm text-foreground-muted">
           <CallDuration order={order} />
         </div>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled
-                aria-label="Recording playback (coming in Phase 2)"
-              >
-                <Play className="mr-1 size-4" />
-                Play
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Recording UI ships in PR 4 (calls)</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <Button variant="ghost" size="sm" asChild>
+          <Link
+            href={`/calls/${encodeURIComponent(order.call_sid)}`}
+            aria-label="Open call detail to play the recording and read the transcript"
+          >
+            Open call
+            <ChevronRight className="ml-1 size-4" aria-hidden />
+          </Link>
+        </Button>
       </div>
     </div>
   );
