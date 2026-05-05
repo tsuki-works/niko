@@ -53,7 +53,7 @@ export default async function DashboardLayout({
         {awaitingNumber ? (
           <div
             role="status"
-            className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-50 px-4 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+            className="flex items-center gap-2 border-b border-status-live/30 bg-status-live-bg px-4 py-2 text-xs text-status-live-fg"
           >
             <CircleAlert className="size-4 shrink-0" aria-hidden />
             <span>

@@ -63,79 +63,101 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
   }
 
   return (
-    <section className="flex flex-col gap-4">
-      <h3 className="text-base font-medium">Restaurant info</h3>
-      <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="restaurant-name">Restaurant name</Label>
-          <Input
-            id="restaurant-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
+    <section className="rounded-md border border-border-subtle bg-surface-1 p-6">
+      <h3 className="text-md font-medium">Restaurant info</h3>
+      <form className="mt-4 flex flex-col gap-4" onSubmit={handleSubmit}>
+        <Field
+          id="restaurant-name"
+          label="Restaurant name"
+          value={name}
+          onChange={setName}
+        />
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="address">Address</Label>
-          <Input
-            id="address"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-          />
-        </div>
+        <Field
+          id="address"
+          label="Address"
+          value={address}
+          onChange={setAddress}
+        />
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="display-phone">Display number</Label>
-          <Input
-            id="display-phone"
-            value={displayPhone}
-            onChange={(e) => setDisplayPhone(e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">
-            What customers dial. Forwards into Niko via your carrier.
-          </p>
-        </div>
+        <Field
+          id="display-phone"
+          label="Display number"
+          value={displayPhone}
+          onChange={setDisplayPhone}
+          helper="What customers dial. Forwards into Niko via your carrier."
+        />
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="twilio-phone">Twilio number</Label>
-          <Input
-            id="twilio-phone"
-            value={restaurant.twilio_phone || '(awaiting)'}
-            readOnly
-            className="bg-muted"
-          />
-          <p className="text-xs text-muted-foreground">
-            Provisioned by Niko — not editable from here.
-          </p>
-        </div>
+        <Field
+          id="twilio-phone"
+          label="Twilio number"
+          value={restaurant.twilio_phone || '(awaiting)'}
+          readOnly
+          helper="Provisioned by Niko — not editable from here."
+        />
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="fallback-phone">Fallback number</Label>
-          <Input
-            id="fallback-phone"
-            value={fallbackPhone}
-            placeholder="+15551234567"
-            onChange={(e) => setFallbackPhone(e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">
-            Niko transfers callers here when the AI hits a snag or the caller
-            asks for a human. Leave blank to skip the transfer attempt and go
-            straight to voicemail.
-          </p>
-        </div>
+        <Field
+          id="fallback-phone"
+          label="Fallback number"
+          value={fallbackPhone}
+          onChange={setFallbackPhone}
+          placeholder="+15551234567"
+          helper="Niko transfers callers here when the AI hits a snag or the caller asks for a human. Leave blank to skip the transfer attempt and go straight to voicemail."
+        />
 
         {error ? (
-          <p className="text-sm text-destructive" role="alert">
+          <p className="text-sm text-status-cancelled" role="alert">
             {error}
           </p>
         ) : null}
 
         <div className="flex justify-end">
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" size="lg" disabled={pending}>
             {pending ? 'Saving…' : 'Save info'}
           </Button>
         </div>
       </form>
     </section>
+  );
+}
+
+function Field({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  helper,
+  readOnly,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange?: (next: string) => void;
+  placeholder?: string;
+  helper?: string;
+  readOnly?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id} className="text-sm text-foreground-muted">
+        {label}
+      </Label>
+      <Input
+        id={id}
+        value={value}
+        readOnly={readOnly}
+        placeholder={placeholder}
+        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+        className={
+          readOnly
+            ? 'cursor-not-allowed text-foreground-muted'
+            : undefined
+        }
+      />
+      {helper ? (
+        <p className="text-sm text-foreground-subtle">{helper}</p>
+      ) : null}
+    </div>
   );
 }

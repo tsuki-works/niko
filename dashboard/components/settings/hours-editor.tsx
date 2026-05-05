@@ -7,15 +7,11 @@ import { updateRestaurantAction } from '@/app/actions/update-restaurant';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import type { DayHours, HoursStructured, Restaurant } from '@/lib/schemas/restaurant';
+import type {
+  DayHours,
+  HoursStructured,
+  Restaurant,
+} from '@/lib/schemas/restaurant';
 
 const DAYS: { key: keyof HoursStructured; label: string }[] = [
   { key: 'mon', label: 'Monday' },
@@ -65,71 +61,68 @@ export function HoursEditor({ restaurant }: { restaurant: Restaurant }) {
   }
 
   return (
-    <section className="flex flex-col gap-4">
-      <h3 className="text-base font-medium">Hours</h3>
-      <p className="text-xs text-muted-foreground">
+    <section className="rounded-md border border-border-subtle bg-surface-1 p-6">
+      <h3 className="text-md font-medium">Hours</h3>
+      <p className="mt-1 text-sm text-foreground-subtle">
         Times are local to the restaurant. Use 24-hour format. Niko reads
         these to callers and routes after-hours calls to voicemail.
       </p>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Day</TableHead>
-            <TableHead>Open</TableHead>
-            <TableHead>Close</TableHead>
-            <TableHead>Closed</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {DAYS.map(({ key, label }) => {
-            const day = hours[key];
-            return (
-              <TableRow key={key}>
-                <TableCell className="font-medium">{label}</TableCell>
-                <TableCell>
-                  <Label htmlFor={`open-${key}`} className="sr-only">
-                    {label} open time
-                  </Label>
-                  <Input
-                    id={`open-${key}`}
-                    type="time"
-                    value={day.open}
-                    disabled={day.closed}
-                    onChange={(e) => update(key, { open: e.target.value })}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Label htmlFor={`close-${key}`} className="sr-only">
-                    {label} close time
-                  </Label>
-                  <Input
-                    id={`close-${key}`}
-                    type="time"
-                    value={day.close}
-                    disabled={day.closed}
-                    onChange={(e) => update(key, { close: e.target.value })}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Label htmlFor={`closed-${key}`} className="sr-only">
-                    {label} closed
-                  </Label>
-                  <input
-                    id={`closed-${key}`}
-                    type="checkbox"
-                    checked={day.closed}
-                    onChange={(e) => update(key, { closed: e.target.checked })}
-                  />
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+      <div className="mt-4 flex flex-col gap-3">
+        {DAYS.map(({ key, label }) => {
+          const day = hours[key];
+          return (
+            <div
+              key={key}
+              className="flex flex-wrap items-center gap-3"
+            >
+              <span className="w-25 shrink-0 text-sm font-medium">
+                {label}
+              </span>
+              <Label htmlFor={`open-${key}`} className="sr-only">
+                {label} open time
+              </Label>
+              <Input
+                id={`open-${key}`}
+                type="time"
+                value={day.open}
+                disabled={day.closed}
+                onChange={(e) => update(key, { open: e.target.value })}
+                className="w-28"
+              />
+              <span className="text-sm text-foreground-muted">to</span>
+              <Label htmlFor={`close-${key}`} className="sr-only">
+                {label} close time
+              </Label>
+              <Input
+                id={`close-${key}`}
+                type="time"
+                value={day.close}
+                disabled={day.closed}
+                onChange={(e) => update(key, { close: e.target.value })}
+                className="w-28"
+              />
+              <label
+                htmlFor={`closed-${key}`}
+                className="ml-auto inline-flex cursor-pointer items-center gap-2 text-sm text-foreground-muted"
+              >
+                <input
+                  id={`closed-${key}`}
+                  type="checkbox"
+                  checked={day.closed}
+                  onChange={(e) => update(key, { closed: e.target.checked })}
+                  aria-label={`${label} closed`}
+                  className="size-4 accent-brand"
+                />
+                Closed
+              </label>
+            </div>
+          );
+        })}
+      </div>
 
-      <div className="flex justify-end">
-        <Button type="button" onClick={handleSave} disabled={pending}>
+      <div className="mt-6 flex justify-end">
+        <Button type="button" size="lg" onClick={handleSave} disabled={pending}>
           {pending ? 'Saving…' : 'Save hours'}
         </Button>
       </div>
