@@ -38,20 +38,11 @@ def _fake_client() -> MagicMock:
 def _orders_doc(client: MagicMock, rid: str = _DEMO_RID, call_sid: str = "CAtest"):
     """Helper to address the same ``restaurants/{rid}/orders/{call_sid}`` doc
     we expect the storage module to address."""
-    return (
-        client.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-    )
+    return client.collection.return_value.document.return_value.collection.return_value.document.return_value
 
 
 def _orders_collection(client: MagicMock, rid: str = _DEMO_RID):
-    return (
-        client.collection.return_value
-        .document.return_value
-        .collection.return_value
-    )
+    return client.collection.return_value.document.return_value.collection.return_value
 
 
 def _pepperoni() -> LineItem:
@@ -80,13 +71,11 @@ def test_save_order_writes_to_nested_path():
     # then .collection("orders"), then .document(call_sid).
     client.collection.assert_called_with("restaurants")
     client.collection.return_value.document.assert_called_with(_DEMO_RID)
+    (client.collection.return_value.document.return_value.collection.assert_called_with("orders"))
     (
-        client.collection.return_value.document.return_value
-        .collection.assert_called_with("orders")
-    )
-    (
-        client.collection.return_value.document.return_value
-        .collection.return_value.document.assert_called_with("CAsave1")
+        client.collection.return_value.document.return_value.collection.return_value.document.assert_called_with(
+            "CAsave1"
+        )
     )
 
     set_call = _orders_doc(client).set
@@ -161,11 +150,7 @@ def test_list_recent_orders_queries_under_restaurant():
     snap2 = MagicMock()
     snap2.to_dict.return_value = {"call_sid": "CA2", "items": []}
 
-    query = (
-        _orders_collection(client)
-        .order_by.return_value
-        .limit.return_value
-    )
+    query = _orders_collection(client).order_by.return_value.limit.return_value
     query.stream.return_value = iter([snap1, snap2])
 
     result = storage.list_recent_orders(restaurant_id=_DEMO_RID, limit=5)

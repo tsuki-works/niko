@@ -48,9 +48,7 @@ class FakeChannel:
     type: str = "text"
     created_thread: FakeThread | None = None
 
-    async def create_thread(
-        self, *, name: str, message: Any | None = None
-    ) -> FakeThread:
+    async def create_thread(self, *, name: str, message: Any | None = None) -> FakeThread:
         # Real discord.py creates a thread off a message with
         # `message.create_thread(name=...)`. The events handler is
         # written against `message.create_thread`, so this fake's
@@ -68,9 +66,7 @@ class FakeMessage:
     content: str = ""
 
     async def create_thread(self, *, name: str) -> FakeThread:
-        thread = FakeThread(
-            id=self.id + 100_000, parent_id=self.channel.id, name=name
-        )
+        thread = FakeThread(id=self.id + 100_000, parent_id=self.channel.id, name=name)
         self.created_thread = thread  # type: ignore[attr-defined]
         return thread
 
@@ -230,9 +226,7 @@ async def test_history_passed_through_to_agent():
 
     captured = {}
 
-    async def capture_agent(
-        *, system_prompt, history, user_message, tool_registry, tool_context
-    ):
+    async def capture_agent(*, system_prompt, history, user_message, tool_registry, tool_context):
         captured["system_prompt"] = system_prompt
         captured["history"] = history
         captured["user_message"] = user_message

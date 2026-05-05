@@ -47,9 +47,7 @@ async def respond(
     If `tool_registry` is None or empty, this is a no-tools call (PR 2
     behavior).
     """
-    messages: list[dict[str, Any]] = list(history) + [
-        {"role": "user", "content": user_message}
-    ]
+    messages: list[dict[str, Any]] = list(history) + [{"role": "user", "content": user_message}]
 
     tools_payload: Optional[list[dict[str, Any]]] = None
     if tool_registry is not None and tool_registry.names():
@@ -76,9 +74,7 @@ async def respond(
                 yield delta
             final = await stream.get_final_message()
 
-        tool_uses = [
-            b for b in final.content if getattr(b, "type", None) == "tool_use"
-        ]
+        tool_uses = [b for b in final.content if getattr(b, "type", None) == "tool_use"]
         if not tool_uses:
             return  # done
 
@@ -108,9 +104,7 @@ async def respond(
                     {
                         "type": "tool_result",
                         "tool_use_id": tu.id,
-                        "content": json.dumps(
-                            {"error": "no tools available"}
-                        ),
+                        "content": json.dumps({"error": "no tools available"}),
                     }
                 )
         else:

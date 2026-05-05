@@ -63,9 +63,7 @@ class ThreadMemory:
         data = snap.to_dict() or {}
         turns = data.get("turns", [])
         # Strip Firestore-internal fields the model doesn't need.
-        return [
-            {"role": t["role"], "content": t["content"]} for t in turns
-        ]
+        return [{"role": t["role"], "content": t["content"]} for t in turns]
 
     async def append_turn(
         self,

@@ -34,11 +34,8 @@ class CorrectionScenario:
 
 def _assert_remove_item(final: Order) -> None:
     names = [i.name.lower() for i in final.items]
-    assert not any("coke" in n for n in names), (
-        f"Coke should be removed; items were {names}"
-    )
-    assert any("margherita" in n or "pepperoni" in n or "veggie" in n
-               for n in names), (
+    assert not any("coke" in n for n in names), f"Coke should be removed; items were {names}"
+    assert any("margherita" in n or "pepperoni" in n or "veggie" in n for n in names), (
         f"At least one pizza should remain; items were {names}"
     )
 
@@ -46,9 +43,7 @@ def _assert_remove_item(final: Order) -> None:
 def _assert_substitute_item(final: Order) -> None:
     names = [i.name.lower() for i in final.items]
     # The substitute landed (calzone present)
-    assert any("calzone" in n for n in names), (
-        f"Calzone should be present; items were {names}"
-    )
+    assert any("calzone" in n for n in names), f"Calzone should be present; items were {names}"
     # The replaced item is gone
     assert not any("margherita" in n for n in names), (
         f"Margherita should be replaced; items were {names}"
@@ -63,9 +58,7 @@ def _assert_quantity_change(final: Order) -> None:
     assert len(final.items) == 1, (
         f"Quantity change must not duplicate the line; got {len(final.items)} items"
     )
-    assert final.items[0].quantity == 2, (
-        f"Expected quantity=2; got {final.items[0].quantity}"
-    )
+    assert final.items[0].quantity == 2, f"Expected quantity=2; got {final.items[0].quantity}"
 
 
 def _assert_size_change(final: Order) -> None:
@@ -87,8 +80,7 @@ def _assert_swap_to_pickup(final: Order) -> None:
         f"Expected order_type=pickup; got {final.order_type}"
     )
     assert final.delivery_address in (None, ""), (
-        f"delivery_address should be cleared on swap-to-pickup; got "
-        f"{final.delivery_address!r}"
+        f"delivery_address should be cleared on swap-to-pickup; got {final.delivery_address!r}"
     )
 
 
@@ -98,12 +90,10 @@ def _assert_address_fix(final: Order) -> None:
     )
     assert final.delivery_address is not None, "Expected an address"
     assert "14" in final.delivery_address, (
-        f"Expected corrected address to contain '14'; got "
-        f"{final.delivery_address!r}"
+        f"Expected corrected address to contain '14'; got {final.delivery_address!r}"
     )
     assert "40" not in final.delivery_address, (
-        f"Old address number '40' should be gone; got "
-        f"{final.delivery_address!r}"
+        f"Old address number '40' should be gone; got {final.delivery_address!r}"
     )
 
 

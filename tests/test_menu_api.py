@@ -137,12 +137,14 @@ def test_post_category_rejects_underscore_prefix(client: TestClient):
 def test_patch_menu_item_409_on_rename_collision(client: TestClient):
     """PATCH that renames to an existing item's name in the same
     category must return 409."""
-    _wire({
-        "pizzas": [
-            {"name": "Margherita", "price": 12.99, "available": True},
-            {"name": "Pepperoni", "price": 15.99, "available": True},
-        ],
-    })
+    _wire(
+        {
+            "pizzas": [
+                {"name": "Margherita", "price": 12.99, "available": True},
+                {"name": "Pepperoni", "price": 15.99, "available": True},
+            ],
+        }
+    )
     resp = client.patch(
         "/restaurants/me/menu/items/pizzas/Margherita",
         json={"new_name": "Pepperoni"},
@@ -155,6 +157,7 @@ def test_post_menu_item_403_for_non_owner(client: TestClient, fake_tenant: Tenan
     import dataclasses
 
     from app.auth.dependency import current_tenant
+
     staff = dataclasses.replace(fake_tenant, role="staff")
     app.dependency_overrides[current_tenant] = lambda: staff
 

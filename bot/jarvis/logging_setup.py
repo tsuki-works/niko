@@ -25,8 +25,6 @@ def configure_logging(level: str = "INFO") -> None:
     has_ours = any(getattr(h, _HANDLER_TAG, False) for h in root.handlers)
     if not has_ours:
         handler = logging.StreamHandler()
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
         setattr(handler, _HANDLER_TAG, True)
         root.addHandler(handler)

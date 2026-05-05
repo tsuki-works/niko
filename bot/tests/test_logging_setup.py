@@ -16,9 +16,7 @@ def test_configure_logging_idempotent():
     configure_logging("INFO")
     configure_logging("INFO")
     tagged = [
-        h
-        for h in logging.getLogger().handlers
-        if getattr(h, "_jarvis_stream_handler", False)
+        h for h in logging.getLogger().handlers if getattr(h, "_jarvis_stream_handler", False)
     ]
     assert len(tagged) == 1
 

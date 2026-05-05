@@ -24,6 +24,7 @@ from jarvis.router import RoutingDecision, classify_incoming
 
 logger = logging.getLogger(__name__)
 
+
 # Type aliases for the injected callables. Spelled as Protocols rather
 # than Callable[...] so they can be async generators (Callable doesn't
 # express the AsyncIterator return shape cleanly).
@@ -40,9 +41,7 @@ class _AgentFn(Protocol):
 
 
 class _StreamWriterFn(Protocol):
-    async def __call__(
-        self, placeholder: Any, chunks: AsyncIterator[str]
-    ) -> str: ...
+    async def __call__(self, placeholder: Any, chunks: AsyncIterator[str]) -> str: ...
 
 
 class _MemoryProto(Protocol):
@@ -54,9 +53,7 @@ class _MemoryProto(Protocol):
         parent_channel_id: str,
         guild_id: str,
     ) -> None: ...
-    async def get_turns(
-        self, thread_id: str
-    ) -> list[dict[str, Any]]: ...
+    async def get_turns(self, thread_id: str) -> list[dict[str, Any]]: ...
     async def append_turn(
         self,
         *,
@@ -107,9 +104,7 @@ class OnMessageHandler:
         # Rate limit BEFORE thread creation — a rate-limited caller
         # shouldn't pollute the channel with empty threads.
         if self._rate_limiter is not None:
-            allowed = self._rate_limiter.check_and_record(
-                user_id=int(message.author.id)
-            )
+            allowed = self._rate_limiter.check_and_record(user_id=int(message.author.id))
             if not allowed:
                 logger.info(
                     "rate-limited user %s in channel %s",
@@ -117,9 +112,7 @@ class OnMessageHandler:
                     message.channel.id,
                 )
                 try:
-                    await message.reply(
-                        "Rate limit reached — try again in a few minutes."
-                    )
+                    await message.reply("Rate limit reached — try again in a few minutes.")
                 except Exception:  # noqa: BLE001 — best-effort notice
                     logger.exception("failed to post rate-limit reply")
                 return

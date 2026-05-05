@@ -8,6 +8,7 @@ write hits BOTH the legacy ``call_sessions/{sid}`` and the nested
 ``restaurants/{rid}/call_sessions/{sid}`` paths. The fake here tracks
 arbitrary path segments so tests can assert both writes landed.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -242,9 +243,7 @@ def test_record_event_appends_to_both_paths(fake_client):
 
 def test_record_event_error_kind_flips_has_error(fake_client):
     call_sessions.init_call_session("CAtest", _DEMO_RID)
-    call_sessions.record_event(
-        "CAtest", _DEMO_RID, kind="error", text="500 from anthropic"
-    )
+    call_sessions.record_event("CAtest", _DEMO_RID, kind="error", text="500 from anthropic")
 
     assert fake_client.docs[_legacy_parent("CAtest")]["has_error"] is True
     assert fake_client.docs[_nested_parent(_DEMO_RID, "CAtest")]["has_error"] is True
@@ -253,9 +252,7 @@ def test_record_event_error_kind_flips_has_error(fake_client):
 def test_mark_call_ended_confirmed_status(fake_client):
     call_sessions.init_call_session("CAconfirmed", _DEMO_RID)
     end = datetime(2026, 4, 25, 22, 5, tzinfo=timezone.utc)
-    call_sessions.mark_call_ended(
-        "CAconfirmed", _DEMO_RID, confirmed=True, ended_at=end
-    )
+    call_sessions.mark_call_ended("CAconfirmed", _DEMO_RID, confirmed=True, ended_at=end)
 
     for path in (_legacy_parent("CAconfirmed"), _nested_parent(_DEMO_RID, "CAconfirmed")):
         doc = fake_client.docs[path]
@@ -325,9 +322,7 @@ def test_record_event_swallows_firestore_exceptions(fake_client):
 
     call_sessions.set_client(BoomClient())
     # No exception escaping is the assertion.
-    call_sessions.record_event(
-        "CAtest", _DEMO_RID, kind="transcript_final", text="hi"
-    )
+    call_sessions.record_event("CAtest", _DEMO_RID, kind="transcript_final", text="hi")
 
 
 def test_mark_recording_deleted_clears_url_and_emits_event(monkeypatch):
@@ -339,14 +334,17 @@ def test_mark_recording_deleted_clears_url_and_emits_event(monkeypatch):
     class FakeDoc:
         def __init__(self):
             self._collection = FakeCollection(events)
+
         def update(self, patch):
             patches.append(patch)
+
         def collection(self, _name):
             return self._collection
 
     class FakeCollection:
         def __init__(self, events):
             self._events = events
+
         def add(self, payload):
             self._events.append(payload)
 
@@ -385,13 +383,7 @@ def test_mark_transfer_attempted_writes_status_to_both_paths():
     )
 
     legacy_update = fs.collection.return_value.document.return_value.update
-    nested_update = (
-        fs.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .update
-    )
+    nested_update = fs.collection.return_value.document.return_value.collection.return_value.document.return_value.update
     assert legacy_update.called
     assert nested_update.called
     payload = legacy_update.call_args.args[0]
@@ -412,13 +404,7 @@ def test_mark_voicemail_left_sets_recording_url_and_transcript():
         transcript=None,
     )
 
-    nested_update = (
-        fs.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .update
-    )
+    nested_update = fs.collection.return_value.document.return_value.collection.return_value.document.return_value.update
     payload = nested_update.call_args.args[0]
     assert payload["voicemail_recording_url"] == "gs://bucket/path.mp3"
     assert payload["voicemail_recording_sid"] == "REabc"
@@ -436,13 +422,7 @@ def test_update_voicemail_transcript_patches_transcript():
     )
 
     legacy_update = fs.collection.return_value.document.return_value.update
-    nested_update = (
-        fs.collection.return_value
-        .document.return_value
-        .collection.return_value
-        .document.return_value
-        .update
-    )
+    nested_update = fs.collection.return_value.document.return_value.collection.return_value.document.return_value.update
     assert legacy_update.called
     assert nested_update.called
     legacy_payload = legacy_update.call_args.args[0]

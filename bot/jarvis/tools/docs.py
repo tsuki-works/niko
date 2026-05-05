@@ -31,9 +31,7 @@ def _snippet(line: str, query_lower: str) -> str:
     return ("…" if start > 0 else "") + snippet + ("…" if end < len(line) else "")
 
 
-def build_search_repo_docs_tool(
-    *, docs_root: Optional[Path]
-) -> ToolDescriptor:
+def build_search_repo_docs_tool(*, docs_root: Optional[Path]) -> ToolDescriptor:
     async def search_repo_docs(query: str) -> list[dict[str, Any]]:
         if not query:
             return []
@@ -50,9 +48,7 @@ def build_search_repo_docs_tool(
                 if q in line.lower():
                     results.append(
                         {
-                            "path": str(
-                                md_path.relative_to(docs_root)
-                            ).replace("\\", "/"),
+                            "path": str(md_path.relative_to(docs_root)).replace("\\", "/"),
                             "snippet": _snippet(line, q),
                         }
                     )

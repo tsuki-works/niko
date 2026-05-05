@@ -178,8 +178,7 @@ def summarize(call_sid: str, events: list[CallEvent]) -> CallSummary:
 def _logging_client():
     if gcp_logging is None:
         raise RuntimeError(
-            "google-cloud-logging is not installed. "
-            "Add it to requirements.txt and redeploy."
+            "google-cloud-logging is not installed. Add it to requirements.txt and redeploy."
         )
     return gcp_logging.Client()
 
@@ -194,9 +193,7 @@ def _build_filter(hours: int) -> str:
     )
 
 
-def fetch_entries(
-    *, hours: int, page_size: int = 1000, client: Any = None
-) -> Iterable[Any]:
+def fetch_entries(*, hours: int, page_size: int = 1000, client: Any = None) -> Iterable[Any]:
     """Pull recent niko service log entries that mention a call_sid.
 
     ``client`` is injectable for tests — pass any object with a
@@ -204,9 +201,7 @@ def fetch_entries(
     """
     log_client = client or _logging_client()
     filter_str = _build_filter(hours)
-    descending = (
-        gcp_logging.DESCENDING if gcp_logging is not None else "timestamp desc"
-    )
+    descending = gcp_logging.DESCENDING if gcp_logging is not None else "timestamp desc"
     return log_client.list_entries(
         filter_=filter_str,
         order_by=descending,

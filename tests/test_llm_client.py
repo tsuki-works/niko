@@ -103,9 +103,7 @@ def test_tool_use_updates_order_in_single_turn():
                 ),
             ]
         ),
-        _fake_response(
-            [FakeBlock(type="text", text="Anything else for you?")]
-        ),
+        _fake_response([FakeBlock(type="text", text="Anything else for you?")]),
     ]
 
     result = generate_reply(
@@ -185,9 +183,7 @@ def test_history_threads_user_and_assistant_turns():
 
     assert result.history[0] == {"role": "user", "content": "one pepperoni please"}
     assert result.history[1]["role"] == "assistant"
-    assert result.history[1]["content"] == [
-        {"type": "text", "text": "Sure, what size?"}
-    ]
+    assert result.history[1]["content"] == [{"type": "text", "text": "Sure, what size?"}]
 
 
 def test_text_plus_tool_use_appends_tool_result_to_history():
@@ -232,7 +228,12 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
             ]
         ),
         _fake_response(
-            [FakeBlock(type="text", text="So that's one large Margarita — your total is nineteen ninety-nine. Sound right?")]
+            [
+                FakeBlock(
+                    type="text",
+                    text="So that's one large Margarita — your total is nineteen ninety-nine. Sound right?",
+                )
+            ]
         ),
     ]
 
@@ -272,7 +273,8 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
     # History must continue with the follow-up assistant message after the tool_result.
     assert followup_assistant_msg is not None, "follow-up assistant message missing from history"
     assert any(
-        b.get("text", "") == "So that's one large Margarita — your total is nineteen ninety-nine. Sound right?"
+        b.get("text", "")
+        == "So that's one large Margarita — your total is nineteen ninety-nine. Sound right?"
         for b in followup_assistant_msg["content"]
     )
 
@@ -333,9 +335,7 @@ def test_tool_result_carries_post_apply_subtotal():
                 ),
             ]
         ),
-        _fake_response(
-            [FakeBlock(type="text", text="Anything else?")]
-        ),
+        _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
     result = generate_reply(
@@ -602,9 +602,7 @@ def test_caller_changes_mind_replaces_items():
                 ),
             ]
         ),
-        _fake_response(
-            [FakeBlock(type="text", text="Anything else?")]
-        ),
+        _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
     result = generate_reply(
@@ -760,11 +758,7 @@ async def test_stream_reply_emits_text_deltas_then_final():
         [
             _FakeAsyncStream(
                 deltas=["Hi, ", "what would you ", "like to order?"],
-                blocks=[
-                    FakeBlock(
-                        type="text", text="Hi, what would you like to order?"
-                    )
-                ],
+                blocks=[FakeBlock(type="text", text="Hi, what would you like to order?")],
             )
         ]
     )
@@ -814,9 +808,7 @@ async def test_stream_reply_applies_tool_use_to_order_state():
                             "status": "in_progress",
                         },
                     ),
-                    FakeBlock(
-                        type="text", text="One medium pepperoni for pickup."
-                    ),
+                    FakeBlock(type="text", text="One medium pepperoni for pickup."),
                 ],
             ),
             _FakeAsyncStream(
@@ -860,11 +852,7 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
             ),
             _FakeAsyncStream(
                 deltas=["Okay, ", "order cancelled."],
-                blocks=[
-                    FakeBlock(
-                        type="text", text="Okay, order cancelled."
-                    )
-                ],
+                blocks=[FakeBlock(type="text", text="Okay, order cancelled.")],
             ),
         ],
         captured_calls,
@@ -959,9 +947,12 @@ async def test_stream_reply_emits_timing_event_before_first_delta():
     assert seen_kinds == ["timing", "delta", "final"]
     assert timing_payload is not None
     # Back-compat fields must still be present (#175).
-    assert {"ttft_seconds", "tool_prefix_seconds", "cache_read_tokens", "cache_creation_tokens"} <= set(
-        timing_payload.keys()
-    )
+    assert {
+        "ttft_seconds",
+        "tool_prefix_seconds",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+    } <= set(timing_payload.keys())
     # New finer fields added in #175.
     assert {"network_prefill_seconds", "decode_seconds"} <= set(timing_payload.keys())
     assert timing_payload["ttft_seconds"] >= 0
@@ -1063,9 +1054,7 @@ def test_modifications_round_trip_into_line_item():
                 ),
             ]
         ),
-        _fake_response(
-            [FakeBlock(type="text", text="Anything else?")]
-        ),
+        _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
     result = generate_reply(
@@ -1150,20 +1139,33 @@ def test_correction_remove_item_drops_it_from_order():
     only the Margherita remains."""
     order = _seed_order_with(
         [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
-            {"name": "Coke", "category": "drinks", "size": None,
-             "quantity": 1, "unit_price": 2.99},
+            {
+                "name": "Margherita",
+                "category": "pizza",
+                "size": "large",
+                "quantity": 1,
+                "unit_price": 19.99,
+            },
+            {"name": "Coke", "category": "drinks", "size": None, "quantity": 1, "unit_price": 2.99},
         ],
         order_type="pickup",
     )
 
     corrected = _apply_update(
         order,
-        {"items": [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
-        ], "order_type": "pickup", "status": "in_progress"},
+        {
+            "items": [
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 19.99,
+                },
+            ],
+            "order_type": "pickup",
+            "status": "in_progress",
+        },
     )
 
     assert [i.name for i in corrected.items] == ["Margherita"]
@@ -1176,18 +1178,32 @@ def test_correction_substitute_item_replaces_not_appends():
     ONE item, not two."""
     order = _seed_order_with(
         [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
+            {
+                "name": "Margherita",
+                "category": "pizza",
+                "size": "large",
+                "quantity": 1,
+                "unit_price": 19.99,
+            },
         ],
         order_type="pickup",
     )
 
     corrected = _apply_update(
         order,
-        {"items": [
-            {"name": "Calzone", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 16.99},
-        ], "order_type": "pickup", "status": "in_progress"},
+        {
+            "items": [
+                {
+                    "name": "Calzone",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 16.99,
+                },
+            ],
+            "order_type": "pickup",
+            "status": "in_progress",
+        },
     )
 
     assert len(corrected.items) == 1
@@ -1200,18 +1216,32 @@ def test_correction_quantity_change_does_not_duplicate_line():
     never two lines for the same item."""
     order = _seed_order_with(
         [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
+            {
+                "name": "Margherita",
+                "category": "pizza",
+                "size": "large",
+                "quantity": 1,
+                "unit_price": 19.99,
+            },
         ],
         order_type="pickup",
     )
 
     corrected = _apply_update(
         order,
-        {"items": [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 2, "unit_price": 19.99},
-        ], "order_type": "pickup", "status": "in_progress"},
+        {
+            "items": [
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 2,
+                    "unit_price": 19.99,
+                },
+            ],
+            "order_type": "pickup",
+            "status": "in_progress",
+        },
     )
 
     assert len(corrected.items) == 1
@@ -1224,18 +1254,32 @@ def test_correction_size_change_swaps_size_and_unit_price():
     new unit_price (the menu's price for the new size)."""
     order = _seed_order_with(
         [
-            {"name": "Margherita", "category": "pizza", "size": "medium",
-             "quantity": 1, "unit_price": 14.99},
+            {
+                "name": "Margherita",
+                "category": "pizza",
+                "size": "medium",
+                "quantity": 1,
+                "unit_price": 14.99,
+            },
         ],
         order_type="pickup",
     )
 
     corrected = _apply_update(
         order,
-        {"items": [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
-        ], "order_type": "pickup", "status": "in_progress"},
+        {
+            "items": [
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 19.99,
+                },
+            ],
+            "order_type": "pickup",
+            "status": "in_progress",
+        },
     )
 
     assert len(corrected.items) == 1
@@ -1249,8 +1293,13 @@ def test_correction_order_type_swap_to_pickup_clears_delivery_address():
     would show a stale address on a pickup order."""
     order = _seed_order_with(
         [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
+            {
+                "name": "Margherita",
+                "category": "pizza",
+                "size": "large",
+                "quantity": 1,
+                "unit_price": 19.99,
+            },
         ],
         order_type="delivery",
         delivery_address="14 Spadina Ave",
@@ -1260,11 +1309,20 @@ def test_correction_order_type_swap_to_pickup_clears_delivery_address():
 
     corrected = _apply_update(
         order,
-        {"items": [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
-        ], "order_type": "pickup", "delivery_address": None,
-         "status": "in_progress"},
+        {
+            "items": [
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 19.99,
+                },
+            ],
+            "order_type": "pickup",
+            "delivery_address": None,
+            "status": "in_progress",
+        },
     )
 
     assert corrected.order_type is OrderType.PICKUP
@@ -1276,8 +1334,13 @@ def test_correction_delivery_address_fix_overwrites_full_value():
     fully-corrected address — not a partial / diff."""
     order = _seed_order_with(
         [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
+            {
+                "name": "Margherita",
+                "category": "pizza",
+                "size": "large",
+                "quantity": 1,
+                "unit_price": 19.99,
+            },
         ],
         order_type="delivery",
         delivery_address="40 Main St",
@@ -1285,12 +1348,20 @@ def test_correction_delivery_address_fix_overwrites_full_value():
 
     corrected = _apply_update(
         order,
-        {"items": [
-            {"name": "Margherita", "category": "pizza", "size": "large",
-             "quantity": 1, "unit_price": 19.99},
-        ], "order_type": "delivery",
-         "delivery_address": "14 Main St",
-         "status": "in_progress"},
+        {
+            "items": [
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 19.99,
+                },
+            ],
+            "order_type": "delivery",
+            "delivery_address": "14 Main St",
+            "status": "in_progress",
+        },
     )
 
     assert corrected.delivery_address == "14 Main St"
@@ -1308,8 +1379,13 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
         order,
         {
             "items": [
-                {"name": "Margherita", "category": "pizza", "size": "large",
-                 "quantity": 1, "unit_price": 19.99},
+                {
+                    "name": "Margherita",
+                    "category": "pizza",
+                    "size": "large",
+                    "quantity": 1,
+                    "unit_price": 19.99,
+                },
             ],
             "order_type": "delivery",
             "delivery_address": "14 Spadina Ave",
@@ -1329,8 +1405,13 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
                     name="update_order",
                     input={
                         "items": [
-                            {"name": "Margherita", "category": "pizza",
-                             "size": "large", "quantity": 1, "unit_price": 19.99},
+                            {
+                                "name": "Margherita",
+                                "category": "pizza",
+                                "size": "large",
+                                "quantity": 1,
+                                "unit_price": 19.99,
+                            },
                         ],
                         "order_type": "delivery",
                         "delivery_address": "uhh",
@@ -1339,9 +1420,7 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
                 ),
             ]
         ),
-        _fake_response(
-            [FakeBlock(type="text", text="Could you give me the full street address?")]
-        ),
+        _fake_response([FakeBlock(type="text", text="Could you give me the full street address?")]),
     ]
 
     result = generate_reply(
@@ -1439,12 +1518,14 @@ def test_apply_validation_passes_through_explicit_address_clears():
     from app.llm.client import _INVALID_ADDRESS_NOTE, _apply_validation
 
     # Explicit None passes through, no rejection note.
-    cleaned, notes = _apply_validation({
-        "items": [],
-        "order_type": "pickup",
-        "delivery_address": None,
-        "status": "in_progress",
-    })
+    cleaned, notes = _apply_validation(
+        {
+            "items": [],
+            "order_type": "pickup",
+            "delivery_address": None,
+            "status": "in_progress",
+        }
+    )
     assert cleaned == {
         "items": [],
         "order_type": "pickup",
@@ -1454,25 +1535,31 @@ def test_apply_validation_passes_through_explicit_address_clears():
     assert notes == []
 
     # Empty string passes through, no rejection note.
-    cleaned, notes = _apply_validation({
-        "delivery_address": "",
-    })
+    cleaned, notes = _apply_validation(
+        {
+            "delivery_address": "",
+        }
+    )
     assert cleaned == {"delivery_address": ""}
     assert notes == []
 
     # Whitespace-only passes through, no rejection note.
-    cleaned, notes = _apply_validation({
-        "delivery_address": "   ",
-    })
+    cleaned, notes = _apply_validation(
+        {
+            "delivery_address": "   ",
+        }
+    )
     assert cleaned == {"delivery_address": "   "}
     assert notes == []
 
     # Real garbage with content STILL gets rejected — verifies the
     # explicit-clear pass-through didn't accidentally weaken the
     # rejection path.
-    cleaned, notes = _apply_validation({
-        "delivery_address": "uhh",
-    })
+    cleaned, notes = _apply_validation(
+        {
+            "delivery_address": "uhh",
+        }
+    )
     assert "delivery_address" not in cleaned
     assert notes == [_INVALID_ADDRESS_NOTE]
 
@@ -1574,7 +1661,9 @@ async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
                 ],
             ),
             _FakeAsyncStream(
-                deltas=["So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?"],
+                deltas=[
+                    "So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?"
+                ],
                 blocks=[
                     FakeBlock(
                         type="text",
@@ -1598,7 +1687,10 @@ async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
 
     # Both delta streams must be yielded in order.
     assert "Got it, one Chicken Fried Rice coming up." in deltas
-    assert "So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?" in deltas
+    assert (
+        "So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?"
+        in deltas
+    )
     assert deltas.index("Got it, one Chicken Fried Rice coming up.") < deltas.index(
         "So that's one Chicken Fried Rice — your total is twelve twenty-five. Sound right?"
     )
@@ -1684,6 +1776,7 @@ async def test_stream_reply_tool_use_turn_emits_two_timing_events(monkeypatch):
     # Patch the time module reference inside client.py so asyncio's own
     # time.monotonic (used for event-loop scheduling) is not affected.
     import types as _types
+
     fake_time = _types.SimpleNamespace(monotonic=_fake_monotonic)
     monkeypatch.setattr(client_module, "time", fake_time)
 
@@ -1778,6 +1871,7 @@ async def test_stream_reply_tool_only_turn_emits_two_timing_events(monkeypatch):
     # Patch the time module reference inside client.py so asyncio's own
     # time.monotonic (used for event-loop scheduling) is not affected.
     import types as _types
+
     fake_time = _types.SimpleNamespace(monotonic=_fake_monotonic)
     monkeypatch.setattr(client_module, "time", fake_time)
 

@@ -44,9 +44,7 @@ def _resolve_channel(guild: Any, channel: str) -> Optional[Any]:
 
 
 def build_get_recent_messages_tool() -> ToolDescriptor:
-    async def get_recent_messages(
-        channel: str, n: int = 50, *, context: ToolContext
-    ) -> Any:
+    async def get_recent_messages(channel: str, n: int = 50, *, context: ToolContext) -> Any:
         guild = context.guild
         if guild is None:
             return {"error": "no guild context — bot is not in a guild"}
@@ -54,10 +52,7 @@ def build_get_recent_messages_tool() -> ToolDescriptor:
         target = _resolve_channel(guild, channel)
         if target is None:
             return {
-                "error": (
-                    f"channel '{channel}' not found in guild "
-                    "(use a #name or numeric id)"
-                )
+                "error": (f"channel '{channel}' not found in guild (use a #name or numeric id)")
             }
 
         clamped = _clamp_n(int(n))
@@ -70,9 +65,7 @@ def build_get_recent_messages_tool() -> ToolDescriptor:
                 {
                     "author": display or "?",
                     "content": getattr(msg, "content", "") or "",
-                    "timestamp": (
-                        created.isoformat() if created is not None else None
-                    ),
+                    "timestamp": (created.isoformat() if created is not None else None),
                 }
             )
         return out
@@ -94,15 +87,12 @@ def build_get_recent_messages_tool() -> ToolDescriptor:
                 "channel": {
                     "type": "string",
                     "description": (
-                        "Channel name (with or without leading '#') or "
-                        "numeric channel id."
+                        "Channel name (with or without leading '#') or numeric channel id."
                     ),
                 },
                 "n": {
                     "type": "integer",
-                    "description": (
-                        "How many messages to fetch (1–100, default 50)."
-                    ),
+                    "description": ("How many messages to fetch (1–100, default 50)."),
                 },
             },
             "required": ["channel"],

@@ -60,9 +60,7 @@ async def test_graphql_posts_query_and_variables():
 
 
 async def test_graphql_raises_on_top_level_errors():
-    response = _make_response(
-        200, {"errors": [{"message": "Could not resolve"}], "data": None}
-    )
+    response = _make_response(200, {"errors": [{"message": "Could not resolve"}], "data": None})
     httpx_client = _make_async_client(response)
     gh = AsyncGitHubClient(token="t", httpx_client=httpx_client)
     with pytest.raises(RuntimeError, match="Could not resolve"):

@@ -37,9 +37,7 @@ class AsyncGitHubClient:
             "User-Agent": _USER_AGENT,
         }
 
-    async def get(
-        self, path: str, params: Optional[dict[str, Any]] = None
-    ) -> Any:
+    async def get(self, path: str, params: Optional[dict[str, Any]] = None) -> Any:
         url = _BASE_URL + path
         response = await self._client.request(
             method="GET",
@@ -48,9 +46,7 @@ class AsyncGitHubClient:
             params=params,
         )
         if response.status_code >= 300:
-            raise RuntimeError(
-                f"GitHub GET {path} -> {response.status_code}: {response.text}"
-            )
+            raise RuntimeError(f"GitHub GET {path} -> {response.status_code}: {response.text}")
         return response.json()
 
     async def post(self, path: str, json: dict[str, Any]) -> Any:
@@ -62,14 +58,10 @@ class AsyncGitHubClient:
             json=json,
         )
         if response.status_code >= 300:
-            raise RuntimeError(
-                f"GitHub POST {path} -> {response.status_code}: {response.text}"
-            )
+            raise RuntimeError(f"GitHub POST {path} -> {response.status_code}: {response.text}")
         return response.json()
 
-    async def graphql(
-        self, query: str, variables: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         url = _BASE_URL + "/graphql"
         response = await self._client.request(
             method="POST",
@@ -78,14 +70,10 @@ class AsyncGitHubClient:
             json={"query": query, "variables": variables},
         )
         if response.status_code >= 300:
-            raise RuntimeError(
-                f"GitHub GraphQL -> {response.status_code}: {response.text}"
-            )
+            raise RuntimeError(f"GitHub GraphQL -> {response.status_code}: {response.text}")
         body = response.json()
         if body.get("errors"):
-            messages = "; ".join(
-                e.get("message", "?") for e in body["errors"]
-            )
+            messages = "; ".join(e.get("message", "?") for e in body["errors"])
             raise RuntimeError(f"GitHub GraphQL errors: {messages}")
         return body.get("data") or {}
 
