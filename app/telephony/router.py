@@ -327,17 +327,21 @@ def _build_keyterms(restaurant: "Restaurant | None") -> list[str]:
             seen.add(key)
             terms.append(term)
 
+    # Intent vocab goes first so it survives _KEYTERM_MAX truncation on large menus.
+    for word in _KEYTERM_INTENT_VOCAB:
+        _add(word)
     if restaurant is not None:
         for word in restaurant.name.split():
             _add(word.strip(".,!?"))
-        for items in restaurant.menu.values():
+        for k, items in restaurant.menu.items():
+            if k.startswith("_"):
+                # Reserved metadata keys (e.g. _category_order) are not menu items.
+                continue
             if not isinstance(items, list):
                 continue
             for item in items:
                 name = item.get("name", "") if isinstance(item, dict) else ""
                 _add(name)
-    for word in _KEYTERM_INTENT_VOCAB:
-        _add(word)
     return terms[:_KEYTERM_MAX]
 
 

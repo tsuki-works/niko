@@ -2020,7 +2020,7 @@ def test_deepgram_stt_model_defaults_to_nova3():
 
 
 def test_build_keyterms_includes_menu_items_and_intent_vocab():
-    from app.telephony.router import _build_keyterms, _KEYTERM_INTENT_VOCAB
+    from app.telephony.router import _build_keyterms
     from app.restaurants.models import Restaurant
 
     restaurant = Restaurant(
@@ -2092,4 +2092,91 @@ def test_open_deepgram_connection_uses_nova3(monkeypatch):
     assert opts.language == "en-US"
     assert opts.numerals is True
     assert isinstance(opts.keyterm, list)
+
+
+@pytest.mark.asyncio
+async def test_open_deepgram_connection_includes_menu_keyterms(monkeypatch):
+    """_open_deepgram_connection must thread menu items into keyterm when state
+    carries a populated Restaurant — exercises the path _build_keyterms takes
+    when given a real menu, so a regression that drops menu items would be caught."""
+    import app.telephony.router as router_mod
+    from app.telephony.router import _open_deepgram_connection, _CallState
+    from app.restaurants.models import Restaurant
+
+    captured_options: list = []
+
+    class FakeConn:
+        def on(self, *a, **kw): pass
+        async def start(self, options):
+            captured_options.append(options)
+            return True
+
+    class FakeDG:
+        class listen:
+            class asyncwebsocket:
+                @staticmethod
+                def v(_):
+                    return FakeConn()
+
+    monkeypatch.setattr(router_mod, "DeepgramClient", lambda _key: FakeDG())
+    monkeypatch.setattr(router_mod.settings, "deepgram_api_key", "fake-key-for-test")
+    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+
+    restaurant = Restaurant(
+        id="test-r",
+        name="Twilight Grill",
+        display_phone="+14165550001",
+        twilio_phone="+16479058093",
+        address="1 Test St",
+        hours="Mon-Sun 11:00-22:00",
+        menu={
+            "_category_order": ["soups", "mains"],
+            "soups": [
+                {"name": "pepper soup", "price": 8.99},
+            ],
+            "mains": [
+                {"name": "jollof rice", "price": 13.99},
+            ],
+        },
+    )
+    state = _CallState(restaurant=restaurant)
+
+    await _open_deepgram_connection("CAtest", "test-r", lambda t: None, state=state)
+
+    assert len(captured_options) == 1
+    opts = captured_options[0]
+    terms = opts.keyterm
+    assert isinstance(terms, list)
+    assert "pepper soup" in terms
+    assert "jollof rice" in terms
+    # Intent vocab must survive even when menu items are present.
+    assert "pickup" in terms
+    # Reserved metadata key must not leak into keyterms.
+    assert "soups" not in terms
+    assert "mains" not in terms
+
+
+def test_build_keyterms_skips_reserved_category_order_key():
+    """_category_order is a reserved metadata key; its values must not appear
+    in keyterms even though they pass the isinstance(items, list) check."""
+    from app.telephony.router import _build_keyterms
+    from app.restaurants.models import Restaurant
+
+    restaurant = Restaurant(
+        id="test-r",
+        name="Test Place",
+        display_phone="+14165550001",
+        twilio_phone="+16479058093",
+        address="1 Test St",
+        hours="Mon-Sun 11:00-22:00",
+        menu={
+            "_category_order": ["mains", "sides"],
+            "mains": [{"name": "burger", "price": 9.99}],
+        },
+    )
+
+    terms = _build_keyterms(restaurant)
+    assert "mains" not in terms
+    assert "sides" not in terms
+    assert "burger" in terms
 
