@@ -32,6 +32,8 @@ export default async function OverviewPage() {
     {
       eyebrow: 'Orders today',
       value: summary ? String(summary.today_count) : '—',
+      zeroHint:
+        summary?.today_count === 0 ? 'No orders yet today.' : undefined,
     },
     {
       eyebrow: 'Orders this week',

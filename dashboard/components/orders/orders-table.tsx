@@ -7,23 +7,49 @@ import { PhoneIncoming } from 'lucide-react';
 import { LocalTime } from '@/components/shared/local-time';
 import { StatusBadge } from '@/components/orders/status-badge';
 import { TransitionButton } from '@/components/orders/transition-button';
-import { type Order, orderShortId } from '@/lib/schemas/order';
+import {
+  type Order,
+  type OrderStatus,
+  orderShortId,
+} from '@/lib/schemas/order';
 import { formatCAD } from '@/lib/formatters/money';
 import { formatPhone } from '@/lib/formatters/phone';
 import { cn } from '@/lib/utils';
 
 const MAX_ITEMS_LINE = 48;
 
+// Typed Record so any add/remove on OrderStatus fails the build here
+// rather than silently falling back to a default string.
+const EMPTY_HEADLINE_BY_STATUS: Record<OrderStatus, string> = {
+  in_progress: 'No live orders right now',
+  confirmed: 'No confirmed orders waiting',
+  preparing: 'Nothing in the kitchen right now',
+  ready: 'Nothing ready for pickup',
+  completed: 'No completed orders yet',
+  cancelled: 'No cancelled orders',
+};
+
+const FILTER_EMPTY_HELPER =
+  'This view will update automatically as orders come in.';
+
 export function OrdersTable({
   orders,
   twilioPhone,
+  statusFilter,
   freshIds,
 }: {
   orders: Order[];
   twilioPhone: string;
+  statusFilter?: OrderStatus;
   freshIds?: ReadonlySet<string>;
 }) {
-  if (orders.length === 0) return <EmptyState twilioPhone={twilioPhone} />;
+  // All-tab + zero rows is still the "provisioning / nothing ever"
+  // surface — keep it distinct from the transient filter-empty state.
+  if (orders.length === 0 && statusFilter === undefined) {
+    return <EmptyState twilioPhone={twilioPhone} />;
+  }
+
+  const isFilterEmpty = orders.length === 0 && statusFilter !== undefined;
 
   return (
     <div className="overflow-hidden">
@@ -39,15 +65,42 @@ export function OrdersTable({
           </tr>
         </thead>
         <tbody>
-          {orders.map((order) => (
-            <OrderRow
-              key={order.call_sid}
-              order={order}
-              isFresh={freshIds?.has(order.call_sid) ?? false}
-            />
-          ))}
+          {isFilterEmpty ? (
+            <tr>
+              <td colSpan={6} className="px-2.5 py-10">
+                <FilterEmptyState status={statusFilter} />
+              </td>
+            </tr>
+          ) : (
+            orders.map((order) => (
+              <OrderRow
+                key={order.call_sid}
+                order={order}
+                isFresh={freshIds?.has(order.call_sid) ?? false}
+              />
+            ))
+          )}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function FilterEmptyState({ status }: { status: OrderStatus }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-2 text-center">
+      <div className="flex size-14 items-center justify-center rounded-[10px] bg-surface-2">
+        <PhoneIncoming
+          className="size-6 text-foreground-muted"
+          aria-hidden
+        />
+      </div>
+      <p className="mt-3 text-base text-foreground">
+        {EMPTY_HEADLINE_BY_STATUS[status]}
+      </p>
+      <p className="mt-1.5 text-sm text-foreground-subtle">
+        {FILTER_EMPTY_HELPER}
+      </p>
     </div>
   );
 }

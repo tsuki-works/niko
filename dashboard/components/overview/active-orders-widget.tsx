@@ -124,7 +124,7 @@ function QueueRow({ order }: { order: Order }) {
         if (window.getSelection()?.toString()) return;
         router.push(detailHref);
       }}
-      className="cursor-pointer border-b border-border-subtle last:border-b-0 hover:bg-surface-2/40"
+      className="cursor-pointer border-b border-border-subtle transition-[background-color] duration-100 ease-linear last:border-b-0 hover:bg-surface-2/40 focus-within:outline focus-within:outline-brand-muted focus-within:-outline-offset-2"
     >
       {/* Cell 1 — the only <Link> in the row. <TransitionButton> in
           cell 5 stays independently focusable and stops propagation
