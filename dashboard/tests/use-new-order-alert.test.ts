@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import {
   useNewOrderAlert,
@@ -52,7 +52,7 @@ class FakeWakeLockSentinel {
 }
 
 class FakeWakeLockApi {
-  request = vi.fn(async (_type: 'screen') => new FakeWakeLockSentinel());
+  request = vi.fn(async () => new FakeWakeLockSentinel());
 }
 
 // Helper to build a hook options object with all fakes wired.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import type { Order } from '@/lib/schemas/order';
 
@@ -73,7 +73,7 @@ export function useNewOrderAlert(
     new Map(),
   );
 
-  const getAudioContext = (): AudioContext | null => {
+  const getAudioContext = useCallback((): AudioContext | null => {
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
       return audioContextRef.current;
     }
@@ -87,32 +87,44 @@ export function useNewOrderAlert(
     } catch {
       return null;
     }
-  };
+  }, [options]);
 
-  const playTone = (silent: boolean = false) => {
-    const ctx = getAudioContext();
-    if (!ctx) return;
+  const playTone = useCallback(
+    (silent: boolean = false) => {
+      const ctx = getAudioContext();
+      if (!ctx) return;
 
-    let startTime = ctx.currentTime;
-    for (const hz of NOTE_HZ) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(hz, startTime);
-      const peak = silent ? 0.0001 : 0.25;
-      gain.gain.setValueAtTime(0, startTime);
-      gain.gain.linearRampToValueAtTime(peak, startTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(
-        0.0001,
-        startTime + TONE_NOTE_DURATION_MS / 1000,
-      );
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(startTime);
-      osc.stop(startTime + TONE_NOTE_DURATION_MS / 1000);
-      startTime += TONE_NOTE_DURATION_MS / 1000;
-    }
-  };
+      let startTime = ctx.currentTime;
+      for (const hz of NOTE_HZ) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(hz, startTime);
+        const peak = silent ? 0.0001 : 0.25;
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(peak, startTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(
+          0.0001,
+          startTime + TONE_NOTE_DURATION_MS / 1000,
+        );
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + TONE_NOTE_DURATION_MS / 1000);
+        startTime += TONE_NOTE_DURATION_MS / 1000;
+      }
+    },
+    [getAudioContext],
+  );
+
+  // playTone is read through this ref by the audio-primer effect, which
+  // is genuinely a one-shot mount-time effect (registers a click
+  // listener with `{ once: true }`) and should not re-register when
+  // playTone's identity changes.
+  const playToneRef = useRef(playTone);
+  useEffect(() => {
+    playToneRef.current = playTone;
+  }, [playTone]);
 
   // Detect new orders + fire the alert
   useEffect(() => {
@@ -149,7 +161,7 @@ export function useNewOrderAlert(
       lastAlertedAt.current = now;
       playTone(false);
     }
-  }, [orders, throttleMs]);
+  }, [orders, throttleMs, playTone]);
 
   // Wake Lock + visibility handling
   useEffect(() => {
@@ -209,7 +221,7 @@ export function useNewOrderAlert(
       document.removeEventListener('visibilitychange', onVisibility);
       release();
     };
-  }, [options?.wakeLockApi]);
+  }, [options?.wakeLockApi, getAudioContext]);
 
   // Audio unlock primer — first document click plays a silent tone.
   useEffect(() => {
@@ -218,7 +230,7 @@ export function useNewOrderAlert(
     const onFirstClick = () => {
       if (audioPrimedRef.current) return;
       audioPrimedRef.current = true;
-      playTone(true);
+      playToneRef.current(true);
     };
 
     document.addEventListener('click', onFirstClick, { once: true });
@@ -230,9 +242,10 @@ export function useNewOrderAlert(
 
   // Cleanup on unmount
   useEffect(() => {
+    const timers = freshTimersRef.current;
     return () => {
-      for (const t of freshTimersRef.current.values()) clearTimeout(t);
-      freshTimersRef.current.clear();
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
       const ctx = audioContextRef.current;
       if (ctx && ctx.state !== 'closed') {
         ctx.close().catch(() => {});
