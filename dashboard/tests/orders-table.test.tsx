@@ -15,6 +15,13 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// OrdersTable rows call `useRouter()` for click-to-navigate. The hook
+// throws "invariant expected app router to be mounted" outside a real
+// Next.js render tree — stub it for the unit test surface.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+
 import { OrdersTable } from '@/components/orders/orders-table';
 import type { Order, OrderStatus } from '@/lib/schemas/order';
 
