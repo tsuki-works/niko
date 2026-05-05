@@ -27,17 +27,17 @@ from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
 
-from app.telephony.voicemail_twiml import voicemail_response
-
 from app.config import settings
-from app.restaurants.open_check import is_open_now
 from app.llm.client import stream_reply
 from app.llm.prompts import build_system_prompt
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
 from app.orders.models import Order, OrderStatus
 from app.restaurants.models import Restaurant
-from app.storage import call_sessions, recordings, restaurants as restaurants_storage
+from app.restaurants.open_check import is_open_now
+from app.storage import call_sessions, recordings
+from app.storage import restaurants as restaurants_storage
 from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
+from app.telephony.voicemail_twiml import voicemail_response
 from app.tts.client import speak
 
 router = APIRouter()

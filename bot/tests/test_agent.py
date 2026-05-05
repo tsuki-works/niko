@@ -8,10 +8,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from jarvis.agent import MAX_TOOL_STEPS, MODEL, respond
 from jarvis.tools import ToolContext, ToolDescriptor, ToolRegistry
-
 
 # ---------- Fakes ----------
 

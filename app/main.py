@@ -15,6 +15,15 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.auth import Tenant, current_tenant
+from app.config import settings
+from app.orders.lifecycle import (
+    OrderTransitionError,
+    cancel_order,
+    mark_completed,
+    mark_preparing,
+    mark_ready,
+)
+from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.restaurants.hours import render_hours_text
 from app.restaurants.menu_writes import (
     DuplicateMenuItem,
@@ -30,21 +39,15 @@ from app.restaurants.models import (
     MenuItemCreate,
     MenuItemUpdate,
 )
-
-from app.config import settings
-from app.orders.lifecycle import (
-    OrderTransitionError,
-    cancel_order,
-    mark_completed,
-    mark_preparing,
-    mark_ready,
-)
-from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import (
     analytics,
     call_sessions,
-    firestore as order_storage,
     recordings,
+)
+from app.storage import (
+    firestore as order_storage,
+)
+from app.storage import (
     restaurants as restaurants_storage,
 )
 from app.storage.restaurants import DEMO_RID

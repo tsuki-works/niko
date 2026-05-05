@@ -6,7 +6,6 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
-
 from jarvis.stream_writer import stream_to_discord
 
 

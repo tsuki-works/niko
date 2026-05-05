@@ -135,6 +135,7 @@ def test_order_has_sms_sent_field_defaulting_to_empty_dict():
 
 def test_order_sms_sent_record_round_trips():
     from datetime import datetime, timezone
+
     from app.orders.models import Order, SmsSentRecord
 
     sent_at = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)

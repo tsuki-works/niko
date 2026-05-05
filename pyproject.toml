@@ -1,0 +1,36 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [
+    "__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    "infra",
+    "dashboard",
+    "restaurants",
+]
+
+[tool.ruff.lint]
+# Conservative starter selection. Broaden later (UP, B, SIM, RET, etc.).
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "W",   # pycodestyle warnings
+]
+ignore = [
+    "E501",  # line-too-long handled by the formatter
+    "E402",  # module-level import not at top — codebase has legitimate cases (logging.basicConfig before imports)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files often reuse fixtures and helpers in ways linters dislike.
+"tests/**/*.py" = ["F401", "F811"]
+"bot/tests/**/*.py" = ["F401", "F811"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

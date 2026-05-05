@@ -8,8 +8,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-from jarvis.memory import ThreadMemory, MAX_TURNS
+from jarvis.memory import MAX_TURNS, ThreadMemory
 
 
 def _make_doc_ref_with_snapshot(snapshot_data: dict | None):

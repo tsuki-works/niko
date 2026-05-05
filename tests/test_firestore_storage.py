@@ -17,7 +17,6 @@ import pytest
 from app.orders.models import ItemCategory, LineItem, Order, OrderType
 from app.storage import firestore as storage
 
-
 _DEMO_RID = "niko-pizza-kitchen"
 
 

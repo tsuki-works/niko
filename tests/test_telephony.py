@@ -17,8 +17,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.llm.client import LLMResponse, StreamEvent
+from app.main import app
 from app.orders.models import Order
 from app.storage import restaurants as restaurants_storage
 from app.telephony.router import _MIN_CHUNK_CHARS, _should_flush_chunk
@@ -240,8 +240,8 @@ def test_media_stream_handles_full_call_lifecycle(mock_pipeline):
 def test_media_stream_begins_recording_on_start(mock_pipeline, monkeypatch):
     """On WS start, after tenant resolution, begin_recording is called
     with the resolved restaurant id and the tenant's retention setting."""
-    from app.storage import recordings as recordings_mod
     from app.restaurants.models import Restaurant
+    from app.storage import recordings as recordings_mod
 
     seeded = Restaurant(
         id="niko-pizza-kitchen",
@@ -289,6 +289,7 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
     """Each Twilio media event drives append_chunks with the right
     inbound/outbound payloads."""
     from base64 import b64encode
+
     from app.storage import recordings as recordings_mod
 
     fake_session = MagicMock(broken=False)
@@ -351,8 +352,8 @@ def test_media_stream_dispatches_audio_to_append_chunks(monkeypatch):
 def test_media_stream_finalizes_recording_on_stop(monkeypatch):
     """After the call ends, finalize_recording runs and mark_recording_ready
     writes the resulting gs:// URL to Firestore."""
-    from app.storage import recordings as recordings_mod
     from app.storage import call_sessions
+    from app.storage import recordings as recordings_mod
 
     fake_session = MagicMock(broken=False)
     monkeypatch.setattr(
@@ -445,7 +446,7 @@ def test_ai_greeting_spawned_on_start(monkeypatch):
 
 def test_stop_event_persists_ready_order(monkeypatch):
     """persist_on_confirm is called at call end when order is_ready_to_confirm."""
-    from app.orders.models import LineItem, ItemCategory, OrderType
+    from app.orders.models import ItemCategory, LineItem, OrderType
 
     persisted: list = []
 
@@ -537,9 +538,9 @@ async def test_tool_use_turn_two_timing_events_handled_by_router(monkeypatch):
     timing_snapshot is updated each time, so timing-2 ends up in the
     first_audio Firestore event detail because it arrives before speak()
     fires for the first time."""
-    from app.telephony import router as router_mod
-    from app.telephony.router import _run_llm_tts_turn, _CallState
     from app.storage import call_sessions
+    from app.telephony import router as router_mod
+    from app.telephony.router import _CallState, _run_llm_tts_turn
 
     first_timing = {
         "ttft_seconds": 0.8,
@@ -780,6 +781,7 @@ async def test_mark_echo_timeout_fires_grace_window(monkeypatch):
     """If Twilio never echoes the end_of_call mark, the timeout fires
     the grace window anyway so the call terminates."""
     import asyncio
+
     from app.telephony import router as router_mod
     from app.telephony.router import (
         _CallState,
@@ -811,6 +813,7 @@ async def test_mark_echo_timeout_skips_grace_when_pending_hangup_cleared(monkeyp
     """If pending_hangup is cleared during the 8s sleep (caller spoke and
     _abort_pending_hangup raced), the timeout must NOT fire the grace window."""
     import asyncio
+
     from app.telephony import router as router_mod
     from app.telephony.router import _CallState, _hang_up_after_mark_timeout
 
@@ -839,7 +842,8 @@ async def test_abort_pending_hangup_cancels_mark_timeout_task():
     """_abort_pending_hangup must cancel mark_timeout_task so the fallback
     timer doesn't fire after the caller speaks during the grace window."""
     import asyncio
-    from app.telephony.router import _CallState, _abort_pending_hangup
+
+    from app.telephony.router import _abort_pending_hangup, _CallState
 
     state = _CallState(call_sid="CAtest", pending_hangup=True)
 
@@ -1115,8 +1119,8 @@ async def test_on_transcript_increments_misheard_counter_on_low_confidence(monke
     state.consecutive_low_confidence_turns. Reset on a clear final."""
     from unittest.mock import MagicMock
 
-    from app.telephony.router import _CallState, _open_deepgram_connection
     import app.telephony.router as router_mod
+    from app.telephony.router import _CallState, _open_deepgram_connection
 
     # Satisfy the API-key guard without a real credential.
     monkeypatch.setattr(router_mod.settings, "deepgram_api_key", "fake-key-for-test")
@@ -1227,7 +1231,8 @@ def test_stream_ended_returns_dial_when_transfer_requested(monkeypatch):
 
     from app.main import app
     from app.restaurants.models import Restaurant
-    from app.storage import call_sessions, restaurants as r_storage
+    from app.storage import call_sessions
+    from app.storage import restaurants as r_storage
 
     monkeypatch.setattr(
         call_sessions,
@@ -1272,7 +1277,8 @@ def test_stream_ended_skips_to_voicemail_when_no_fallback(monkeypatch):
 
     from app.main import app
     from app.restaurants.models import Restaurant
-    from app.storage import call_sessions, restaurants as r_storage
+    from app.storage import call_sessions
+    from app.storage import restaurants as r_storage
 
     monkeypatch.setattr(
         call_sessions,
@@ -1434,6 +1440,7 @@ def test_transfer_result_failed_status_marks_internal_failed(monkeypatch):
 def test_voicemail_recorded_uploads_and_marks_session(monkeypatch):
     """Twilio recording URL → GCS upload → call_sessions.mark_voicemail_left."""
     from fastapi.testclient import TestClient
+
     from app.config import settings
     from app.main import app
     from app.storage import call_sessions, recordings
@@ -1479,6 +1486,7 @@ def test_voicemail_recorded_uploads_and_marks_session(monkeypatch):
 def test_voicemail_recorded_handles_missing_twilio_creds_gracefully(monkeypatch):
     """If TWILIO creds aren't set, log + return empty TwiML rather than 500."""
     from fastapi.testclient import TestClient
+
     from app.config import settings
     from app.main import app
     from app.storage import recordings
@@ -1510,6 +1518,7 @@ def test_voicemail_recorded_handles_missing_twilio_creds_gracefully(monkeypatch)
 def test_voicemail_recorded_handles_upload_failure_gracefully(monkeypatch):
     """Twilio download or GCS upload failure → log + empty TwiML."""
     from fastapi.testclient import TestClient
+
     from app.config import settings
     from app.main import app
     from app.storage import call_sessions, recordings
@@ -1543,6 +1552,7 @@ def test_voicemail_recorded_handles_upload_failure_gracefully(monkeypatch):
 
 def test_voicemail_transcription_patches_call_session(monkeypatch):
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.storage import call_sessions
 
@@ -1568,6 +1578,7 @@ def test_voicemail_transcription_skips_when_empty(monkeypatch):
     """Twilio sometimes posts empty TranscriptionText (transcription
     failed or audio too quiet). Skip the patch silently."""
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.storage import call_sessions
 
@@ -1594,12 +1605,16 @@ def test_voice_routes_to_voicemail_when_after_hours(monkeypatch):
     /voice returns voicemail TwiML directly instead of opening a
     media stream."""
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.restaurants import open_check
     from app.restaurants.models import (
-        DayHours, HoursStructured, Restaurant,
+        DayHours,
+        HoursStructured,
+        Restaurant,
     )
-    from app.storage import restaurants as r_storage, call_sessions
+    from app.storage import call_sessions
+    from app.storage import restaurants as r_storage
 
     closed_day = DayHours(open="00:00", close="00:00", closed=True)
     h = HoursStructured(
@@ -1646,6 +1661,7 @@ def test_voice_opens_stream_when_open(monkeypatch):
     """When is_open_now returns True (default for None hours_structured),
     /voice still opens the AI media stream as before."""
     from fastapi.testclient import TestClient
+
     from app.main import app
     from app.restaurants.models import Restaurant
     from app.storage import restaurants as r_storage
@@ -1682,6 +1698,7 @@ def test_voicemail_recorded_is_idempotent_on_twilio_retry(monkeypatch):
     second call must skip the upload + mark when the same RecordingSid
     is already on the call session."""
     from fastapi.testclient import TestClient
+
     from app.config import settings
     from app.main import app
     from app.storage import call_sessions, recordings
@@ -1745,11 +1762,12 @@ def test_voice_after_hours_without_call_sid_bails_with_hangup(monkeypatch):
     contract violation), don't write voicemail/{rid}/unknown.mp3. Hang
     up gracefully."""
     from fastapi.testclient import TestClient
+
+    import app.telephony.router as router_mod
     from app.main import app
     from app.restaurants import open_check
     from app.restaurants.models import Restaurant
     from app.storage import restaurants as r_storage
-    import app.telephony.router as router_mod
 
     fake = Restaurant(
         id="r1",

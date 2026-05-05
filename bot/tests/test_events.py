@@ -7,10 +7,8 @@ from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from jarvis.events import OnMessageHandler
 from jarvis.router import RoutingDecision
-
 
 # --- Discord fakes ---
 

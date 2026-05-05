@@ -11,7 +11,6 @@ helper for expected-value assertions instead of ``audioop.ulaw2lin``.
 
 import struct
 
-
 # ---------------------------------------------------------------------------
 # _ulaw2lin_16 (forward-compat shim for audioop.ulaw2lin)
 # ---------------------------------------------------------------------------
@@ -198,6 +197,7 @@ def test_finalize_recording_mixes_encodes_and_uploads(monkeypatch):
     """Happy path: buffers contain audio, finalize mixes them, encodes
     once, uploads as a single blob, returns gs:// URL + duration."""
     from datetime import datetime, timedelta, timezone
+
     from app.storage import recordings
 
     captured: dict = {}
@@ -347,6 +347,7 @@ def test_delete_recording_calls_blob_delete(monkeypatch):
 
 def test_delete_recording_idempotent_on_404(monkeypatch):
     from google.api_core.exceptions import NotFound
+
     from app.storage import recordings
 
     fake_blob = type("FakeBlob", (), {})()
@@ -379,6 +380,7 @@ def test_generate_signed_url_uses_v4_get_30min_and_iam_signblob(monkeypatch):
     iam.googleapis.com instead of trying to sign locally."""
     from datetime import timedelta
     from types import SimpleNamespace
+
     from app.storage import recordings
 
     captured: dict = {}

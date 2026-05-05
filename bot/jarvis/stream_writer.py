@@ -14,10 +14,8 @@ emits a paragraph in one go).
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import AsyncIterator, Protocol
-
 
 # Public knobs, exposed for tests and tuning.
 EDIT_INTERVAL_S = 0.25

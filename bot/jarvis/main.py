@@ -39,9 +39,9 @@ from jarvis.tools import ToolContext, ToolRegistry
 from jarvis.tools.chat import build_get_recent_messages_tool
 from jarvis.tools.docs import build_search_repo_docs_tool
 from jarvis.tools.github import (
-    build_get_recent_commits_tool,
-    build_get_pr_tool,
     build_get_issue_tool,
+    build_get_pr_tool,
+    build_get_recent_commits_tool,
     build_open_issue_tool,
 )
 from jarvis.tools.sprint import build_get_current_sprint_tool

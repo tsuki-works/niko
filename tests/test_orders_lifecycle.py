@@ -460,6 +460,7 @@ def test_persist_on_confirm_swallows_sms_errors():
     """SMS is best-effort: a Twilio failure must not block the order
     from persisting as confirmed."""
     from unittest.mock import patch
+
     from app.sms.exceptions import SmsError
     _fake_client()
     order = _ready_pickup_order(caller_phone="+15551234567")

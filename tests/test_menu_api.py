@@ -153,6 +153,7 @@ def test_patch_menu_item_409_on_rename_collision(client: TestClient):
 def test_post_menu_item_403_for_non_owner(client: TestClient, fake_tenant: Tenant):
     """Staff cannot add menu items — owner-only."""
     import dataclasses
+
     from app.auth.dependency import current_tenant
     staff = dataclasses.replace(fake_tenant, role="staff")
     app.dependency_overrides[current_tenant] = lambda: staff

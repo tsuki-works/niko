@@ -237,6 +237,7 @@ def test_restaurant_recording_retention_accepts_override():
 def test_restaurant_recording_retention_rejects_zero_or_negative():
     import pytest
     from pydantic import ValidationError
+
     from app.restaurants.models import Restaurant
 
     with pytest.raises(ValidationError):
@@ -287,9 +288,9 @@ def test_restaurant_has_optional_hours_structured_and_fallback_phone():
 
 
 def test_day_hours_rejects_invalid_time_format():
-    from app.restaurants.models import DayHours
-
     import pytest
+
+    from app.restaurants.models import DayHours
 
     with pytest.raises(Exception):
         DayHours(open="11", close="22:00", closed=False)

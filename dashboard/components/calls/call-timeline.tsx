@@ -346,7 +346,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
               {typeof duration === 'number' ? `${duration}s` : 'recording available'}
             </span>
             {transcript ? (
-              <span className="italic">"{transcript}"</span>
+              <span className="italic">&ldquo;{transcript}&rdquo;</span>
             ) : (
               <span className="text-xs italic text-muted-foreground">
                 Transcript pending…

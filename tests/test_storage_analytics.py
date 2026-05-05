@@ -12,7 +12,8 @@ from app.orders.models import (
     OrderStatus,
     OrderType,
 )
-from app.storage import analytics, firestore as order_storage
+from app.storage import analytics
+from app.storage import firestore as order_storage
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +154,7 @@ def test_summarize_orders_today_start_uses_local_timezone():
     """An order placed at 22:00 Toronto local on 2026-05-01 (= 02:00 UTC
     on 2026-05-02) should count as TODAY when checked at 23:00 Toronto
     local on 2026-05-01 (= 03:00 UTC on 2026-05-02), not yesterday."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     _wire_orders([])
     # Use the public window helper directly to assert the boundary

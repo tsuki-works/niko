@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-
 from jarvis.github_client import AsyncGitHubClient
 
 
