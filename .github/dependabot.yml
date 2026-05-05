@@ -35,6 +35,12 @@ updates:
     commit-message:
       prefix: "deps(dashboard)"
       include: "scope"
+    ignore:
+      # Pinned to ^26 — newer jsdom (>=27) pulls @exodus/bytes, which
+      # is ESM-only and breaks vitest's CJS test environment with
+      # ERR_REQUIRE_ESM. See PR #239 for the diagnosis. Revisit when
+      # upstream fixes the ESM/CJS interop (jsdom and/or @exodus/bytes).
+      - dependency-name: "jsdom"
 
   - package-ecosystem: "terraform"
     directory: "/infra/jarvis"
