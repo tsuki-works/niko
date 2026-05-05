@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   collection,
@@ -101,6 +102,8 @@ function ActiveOrdersInner({ initial, restaurantId }: Props) {
 }
 
 function QueueRow({ order }: { order: Order }) {
+  const router = useRouter();
+
   const itemsLine =
     order.items.length === 0
       ? '—'
@@ -114,24 +117,34 @@ function QueueRow({ order }: { order: Order }) {
   const detailHref = `/orders/${encodeURIComponent(order.call_sid)}`;
 
   return (
-    <tr className="border-b border-border-subtle last:border-b-0 hover:bg-surface-2/40">
+    <tr
+      onClick={() => {
+        // Don't navigate when the user is selecting text — order IDs
+        // and item names are copy-targets for kitchen staff.
+        if (window.getSelection()?.toString()) return;
+        router.push(detailHref);
+      }}
+      className="cursor-pointer border-b border-border-subtle last:border-b-0 hover:bg-surface-2/40"
+    >
+      {/* Cell 1 — the only <Link> in the row. <TransitionButton> in
+          cell 5 stays independently focusable and stops propagation
+          on its own click. */}
       <td className="px-1 py-2 align-middle font-mono text-xs">
-        <Link href={detailHref}>{orderShortId(order)}</Link>
+        <Link
+          href={detailHref}
+          aria-label={`View order ${orderShortId(order)}`}
+        >
+          {orderShortId(order)}
+        </Link>
       </td>
       <td className="px-1 py-2 align-middle">
-        <Link href={detailHref} className="block truncate">
-          {itemsLine}
-        </Link>
+        <div className="truncate">{itemsLine}</div>
       </td>
       <td className="px-1 py-2 align-middle text-foreground-muted">
-        <Link href={detailHref}>
-          <LocalTime date={order.created_at} mode="relative" />
-        </Link>
+        <LocalTime date={order.created_at} mode="relative" />
       </td>
       <td className="px-1 py-2 align-middle">
-        <Link href={detailHref}>
-          <StatusBadge status={order.status} />
-        </Link>
+        <StatusBadge status={order.status} />
       </td>
       <td className="px-1 py-2 align-middle text-right">
         <TransitionButton order={order} />

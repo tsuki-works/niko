@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { PhoneIncoming } from 'lucide-react';
 
 import { LocalTime } from '@/components/shared/local-time';
@@ -50,6 +53,8 @@ export function OrdersTable({
 }
 
 function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
+  const router = useRouter();
+
   const isLive = order.status === 'in_progress';
   const isFaded = order.status === 'completed' || order.status === 'cancelled';
   const fadedCell = isFaded ? 'text-foreground-faint' : '';
@@ -69,20 +74,35 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
 
   return (
     <tr
+      onClick={() => {
+        // Don't navigate when the user is selecting text — kitchen
+        // staff routinely copy order IDs / phone numbers to other
+        // windows. Released drag-selection would otherwise eat them.
+        if (window.getSelection()?.toString()) return;
+        router.push(detailHref);
+      }}
       className={cn(
-        'border-b border-border-subtle transition-colors hover:bg-surface-2/40',
+        'cursor-pointer border-b border-border-subtle transition-colors hover:bg-surface-2/40',
         isFresh && 'animate-row-enter',
       )}
       data-fresh={isFresh ? 'true' : undefined}
     >
+      {/* Cell 1 — the only <Link> in the row. The cell-1 link is the
+          single keyboard target per row; cells 2-5 are plain content
+          and the <tr> onClick handles mouse navigation. <TransitionButton>
+          in cell 6 stays independently focusable and stops propagation
+          on its own click. */}
       <Td className={cn('font-mono text-xs', fadedCell)}>
-        <Link href={detailHref} className="block">
+        <Link
+          href={detailHref}
+          aria-label={`View order ${orderShortId(order)}`}
+          className="block"
+        >
           {orderShortId(order)}
         </Link>
       </Td>
       <Td className="text-foreground-muted">
-        <Link
-          href={detailHref}
+        <span
           data-testid={`order-time-${order.call_sid}`}
           data-anchor-iso={timeColumnAnchor(order).toISOString()}
         >
@@ -94,17 +114,15 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
               mode="relative"
             />
           )}
-        </Link>
+        </span>
       </Td>
       <Td className={fadedCell}>
-        <Link href={detailHref} className="block">
-          <div className={cn('truncate', isLive && 'italic')}>
-            {isLive ? `Building… ${itemsSummary}` : itemsSummary}
-          </div>
-          {secondary && (
-            <div className="text-xs text-foreground-faint">{secondary}</div>
-          )}
-        </Link>
+        <div className={cn('truncate', isLive && 'italic')}>
+          {isLive ? `Building… ${itemsSummary}` : itemsSummary}
+        </div>
+        {secondary && (
+          <div className="text-xs text-foreground-faint">{secondary}</div>
+        )}
       </Td>
       <Td
         className={cn(
@@ -112,12 +130,10 @@ function OrderRow({ order, isFresh }: { order: Order; isFresh: boolean }) {
           fadedCell,
         )}
       >
-        <Link href={detailHref}>{formatCAD(order.subtotal)}</Link>
+        {formatCAD(order.subtotal)}
       </Td>
       <Td>
-        <Link href={detailHref}>
-          <StatusBadge status={order.status} />
-        </Link>
+        <StatusBadge status={order.status} />
       </Td>
       <Td>
         <TransitionButton order={order} />

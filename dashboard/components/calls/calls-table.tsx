@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { PhoneIncoming } from 'lucide-react';
 
 import { LocalTime } from '@/components/shared/local-time';
@@ -40,6 +43,8 @@ export function CallsTable({
 }
 
 function CallRow({ call }: { call: CallSummary }) {
+  const router = useRouter();
+
   const startedAt = new Date(call.started_at);
   const endedAt = new Date(call.ended_at);
   const durationSec = Math.max(
@@ -49,35 +54,45 @@ function CallRow({ call }: { call: CallSummary }) {
 
   const detailHref = `/calls/${encodeURIComponent(call.call_sid)}`;
   const status = mappedStatus(call);
+  const shortSid = call.call_sid.slice(0, 8);
 
   return (
-    <tr className="border-b border-border-subtle transition-colors hover:bg-surface-2/40">
+    <tr
+      onClick={() => {
+        // Don't navigate when the user is selecting text — call SIDs
+        // are exactly the kind of thing operators copy out of the table.
+        if (window.getSelection()?.toString()) return;
+        router.push(detailHref);
+      }}
+      className="cursor-pointer border-b border-border-subtle transition-colors hover:bg-surface-2/40"
+    >
+      {/* Cell 1 — the only <Link> in the row. The cell-1 link is the
+          single keyboard target per row; cells 2-5 are plain content
+          and the <tr> onClick handles mouse navigation. */}
       <Td>
-        <Link href={detailHref} className="inline-flex items-center gap-2">
+        <Link
+          href={detailHref}
+          aria-label={`View call ${shortSid}`}
+          className="inline-flex items-center gap-2"
+        >
           <PhoneIncoming
             className="size-3.5 text-foreground-muted"
             aria-hidden
           />
-          <span className="font-mono text-xs">
-            {call.call_sid.slice(0, 8)}…
-          </span>
+          <span className="font-mono text-xs">{shortSid}…</span>
         </Link>
       </Td>
       <Td className="text-foreground-muted">
-        <Link href={detailHref}>
-          <LocalTime date={startedAt} mode="datetime" />
-        </Link>
+        <LocalTime date={startedAt} mode="datetime" />
       </Td>
       <Td className="text-right font-mono tabular-nums">
-        <Link href={detailHref}>{formatDuration(durationSec)}</Link>
+        {formatDuration(durationSec)}
       </Td>
       <Td className="text-right font-mono tabular-nums">
-        <Link href={detailHref}>{call.transcript_count}</Link>
+        {call.transcript_count}
       </Td>
       <Td>
-        <Link href={detailHref}>
-          <StatusBadge status={status} />
-        </Link>
+        <StatusBadge status={status} />
       </Td>
     </tr>
   );

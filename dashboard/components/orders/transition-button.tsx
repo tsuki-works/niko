@@ -95,7 +95,14 @@ function ActiveButton({
   const [isPending, startTransition] = useTransition();
   const { addOptimistic, clearOptimistic } = useOptimisticStatus();
 
-  function onClick() {
+  function onClick(e: React.MouseEvent<HTMLButtonElement>) {
+    // Stop propagation so the row-level onClick in OrdersTable and
+    // ActiveOrdersWidget doesn't fire alongside the transition (which
+    // would BOTH transition the order AND navigate to its detail page).
+    // No-op when this button is rendered outside a clickable row
+    // (e.g. on the order detail page action row).
+    e.stopPropagation();
+
     addOptimistic({
       call_sid: order.call_sid,
       status: config.targetStatus,
