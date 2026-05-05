@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useId, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -38,20 +38,36 @@ const TRANSCRIPT_KINDS = new Set(['transcript_final', 'agent_reply']);
  *   live (amber) — caller activity / warnings
  *   cancelled (red) — errors / failed transfers
  *   log (neutral surface-3) — interim transcript, ended, skipped, default
+ *
+ * Split bg from fg so the icon container can keep the accent bg while
+ * the Tier 2 (telemetry) icon color is overridden cleanly to
+ * `text-foreground-subtle` without competing utilities on the same
+ * element.
  */
-const ACCENT = {
-  confirmed: 'bg-status-confirmed-bg text-status-confirmed',
-  preparing: 'bg-status-preparing-bg text-status-preparing',
-  ready: 'bg-status-ready-bg text-status-ready',
-  live: 'bg-status-live-bg text-status-live',
-  cancelled: 'bg-status-cancelled-bg text-status-cancelled',
-  log: 'bg-surface-3 text-foreground-muted',
+const ACCENT_BG = {
+  confirmed: 'bg-status-confirmed-bg',
+  preparing: 'bg-status-preparing-bg',
+  ready: 'bg-status-ready-bg',
+  live: 'bg-status-live-bg',
+  cancelled: 'bg-status-cancelled-bg',
+  log: 'bg-surface-3',
 } as const;
 
-type AccentKey = keyof typeof ACCENT;
+const ACCENT_FG = {
+  confirmed: 'text-status-confirmed',
+  preparing: 'text-status-preparing',
+  ready: 'text-status-ready',
+  live: 'text-status-live',
+  cancelled: 'text-status-cancelled',
+  log: 'text-foreground-muted',
+} as const;
+
+type AccentKey = keyof typeof ACCENT_BG;
 
 export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [showTelemetry, setShowTelemetry] = useState(false);
+
   const recordingUrl = timeline.recording_available
     ? `/api/calls/${timeline.call_sid}/recording`
     : null;
@@ -72,6 +88,13 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
     });
   }
 
+  const telemetryCount = timeline.events.filter(
+    (e) => tierOf(e) === 'telemetry',
+  ).length;
+  const visibleEvents = showTelemetry
+    ? timeline.events
+    : timeline.events.filter((e) => tierOf(e) === 'conversation');
+
   return (
     <section className="mx-auto flex max-w-5xl flex-col p-6">
       <Header timeline={timeline} />
@@ -82,17 +105,96 @@ export function CallTimelineView({ timeline }: { timeline: CallTimeline }) {
         </div>
       )}
 
-      <ol className="mt-4 flex flex-col">
-        {timeline.events.map((event, i) => (
+      <TelemetryToggle
+        enabled={showTelemetry}
+        onToggle={() => setShowTelemetry((v) => !v)}
+        hiddenCount={telemetryCount}
+      />
+
+      <ol className="flex flex-col">
+        {visibleEvents.map((event, i) => (
           <TimelineRow
             key={i}
             event={event}
+            tier={tierOf(event)}
             onSeek={recordingUrl ? seekTo : undefined}
             callStartMs={callStartMs}
           />
         ))}
       </ol>
     </section>
+  );
+}
+
+/**
+ * AGENT and CALLER are the only Tier 1 (conversation) events. Everything
+ * else is Tier 2 (telemetry). Voicemail is intentionally Tier 2 per the
+ * literal rule — flip its kind here if you want to promote conversational
+ * voicemail content into the always-visible transcript flow.
+ */
+function tierOf(event: CallEvent): 'conversation' | 'telemetry' {
+  return event.kind === 'transcript_final' || event.kind === 'agent_reply'
+    ? 'conversation'
+    : 'telemetry';
+}
+
+/**
+ * First role="switch" in the codebase. If you add another, mirror this:
+ *   - aria-checked written as a string ("true" / "false")
+ *   - explicit Space handler with preventDefault to avoid double-fire
+ *     on top of the native button's keypress-to-click translation
+ *   - focus-visible ring uses outline + outline-brand-muted +
+ *     outline-offset-2 to match the dashboard's keyboard-focus pattern
+ *
+ * No animation on the rows themselves — only the handle slides. The
+ * filtered list re-renders synchronously when `enabled` flips.
+ */
+function TelemetryToggle({
+  enabled,
+  onToggle,
+  hiddenCount,
+}: {
+  enabled: boolean;
+  onToggle: () => void;
+  hiddenCount: number;
+}) {
+  const labelId = useId();
+  const showCount = !enabled && hiddenCount > 0;
+
+  return (
+    <div className="mt-4 mb-4 flex items-center justify-between">
+      <span id={labelId} className="text-sm text-foreground-muted">
+        Show technical events
+        {showCount ? (
+          <span className="text-foreground-subtle"> ({hiddenCount} hidden)</span>
+        ) : null}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={enabled ? 'true' : 'false'}
+        aria-labelledby={labelId}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        className={cn(
+          'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+          'focus-visible:outline focus-visible:outline-brand-muted focus-visible:outline-offset-2',
+          enabled ? 'bg-brand' : 'bg-surface-3',
+        )}
+      >
+        <span
+          className={cn(
+            'inline-block size-4 rounded-full bg-background shadow-sm transition-transform',
+            enabled ? 'translate-x-4.5' : 'translate-x-0.5',
+          )}
+        />
+      </button>
+    </div>
   );
 }
 
@@ -119,63 +221,141 @@ function Header({ timeline }: { timeline: CallTimeline }) {
 
 function TimelineRow({
   event,
+  tier,
   onSeek,
   callStartMs,
 }: {
   event: CallEvent;
+  tier: 'conversation' | 'telemetry';
   onSeek?: (seconds: number) => void;
   callStartMs: number;
 }) {
   const ts = new Date(event.timestamp);
-  const { Icon, accent, label, body, copyText } = renderEvent(event);
+  const rendered = renderEvent(event);
 
   const isTranscript = TRANSCRIPT_KINDS.has(event.kind);
   const offsetSec = Math.max(0, (ts.getTime() - callStartMs) / 1000);
   const canSeek = isTranscript && onSeek !== undefined;
 
   function handleSeek() {
-    if (canSeek) onSeek!(offsetSec);
+    if (canSeek) onSeek(offsetSec);
   }
 
   function handleCopy() {
-    if (!copyText) return;
-    void navigator.clipboard.writeText(copyText).then(
+    if (!rendered.copyText) return;
+    void navigator.clipboard.writeText(rendered.copyText).then(
       () => toast.success('Turn copied'),
       () => toast.error('Copy failed'),
     );
   }
 
-  const RowTag = canSeek ? 'button' : 'div';
+  return tier === 'conversation' ? (
+    <ConversationRow
+      ts={ts}
+      rendered={rendered}
+      canSeek={canSeek}
+      offsetSec={offsetSec}
+      onSeek={handleSeek}
+      onCopy={handleCopy}
+    />
+  ) : (
+    <TelemetryRow ts={ts} rendered={rendered} onCopy={handleCopy} />
+  );
+}
+
+function ConversationRow({
+  ts,
+  rendered,
+  canSeek,
+  offsetSec,
+  onSeek,
+  onCopy,
+}: {
+  ts: Date;
+  rendered: RenderedEvent;
+  canSeek: boolean;
+  offsetSec: number;
+  onSeek: () => void;
+  onCopy: () => void;
+}) {
+  const { Icon, accent, label, body, copyText } = rendered;
 
   return (
-    <li className="flex items-start gap-3 border-b border-border-subtle py-2.5 last:border-b-0 hover:bg-surface-2/40">
-      <RowTag
-        type={canSeek ? 'button' : undefined}
-        onClick={canSeek ? handleSeek : undefined}
+    <li className="group flex items-start gap-3 border-b border-border-subtle py-4 last:border-b-0 hover:bg-surface-2/40">
+      <button
+        type="button"
+        onClick={canSeek ? onSeek : undefined}
+        disabled={!canSeek}
+        aria-label={
+          canSeek ? `Seek to ${label} at ${formatOffset(offsetSec)}` : undefined
+        }
         className={cn(
           'flex flex-1 items-start gap-3 bg-transparent p-0 text-left',
-          canSeek && 'cursor-pointer focus-visible:outline-2 focus-visible:outline-brand',
+          canSeek &&
+            'cursor-pointer focus-visible:outline focus-visible:outline-brand-muted focus-visible:outline-offset-2',
         )}
-        aria-label={canSeek ? `Seek to ${label} at ${formatOffset(offsetSec)}` : undefined}
       >
         <div
           className={cn(
             'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
-            ACCENT[accent],
+            ACCENT_BG[accent],
           )}
         >
-          <Icon className="size-3.5" aria-hidden />
+          <Icon className={cn('size-3.5', ACCENT_FG[accent])} aria-hidden />
         </div>
-        <div className="flex w-15 shrink-0 flex-col text-right text-xs font-mono text-foreground-muted tabular-nums">
-          <LocalTime date={ts} mode="absolute" />
-        </div>
-        <div className="flex flex-1 flex-col gap-0.5">
+        <div className="flex flex-1 flex-col gap-1.5">
           <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-            {label}
+            <LocalTime date={ts} mode="absolute" /> · {label}
           </p>
-          <div className="text-sm">{body}</div>
+          <div className="text-base leading-normal text-foreground">{body}</div>
         </div>
-      </RowTag>
+      </button>
+      {copyText ? (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="size-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          aria-label={`Copy ${label} text`}
+          onClick={onCopy}
+        >
+          <Copy className="size-3.5" />
+        </Button>
+      ) : null}
+    </li>
+  );
+}
+
+function TelemetryRow({
+  ts,
+  rendered,
+  onCopy,
+}: {
+  ts: Date;
+  rendered: RenderedEvent;
+  onCopy: () => void;
+}) {
+  const { Icon, accent, label, body, copyText } = rendered;
+
+  return (
+    <li className="flex items-center gap-3 border-b border-border-subtle py-2 last:border-b-0 hover:bg-surface-2/40">
+      <div
+        className={cn(
+          'flex size-7 shrink-0 items-center justify-center rounded-full',
+          ACCENT_BG[accent],
+        )}
+      >
+        <Icon className="size-3.5 text-foreground-subtle" aria-hidden />
+      </div>
+      <div className="flex min-w-0 flex-1 items-baseline gap-2 text-sm text-foreground-muted">
+        <span className="shrink-0 font-mono text-xs tabular-nums text-foreground-subtle">
+          <LocalTime date={ts} mode="absolute" />
+        </span>
+        <span className="shrink-0 text-xs font-medium uppercase tracking-wide">
+          {label}
+        </span>
+        <span className="truncate">{body}</span>
+      </div>
       {copyText ? (
         <Button
           type="button"
@@ -183,7 +363,7 @@ function TimelineRow({
           variant="ghost"
           className="size-7 shrink-0"
           aria-label={`Copy ${label} text`}
-          onClick={handleCopy}
+          onClick={onCopy}
         >
           <Copy className="size-3.5" />
         </Button>
@@ -285,7 +465,7 @@ function renderEvent(event: CallEvent): RenderedEvent {
         body: breakdown ? (
           <span>
             {headline}{' '}
-            <span className="font-mono text-xs text-foreground-faint">
+            <span className="font-mono text-xs text-foreground-subtle">
               {breakdown}
             </span>
           </span>
