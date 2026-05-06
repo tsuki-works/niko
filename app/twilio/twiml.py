@@ -7,8 +7,9 @@ in a fastapi.Response with media_type='application/xml'.
 Kept separate so that:
 - TwiML XML construction lives in one place (mirrors app/deepgram/);
 - builders are easy to snapshot-test without spinning up FastAPI;
-- the orchestration layer in app/telephony/ never imports from
-  twilio.twiml directly.
+- the orchestration layer in app/telephony/ avoids importing from
+  twilio.twiml directly (one exception: voicemail_twiml.py builds
+  Twilio Record TwiML inline; folding it in here is a follow-up).
 """
 
 from __future__ import annotations
