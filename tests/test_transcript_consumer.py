@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.stt.base import SpeechStartedEvent, TranscriptEvent
-from app.telephony.router import _CallState, _consume_transcripts
+from app.telephony.session import _CallState, _consume_transcripts
 from tests.fakes.stt import FakeSTT
 
 
@@ -31,10 +31,10 @@ async def test_interim_transcripts_ignored(monkeypatch):
     state = _make_state()
     handler = AsyncMock()
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", handler
+        "app.telephony.session._handle_final_transcript", handler
     )
     bg = MagicMock()
-    monkeypatch.setattr("app.telephony.router._bg_call_event", bg)
+    monkeypatch.setattr("app.telephony.session._bg_call_event", bg)
 
     fake = FakeSTT(events=[TranscriptEvent("partial", False, 0.7)])
     await fake.open()
@@ -53,10 +53,10 @@ async def test_final_transcript_mutates_state_and_dispatches(monkeypatch):
     state = _make_state()
     handler = AsyncMock()
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", handler
+        "app.telephony.session._handle_final_transcript", handler
     )
     bg = MagicMock()
-    monkeypatch.setattr("app.telephony.router._bg_call_event", bg)
+    monkeypatch.setattr("app.telephony.session._bg_call_event", bg)
 
     ws = AsyncMock()
     fake = FakeSTT(events=[TranscriptEvent("two pizzas", True, 0.9)])
@@ -77,9 +77,9 @@ async def test_final_transcript_mutates_state_and_dispatches(monkeypatch):
 async def test_low_confidence_increments_counter(monkeypatch):
     state = _make_state()
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", AsyncMock()
+        "app.telephony.session._handle_final_transcript", AsyncMock()
     )
-    monkeypatch.setattr("app.telephony.router._bg_call_event", MagicMock())
+    monkeypatch.setattr("app.telephony.session._bg_call_event", MagicMock())
 
     fake = FakeSTT(events=[
         TranscriptEvent("muffled", True, 0.3),
@@ -102,9 +102,9 @@ async def test_high_confidence_resets_counter(monkeypatch):
     state = _make_state()
     state.consecutive_low_confidence_turns = 3
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", AsyncMock()
+        "app.telephony.session._handle_final_transcript", AsyncMock()
     )
-    monkeypatch.setattr("app.telephony.router._bg_call_event", MagicMock())
+    monkeypatch.setattr("app.telephony.session._bg_call_event", MagicMock())
 
     fake = FakeSTT(events=[TranscriptEvent("clear", True, 0.95)])
     await fake.open()
@@ -132,7 +132,7 @@ async def test_speech_started_triggers_barge_in_when_llm_task_running(monkeypatc
     async def fake_barge(state_, ws_, *, trigger):
         barge_in_calls.append(trigger)
 
-    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+    monkeypatch.setattr("app.telephony.session._barge_in_now", fake_barge)
 
     fake = FakeSTT(events=[SpeechStartedEvent()])
     await fake.open()
@@ -163,7 +163,7 @@ async def test_speech_started_no_op_when_no_llm_task(monkeypatch):
     async def fake_barge(state_, ws_, *, trigger):
         barge_in_calls.append(trigger)
 
-    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+    monkeypatch.setattr("app.telephony.session._barge_in_now", fake_barge)
 
     fake = FakeSTT(events=[SpeechStartedEvent()])
     await fake.open()
@@ -195,7 +195,7 @@ async def test_speech_started_disabled_by_setting(monkeypatch):
     async def fake_barge(state_, ws_, *, trigger):
         barge_in_calls.append(trigger)
 
-    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+    monkeypatch.setattr("app.telephony.session._barge_in_now", fake_barge)
 
     fake = FakeSTT(events=[SpeechStartedEvent()])
     await fake.open()
@@ -220,16 +220,16 @@ async def test_consumer_logs_and_exits_on_stt_error(monkeypatch, caplog):
 
     state = _make_state()
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", AsyncMock()
+        "app.telephony.session._handle_final_transcript", AsyncMock()
     )
     bg = MagicMock()
-    monkeypatch.setattr("app.telephony.router._bg_call_event", bg)
+    monkeypatch.setattr("app.telephony.session._bg_call_event", bg)
 
     fake = FakeSTT()
     await fake.open()
     fake.feed_error(RuntimeError("dropped"))
 
-    with caplog.at_level(logging.ERROR, logger="app.telephony.router"):
+    with caplog.at_level(logging.ERROR, logger="app.telephony.session"):
         # Consumer catches the exception and exits cleanly.
         await _consume_transcripts(fake, state, AsyncMock())
 
@@ -247,7 +247,7 @@ async def test_consumer_logs_and_exits_on_stt_error(monkeypatch, caplog):
 async def test_consumer_propagates_cancellation(monkeypatch):
     state = _make_state()
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", AsyncMock()
+        "app.telephony.session._handle_final_transcript", AsyncMock()
     )
 
     fake = FakeSTT()
@@ -281,13 +281,13 @@ async def test_vad_then_final_transcript_creates_one_barge_in_then_new_turn(
     async def fake_barge(state_, ws_, *, trigger):
         barge_in_calls.append(trigger)
 
-    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+    monkeypatch.setattr("app.telephony.session._barge_in_now", fake_barge)
 
     handler = AsyncMock()
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", handler
+        "app.telephony.session._handle_final_transcript", handler
     )
-    monkeypatch.setattr("app.telephony.router._bg_call_event", MagicMock())
+    monkeypatch.setattr("app.telephony.session._bg_call_event", MagicMock())
 
     fake = FakeSTT(
         events=[
@@ -329,13 +329,13 @@ async def test_kill_switch_off_still_processes_final_transcripts(monkeypatch):
     async def fake_barge(state_, ws_, *, trigger):
         barge_in_calls.append(trigger)
 
-    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+    monkeypatch.setattr("app.telephony.session._barge_in_now", fake_barge)
 
     handler = AsyncMock()
     monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", handler
+        "app.telephony.session._handle_final_transcript", handler
     )
-    monkeypatch.setattr("app.telephony.router._bg_call_event", MagicMock())
+    monkeypatch.setattr("app.telephony.session._bg_call_event", MagicMock())
 
     fake = FakeSTT(
         events=[
