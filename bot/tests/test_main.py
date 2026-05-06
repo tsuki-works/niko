@@ -43,7 +43,10 @@ async def test_main_runs_both_subsystems_and_returns_when_one_finishes(monkeypat
     )()
 
     monkeypatch.setattr(main_mod, "get_settings", lambda: fake_settings)
-    monkeypatch.setattr(main_mod, "_build_handler", lambda settings: object())
+    monkeypatch.setattr(main_mod, "_build_handler", lambda settings, **kw: object())
+    monkeypatch.setattr(
+        main_mod, "_build_clients", lambda settings: (object(), object(), None)
+    )
     monkeypatch.setattr(
         main_mod,
         "JarvisBot",
@@ -89,7 +92,10 @@ async def test_main_cancels_http_when_gateway_raises(monkeypatch):
     )()
 
     monkeypatch.setattr(main_mod, "get_settings", lambda: fake_settings)
-    monkeypatch.setattr(main_mod, "_build_handler", lambda settings: object())
+    monkeypatch.setattr(main_mod, "_build_handler", lambda settings, **kw: object())
+    monkeypatch.setattr(
+        main_mod, "_build_clients", lambda settings: (object(), object(), None)
+    )
     monkeypatch.setattr(
         main_mod,
         "JarvisBot",
@@ -151,3 +157,13 @@ async def test_run_constructs_full_dep_graph(monkeypatch):
 
     await asyncio.wait_for(main_mod.run(), timeout=2.0)
     assert captured["on_message_handler"] is not None
+
+
+def test_main_imports_jobs_subsystem_without_error():
+    """Importing jarvis.main should populate the kind registry."""
+    import jarvis.main  # noqa: F401
+    from jarvis.jobs.kinds import KIND_REGISTRY
+
+    assert "pr_review_nudge" in KIND_REGISTRY
+    assert "digest_via_agent" in KIND_REGISTRY
+    assert "stuck_in_progress" in KIND_REGISTRY
