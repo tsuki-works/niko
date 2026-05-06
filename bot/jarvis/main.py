@@ -30,11 +30,8 @@ from google.cloud.firestore import AsyncClient as AsyncFirestoreClient
 # Side-effect: importing kinds populates KIND_REGISTRY so the manifest
 # validates at startup. Keep these imports — without them the scheduler
 # refuses to start.
-import jarvis.jobs.kinds.approved_pr_not_merged  # noqa: F401
-import jarvis.jobs.kinds.ci_red_pr_nudge  # noqa: F401
 import jarvis.jobs.kinds.dependabot_pair_check  # noqa: F401
 import jarvis.jobs.kinds.digest_via_agent  # noqa: F401
-import jarvis.jobs.kinds.pr_review_nudge  # noqa: F401
 import jarvis.jobs.kinds.stuck_in_progress  # noqa: F401
 from jarvis.agent import respond as agent_respond
 from jarvis.client import JarvisBot
