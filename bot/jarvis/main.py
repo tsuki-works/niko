@@ -251,10 +251,24 @@ async def run() -> None:
         # Fake gateways in tests don't expose wait_until_ready — guard so
         # those tests don't AttributeError here.
         if hasattr(bot, "wait_until_ready"):
-            try:
-                await bot.wait_until_ready()
-            except Exception:  # noqa: BLE001
-                logger.exception("wait_until_ready raised; scheduler disabled")
+            # bot.start() is running concurrently; it hasn't yet initialised
+            # the client's _ready event so wait_until_ready() raises
+            # RuntimeError("Client has not been properly initialised") if we
+            # call it too early. Poll until login has progressed past that
+            # gate, then await readiness normally.
+            ready_ok = False
+            for _ in range(100):  # ~10s of 100ms ticks
+                try:
+                    await bot.wait_until_ready()
+                    ready_ok = True
+                    break
+                except RuntimeError:
+                    await asyncio.sleep(0.1)
+                except Exception:  # noqa: BLE001
+                    logger.exception("wait_until_ready raised; scheduler disabled")
+                    return
+            if not ready_ok:
+                logger.error("gateway never became ready; scheduler disabled")
                 return
         try:
             validate_manifest(JOBS)
@@ -267,11 +281,13 @@ async def run() -> None:
         await self_reporter.boot(commit_sha=settings.commit_sha, job_count=len(sched.get_jobs()))
         bot._scheduler = sched  # type: ignore[attr-defined]
 
-    scheduler_task = asyncio.create_task(start_scheduler_after_ready(), name="scheduler-startup")
-
     app = build_app(commit_sha=settings.commit_sha)
 
+    # Start the gateway BEFORE the scheduler poller so bot.start() has a chance
+    # to begin login (sets the internal _ready event) before
+    # start_scheduler_after_ready() calls wait_until_ready().
     gateway_task = asyncio.create_task(bot.start(settings.discord_bot_token), name="gateway")
+    scheduler_task = asyncio.create_task(start_scheduler_after_ready(), name="scheduler-startup")
     http_task = asyncio.create_task(serve_http(app, settings.jarvis_http_port), name="http")
 
     try:
