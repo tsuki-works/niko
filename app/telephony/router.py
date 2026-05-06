@@ -23,7 +23,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
 
@@ -37,6 +36,7 @@ from app.restaurants.open_check import is_open_now
 from app.storage import call_sessions, recordings
 from app.storage import restaurants as restaurants_storage
 from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
+from app.stt import STTProvider, SpeechStartedEvent, TranscriptEvent, get_stt
 from app.telephony.voicemail_twiml import voicemail_response
 from app.tts import speak
 
@@ -322,77 +322,11 @@ class _CallState:
     # cleared by _run_llm_tts_turn's CancelledError handler when emitting
     # the barge_in Firestore event. None at all other times.
     barge_in_trigger: str | None = None
-
-
-async def _open_deepgram_connection(
-    call_sid: str | None,
-    restaurant_id: str | None,
-    on_final: Callable,
-    state: "_CallState | None" = None,
-):
-    assert settings.deepgram_api_key, "DEEPGRAM_API_KEY is not set"
-
-    dg = DeepgramClient(settings.deepgram_api_key)
-    conn = dg.listen.asynclive.v("1")
-
-    async def on_transcript(self, result, **kwargs):
-        alt = result.channel.alternatives[0]
-        text = alt.transcript.strip()
-        if not text:
-            return
-        label = "final" if result.is_final else "interim"
-        logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
-        if result.is_final:
-            # Track confidence for transfer-trigger detection (#7).
-            # Explicit None check — `or 1.0` would replace 0.0 (falsy)
-            # with 1.0, masking a legitimate worst-case misheard signal.
-            raw_confidence = getattr(alt, "confidence", 1.0)
-            confidence = 1.0 if raw_confidence is None else raw_confidence
-            if state is not None:
-                state.last_caller_transcript = text
-                if confidence < 0.5:
-                    state.consecutive_low_confidence_turns += 1
-                else:
-                    state.consecutive_low_confidence_turns = 0
-            _bg_call_event(
-                call_sid,
-                restaurant_id,
-                kind="transcript_final",
-                text=text,
-                detail={"text": text, "confidence": confidence},
-            )
-            asyncio.get_event_loop().create_task(on_final(text))
-
-    async def on_error(self, error, **kwargs):
-        logger.error("deepgram error call_sid=%s error=%s", call_sid, error)
-
-    conn.on(LiveTranscriptionEvents.Transcript, on_transcript)
-    conn.on(LiveTranscriptionEvents.Error, on_error)
-
-    # endpointing + utterance_end_ms together control how aggressively
-    # Deepgram closes a turn. We picked 800/1000 after a 2026-04-26
-    # Twilight test call where endpointing=300 fired ~7 false barge-ins
-    # in 3 minutes — every micro-pause mid-sentence ("i would like to"
-    # <breath> "have") was treated as a turn ending, and the AI kept
-    # saying "take your time" because it thought the caller had spoken.
-    # 800ms is Deepgram's recommended value for conversational flow;
-    # utterance_end_ms=1000 layers a prosody-aware end-of-utterance
-    # signal on top so we wait for "actually finished" instead of just
-    # "stopped making noise".
-    options = LiveOptions(
-        model="nova-2",
-        encoding="mulaw",
-        sample_rate=8000,
-        channels=1,
-        interim_results=True,
-        endpointing=800,
-        utterance_end_ms=1000,
-        vad_events=True,
-    )
-    started = await conn.start(options)
-    if not started:
-        raise RuntimeError(f"Deepgram connection failed to start call_sid={call_sid}")
-    return conn
+    # STT plugin lifecycle. Set on "start"; consumer task drains
+    # stt.events() and is cancelled in the WS handler's finally block.
+    stt: "STTProvider | None" = None
+    stt_provider: str | None = None
+    transcript_task: asyncio.Task | None = None
 
 
 def _make_recording_chunk_handler(state: "_CallState") -> Callable[[bytes], None] | None:
@@ -451,6 +385,60 @@ def _arm_silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
         return  # barge-in — caller spoke again, no watchdog needed
     _cancel_silence_task(state)
     state.silence_task = asyncio.get_event_loop().create_task(_silence_watchdog(state, websocket))
+
+
+async def _consume_transcripts(
+    stt: STTProvider,
+    state: _CallState,
+    websocket: WebSocket,
+) -> None:
+    """Background task consuming events from the STT plugin.
+
+    All state mutation, Firestore emission, and dispatch into
+    _handle_final_transcript happens here — the plugin is pure and
+    knows nothing about call state. SpeechStartedEvent is silently
+    ignored in this commit; α-7 wires VAD-triggered barge-in.
+    """
+    try:
+        async for event in stt.events():
+            if isinstance(event, SpeechStartedEvent):
+                continue  # α-7 will handle this
+
+            # event is a TranscriptEvent
+            if not event.is_final:
+                continue   # interim: captured in plugin logs only
+
+            state.last_caller_transcript = event.text
+            if event.confidence < 0.5:
+                state.consecutive_low_confidence_turns += 1
+            else:
+                state.consecutive_low_confidence_turns = 0
+
+            _bg_call_event(
+                state.call_sid,
+                _state_rid(state),
+                kind="transcript_final",
+                text=event.text,
+                detail={"text": event.text, "confidence": event.confidence},
+            )
+            await _handle_final_transcript(event.text, state, websocket)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "transcript consumer crashed call_sid=%s", state.call_sid
+        )
+        # Mark the call as errored so the transfer-trigger logic in
+        # finally has a signal to act on, and surface the failure to the
+        # dashboard so it doesn't look like dead air to whoever's watching.
+        state.llm_error_occurred = True
+        _bg_call_event(
+            state.call_sid,
+            _state_rid(state),
+            kind="error",
+            text=f"transcript consumer crashed: {exc}"[:500],
+            detail={"exception": type(exc).__name__},
+        )
 
 
 async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSocket) -> None:
@@ -1034,10 +1022,6 @@ async def media_stream(websocket: WebSocket) -> None:
     """
     await websocket.accept()
     state = _CallState(websocket=websocket)
-    dg_conn = None
-
-    async def on_final(text: str) -> None:
-        await _handle_final_transcript(text, state, websocket)
 
     try:
         while True:
@@ -1102,8 +1086,40 @@ async def media_stream(websocket: WebSocket) -> None:
                         kind="start",
                         detail={"stream_sid": state.stream_sid or ""},
                     )
-                dg_conn = await _open_deepgram_connection(
-                    state.call_sid, state.restaurant.id, on_final, state=state
+                state.stt, state.stt_provider = get_stt(call_sid=state.call_sid)
+                try:
+                    await state.stt.open()
+                except Exception:
+                    logger.exception(
+                        "stt: failed to open call_sid=%s", state.call_sid
+                    )
+                    _bg_call_event(
+                        state.call_sid,
+                        state.restaurant.id,
+                        kind="error",
+                        text="STT failed to open",
+                        detail={"provider": state.stt_provider},
+                    )
+                    # Speak a brief audible fallback before bailing — without
+                    # this the caller hears dead air until Twilio's idle
+                    # timeout closes the WS. TTS uses a different vendor path,
+                    # so a Deepgram-STT outage doesn't block this audio.
+                    if state.stream_sid:
+                        try:
+                            await speak(
+                                "Sorry, our service is briefly unavailable. Please call back in a moment.",
+                                websocket,
+                                state.stream_sid,
+                                on_chunk=_make_recording_chunk_handler(state),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "stt: fallback speak failed call_sid=%s",
+                                state.call_sid,
+                            )
+                    return
+                state.transcript_task = asyncio.create_task(
+                    _consume_transcripts(state.stt, state, websocket)
                 )
                 if settings.testing_mode and settings.commit_sha and state.stream_sid:
                     await speak(
@@ -1123,8 +1139,8 @@ async def media_stream(websocket: WebSocket) -> None:
                 if track == "inbound":
                     inbound_chunk = payload
                     outbound_chunk = b""
-                    if dg_conn is not None:
-                        await dg_conn.send(payload)
+                    if state.stt is not None:
+                        await state.stt.send(payload)
                 elif track == "outbound":
                     inbound_chunk = b""
                     outbound_chunk = payload
@@ -1169,6 +1185,21 @@ async def media_stream(websocket: WebSocket) -> None:
         # Auto-hangup: stop any pending grace-window timer; the call is
         # already ending so we don't need to fire the REST close (#78).
         _abort_pending_hangup(state)
+        # Quiesce the transcript consumer FIRST so it can't spawn a new
+        # state.llm_task from a late final transcript while we're cleaning
+        # up the in-flight one. Closing the STT connection here also
+        # short-circuits any pending Deepgram callbacks. Order matters:
+        # if we cancelled state.llm_task first, the consumer could create
+        # a fresh task from a buffered transcript that we'd never await.
+        if state.transcript_task and not state.transcript_task.done():
+            state.transcript_task.cancel()
+        if state.stt is not None:
+            try:
+                await state.stt.close()
+            except Exception:
+                logger.exception(
+                    "stt: close failed call_sid=%s", state.call_sid
+                )
         if state.llm_task and not state.llm_task.done():
             state.llm_task.cancel()
             try:
@@ -1243,5 +1274,3 @@ async def media_stream(websocket: WebSocket) -> None:
                     "recording: finalize/mark failed call_sid=%s",
                     state.call_sid,
                 )
-        if dg_conn is not None:
-            await dg_conn.finish()

@@ -34,3 +34,23 @@ async def test_speak_raises_for_unknown_tts_provider(monkeypatch):
     ws = MagicMock()
     with pytest.raises(ValueError, match="Unknown TTS provider"):
         await speak("hi", ws, "MZ1")
+
+
+def test_get_stt_returns_deepgram_by_default(monkeypatch):
+    monkeypatch.setattr(settings, "stt_provider", "deepgram")
+    monkeypatch.setattr(settings, "deepgram_api_key", "test-key")
+
+    from app.deepgram.stt import DeepgramSTT
+    from app.stt import get_stt
+
+    provider, name = get_stt(call_sid="CAtest")
+    assert isinstance(provider, DeepgramSTT)
+    assert name == "deepgram"
+
+
+def test_get_stt_raises_for_unknown_provider(monkeypatch):
+    monkeypatch.setattr(settings, "stt_provider", "whisper-not-implemented")
+    from app.stt import get_stt
+
+    with pytest.raises(ValueError, match="Unknown STT provider"):
+        get_stt(call_sid="CAtest")
