@@ -572,7 +572,7 @@ async def test_tool_use_turn_two_timing_events_handled_by_router(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_clear_twilio_audio_sends_clear_event_with_stream_sid():
+async def test_send_clear_emits_clear_event_with_stream_sid():
     """The helper emits the documented Twilio clear payload."""
     from app.twilio.media_stream import send_clear
 
@@ -585,7 +585,7 @@ async def test_clear_twilio_audio_sends_clear_event_with_stream_sid():
 
 
 @pytest.mark.asyncio
-async def test_clear_twilio_audio_skips_when_stream_sid_missing():
+async def test_send_clear_skips_when_stream_sid_missing():
     """No stream means we never opened the start frame — nothing to clear."""
     from app.twilio.media_stream import send_clear
 
@@ -627,7 +627,7 @@ def test_looks_like_goodbye_rejects_simple_acknowledgements():
 
 
 @pytest.mark.asyncio
-async def test_send_end_of_call_mark_emits_mark_payload():
+async def test_send_mark_emits_mark_payload():
     from app.telephony.router import END_OF_CALL_MARK
     from app.twilio.media_stream import send_mark
 
@@ -647,11 +647,12 @@ async def test_send_end_of_call_mark_emits_mark_payload():
 
 
 @pytest.mark.asyncio
-async def test_send_end_of_call_mark_returns_false_when_stream_sid_missing():
+async def test_send_mark_returns_false_when_stream_sid_missing():
+    from app.telephony.router import END_OF_CALL_MARK
     from app.twilio.media_stream import send_mark
 
     ws = AsyncMock()
-    sent = await send_mark(ws, None, name="end_of_call")
+    sent = await send_mark(ws, None, name=END_OF_CALL_MARK)
     assert sent is False
     ws.send_json.assert_not_called()
 
@@ -806,7 +807,7 @@ async def test_abort_pending_hangup_cancels_mark_timeout_task():
 
 
 @pytest.mark.asyncio
-async def test_clear_twilio_audio_swallows_websocket_disconnect():
+async def test_send_clear_swallows_websocket_disconnect():
     """If the caller already hung up, the clear send raises — but we
     must not let that exception escape into the call loop."""
     from starlette.websockets import WebSocketDisconnect
