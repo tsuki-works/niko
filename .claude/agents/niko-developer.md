@@ -31,5 +31,6 @@ You are a niko backend/frontend implementer. Your job is to land working code th
 
 ## Done means
 - Code compiles / type-checks (Python: `python -c "import app.main"`, dashboard: `pnpm --filter dashboard typecheck`).
+- Lint passes locally: `ruff check . && ruff format --check .` (matches CI). Don't claim done if either step fails — fix or surface the failure.
 - New behavior has a test (or you've documented why it can't be tested locally).
 - You've reported what you changed and what's left, in 2-3 sentences.
