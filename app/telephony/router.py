@@ -2,15 +2,19 @@
 
 POST /voice        — TwiML webhook: answers the inbound call, opens a
                      Twilio Media Stream so the STT→LLM→TTS pipeline can
-                     take over.  The AI greeting is delivered via Deepgram
-                     Aura on the 'start' event rather than a static TwiML
-                     <Say>.
+                     take over.  The AI greeting is delivered via the
+                     configured TTS provider on the 'start' event rather
+                     than a static TwiML <Say>.
 
 WS   /media-stream — Receives the Twilio Media Stream over WebSocket and
                      runs the full call loop:
-                       Deepgram transcript → stream_reply() → speak()
-                     Supports barge-in (new transcript cancels in-flight TTS)
-                     and a 10-second silence watchdog.
+                       STT transcript → stream_reply() → speak()
+                     Supports barge-in (VAD speech-started fires the
+                     fast path; final-transcript arrival fires the
+                     fallback path) and a 10-second silence watchdog.
+
+Vendor-specific STT/TTS implementations live under app/<vendor>/; this
+router only knows about the abstractions in app/stt and app/tts.
 """
 
 from __future__ import annotations
@@ -1021,12 +1025,12 @@ async def voicemail_transcription(
 
 @router.websocket("/media-stream")
 async def media_stream(websocket: WebSocket) -> None:
-    """Full call loop: Twilio Media Stream → Deepgram STT → LLM → Deepgram Aura TTS.
+    """Full call loop: Twilio Media Stream → STT → LLM → TTS.
 
     Twilio event types:
       connected  — protocol handshake
-      start      — stream open; initialises Order, opens Deepgram, fires AI greeting
-      media      — base64 mulaw 8 kHz audio forwarded to Deepgram
+      start      — stream open; initialises Order, opens STT, fires AI greeting
+      media      — base64 mulaw 8 kHz audio forwarded to the STT provider
       stop       — call ended; persists completed orders to Firestore
     """
     await websocket.accept()
@@ -1202,6 +1206,10 @@ async def media_stream(websocket: WebSocket) -> None:
         # a fresh task from a buffered transcript that we'd never await.
         if state.transcript_task and not state.transcript_task.done():
             state.transcript_task.cancel()
+            try:
+                await state.transcript_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if state.stt is not None:
             try:
                 await state.stt.close()
