@@ -14,19 +14,31 @@ def _ctx(*, sprint_nodes, has_recent_commit):
     settings.github_project_id = "PVT_kwDOEIgWQM4BVBdK"
 
     gh = MagicMock()
-    gh.graphql = AsyncMock(return_value={
-        "node": {"items": {"nodes": sprint_nodes}},
-    })
+    gh.graphql = AsyncMock(
+        return_value={
+            "node": {"items": {"nodes": sprint_nodes}},
+        }
+    )
 
     async def fake_get(path, params=None):
         if path == "/search/commits":
-            return {"items": [{"commit": {"committer": {"date": "2099-01-01T00:00:00Z"}}}] if has_recent_commit else []}
+            return {
+                "items": [{"commit": {"committer": {"date": "2099-01-01T00:00:00Z"}}}]
+                if has_recent_commit
+                else []
+            }
         return None
+
     gh.get = AsyncMock(side_effect=fake_get)
 
     return KindContext(
-        job=Job(name="stuck_in_progress", kind="stuck_in_progress",
-                cron="* * * * *", channel="#blockers", params={"stale_days": 3}),
+        job=Job(
+            name="stuck_in_progress",
+            kind="stuck_in_progress",
+            cron="* * * * *",
+            channel="#blockers",
+            params={"stale_days": 3},
+        ),
         discord_channel=MagicMock(),
         github_client=gh,
         anthropic_client=MagicMock(),
@@ -40,12 +52,17 @@ def _ctx(*, sprint_nodes, has_recent_commit):
 def _node(*, number, title, status, assignee):
     return {
         "id": f"node-{number}",
-        "content": {"title": title, "url": "u", "number": number,
-                    "assignees": {"nodes": [{"login": assignee}] if assignee else []}},
-        "fieldValues": {"nodes": [
-            {"name": status,
-             "field": {"name": "Status"}},
-        ]},
+        "content": {
+            "title": title,
+            "url": "u",
+            "number": number,
+            "assignees": {"nodes": [{"login": assignee}] if assignee else []},
+        },
+        "fieldValues": {
+            "nodes": [
+                {"name": status, "field": {"name": "Status"}},
+            ]
+        },
     }
 
 

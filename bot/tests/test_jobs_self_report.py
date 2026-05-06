@@ -31,7 +31,9 @@ async def test_boot_posts_online_message():
 async def test_job_ok_includes_target_channel_and_summary():
     client, channel = _fake_client_with_channel()
     reporter = SelfReporter(client)
-    job = Job(name="pr_review_nudge", kind="pr_review_nudge", cron="* * * * *", channel="#code-review")
+    job = Job(
+        name="pr_review_nudge", kind="pr_review_nudge", cron="* * * * *", channel="#code-review"
+    )
     await reporter.job_ok(job, summary="2 post(s) → #code-review")
     channel.send.assert_awaited_once()
     msg = channel.send.call_args.args[0]

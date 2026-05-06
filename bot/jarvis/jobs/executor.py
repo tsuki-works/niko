@@ -71,20 +71,24 @@ class JobExecutor:
                     await state.mark_dedup_seen(post.dedup_key, ttl=self._dedup_ttl(job))
                 posted += 1
 
-            await state.merge_state({
-                **result.state_writes,
-                "last_run_at": started,
-                "last_status": "ok",
-            })
+            await state.merge_state(
+                {
+                    **result.state_writes,
+                    "last_run_at": started,
+                    "last_status": "ok",
+                }
+            )
             await self._self_reporter.job_ok(
                 job, summary=f"{posted} post(s) → {job.channel} · {result.summary or 'ok'}"
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("job %s failed", job.name)
-            await state.merge_state({
-                "last_run_at": started,
-                "last_status": f"error: {type(exc).__name__}",
-            })
+            await state.merge_state(
+                {
+                    "last_run_at": started,
+                    "last_status": f"error: {type(exc).__name__}",
+                }
+            )
             await self._self_reporter.job_error(job, exc)
 
     async def _send(self, channel: Any, content: str) -> None:

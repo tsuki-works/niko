@@ -74,11 +74,13 @@ async def _gather_sources(ctx: KindContext) -> dict:
             for fv in (n.get("fieldValues") or {}).get("nodes") or []:
                 if (fv.get("field") or {}).get("name") == "Status":
                     status = fv.get("name")
-            items.append({
-                "number": content.get("number"),
-                "title": content.get("title"),
-                "status": status,
-            })
+            items.append(
+                {
+                    "number": content.get("number"),
+                    "title": content.get("title"),
+                    "status": status,
+                }
+            )
         out["sprint"] = {"items": items}
 
     if "recent_commits" in sources:
@@ -113,7 +115,9 @@ def _build_data_brief(data: dict) -> str:
     if sprint and sprint.get("items"):
         parts.append("**Sprint**")
         for it in sprint["items"]:
-            parts.append(f" • #{it.get('number')} [{it.get('status') or '?'}] {it.get('title') or ''}")
+            parts.append(
+                f" • #{it.get('number')} [{it.get('status') or '?'}] {it.get('title') or ''}"
+            )
     commits = data.get("recent_commits")
     if commits:
         parts.append("\n**Recent commits**")
@@ -123,7 +127,7 @@ def _build_data_brief(data: dict) -> str:
     if prs:
         parts.append("\n**Open PRs**")
         for p in prs[:10]:
-            author = (p.get('user') or {}).get('login') or '?'
+            author = (p.get("user") or {}).get("login") or "?"
             parts.append(f" • PR #{p.get('number')} {p.get('title')} ({author})")
     merged = data.get("merged_prs")
     if merged:
@@ -145,7 +149,9 @@ async def handle(ctx: KindContext) -> KindResult:
             max_tokens=_MAX_TOKENS,
             system=system_prompt,
             tools=[],
-            messages=[{"role": "user", "content": f"{brief}\n\nWrite a short Discord-friendly summary."}],
+            messages=[
+                {"role": "user", "content": f"{brief}\n\nWrite a short Discord-friendly summary."}
+            ],
         )
         polished = "".join(getattr(b, "text", "") for b in (msg.content or []))
         if not polished.strip():

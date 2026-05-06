@@ -61,10 +61,12 @@ def _job(channel="#jarvis"):
 async def test_run_skips_dedup_seen_posts():
     state = _fake_state()
     state.is_dedup_seen = AsyncMock(side_effect=[True, False])
-    result = KindResult(posts=[
-        PlannedPost(content="A", dedup_key="ka"),
-        PlannedPost(content="B", dedup_key="kb"),
-    ])
+    result = KindResult(
+        posts=[
+            PlannedPost(content="A", dedup_key="ka"),
+            PlannedPost(content="B", dedup_key="kb"),
+        ]
+    )
     executor, channel, _, _, _ = _fake_executor(state=state, kind_result=result)
     await executor.run(_job())
     assert channel.send.await_count == 1
@@ -73,7 +75,9 @@ async def test_run_skips_dedup_seen_posts():
 
 @pytest.mark.asyncio
 async def test_run_writes_state_and_self_reports_ok():
-    result = KindResult(posts=[PlannedPost(content="hi")], summary="1 nudge", state_writes={"foo": 1})
+    result = KindResult(
+        posts=[PlannedPost(content="hi")], summary="1 nudge", state_writes={"foo": 1}
+    )
     executor, _, state, self_reporter, _ = _fake_executor(kind_result=result)
     await executor.run(_job())
     state.merge_state.assert_awaited_once()
@@ -87,6 +91,7 @@ async def test_run_writes_state_and_self_reports_ok():
 async def test_run_handles_kind_exception_via_self_report_and_does_not_raise():
     async def boom(ctx):
         raise RuntimeError("kind blew up")
+
     KIND_REGISTRY["__boom_kind"] = boom  # type: ignore[assignment]
     executor, _, state, self_reporter, _ = _fake_executor()
     job = Job(name="t", kind="__boom_kind", cron="* * * * *", channel="#jarvis")

@@ -67,14 +67,16 @@ async def handle(ctx: KindContext) -> KindResult:
         recent = await find_branch_with_issue_ref(ctx.github_client, repo, number, since=since)
         if recent:
             continue
-        assignees = ((content.get("assignees") or {}).get("nodes") or [])
+        assignees = (content.get("assignees") or {}).get("nodes") or []
         first_login = assignees[0]["login"] if assignees else None
         title = content.get("title") or ""
         url = content.get("url") or ""
-        posts.append(PlannedPost(
-            content=f"⏳ {mention(first_login)} Issue #{number} has been 'In progress' for {stale_days}d+ with no recent commits — anything blocking? {title} {url}",
-            dedup_key=f"item-{item.get('id')}_{today}",
-        ))
+        posts.append(
+            PlannedPost(
+                content=f"⏳ {mention(first_login)} Issue #{number} has been 'In progress' for {stale_days}d+ with no recent commits — anything blocking? {title} {url}",
+                dedup_key=f"item-{item.get('id')}_{today}",
+            )
+        )
 
     return KindResult(posts=posts, summary=f"{len(posts)} stuck item(s)")
 

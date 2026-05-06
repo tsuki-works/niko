@@ -264,14 +264,10 @@ async def run() -> None:
             return
         sched = build_scheduler(executor, JOBS)
         sched.start()
-        await self_reporter.boot(
-            commit_sha=settings.commit_sha, job_count=len(sched.get_jobs())
-        )
+        await self_reporter.boot(commit_sha=settings.commit_sha, job_count=len(sched.get_jobs()))
         bot._scheduler = sched  # type: ignore[attr-defined]
 
-    scheduler_task = asyncio.create_task(
-        start_scheduler_after_ready(), name="scheduler-startup"
-    )
+    scheduler_task = asyncio.create_task(start_scheduler_after_ready(), name="scheduler-startup")
 
     app = build_app(commit_sha=settings.commit_sha)
 

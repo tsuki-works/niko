@@ -9,9 +9,13 @@ from jarvis.jobs.kinds.approved_pr_not_merged import handle
 
 
 def _ctx(*, prs, reviews_by_pr, check_runs_by_sha):
-    job = Job(name="approved_pr_not_merged", kind="approved_pr_not_merged",
-              cron="* * * * *", channel="#code-review",
-              params={"min_age_after_approval_hours": 2})
+    job = Job(
+        name="approved_pr_not_merged",
+        kind="approved_pr_not_merged",
+        cron="* * * * *",
+        channel="#code-review",
+        params={"min_age_after_approval_hours": 2},
+    )
 
     async def fake_get(path, params=None):
         if path.endswith("/pulls"):
@@ -23,6 +27,7 @@ def _ctx(*, prs, reviews_by_pr, check_runs_by_sha):
             sha = path.rsplit("/", 2)[-2]
             return {"check_runs": check_runs_by_sha.get(sha, [])}
         return None
+
     gh = MagicMock()
     gh.get = AsyncMock(side_effect=fake_get)
     settings = MagicMock()
@@ -41,11 +46,15 @@ def _ctx(*, prs, reviews_by_pr, check_runs_by_sha):
 
 @pytest.mark.asyncio
 async def test_emits_for_approved_green_pr():
-    prs = [{
-        "number": 200, "title": "Ship it", "html_url": "u",
-        "user": {"login": "MeetDigrajkar"},
-        "head": {"sha": "abc"},
-    }]
+    prs = [
+        {
+            "number": 200,
+            "title": "Ship it",
+            "html_url": "u",
+            "user": {"login": "MeetDigrajkar"},
+            "head": {"sha": "abc"},
+        }
+    ]
     reviews = {200: [{"state": "APPROVED", "submitted_at": "2026-05-06T08:00:00Z"}]}
     checks = {"abc": [{"name": "ci", "status": "completed", "conclusion": "success"}]}
     result = await handle(_ctx(prs=prs, reviews_by_pr=reviews, check_runs_by_sha=checks))
@@ -56,7 +65,9 @@ async def test_emits_for_approved_green_pr():
 
 @pytest.mark.asyncio
 async def test_skips_when_checks_red():
-    prs = [{"number": 1, "title": "x", "html_url": "u", "user": {"login": "a"}, "head": {"sha": "abc"}}]
+    prs = [
+        {"number": 1, "title": "x", "html_url": "u", "user": {"login": "a"}, "head": {"sha": "abc"}}
+    ]
     reviews = {1: [{"state": "APPROVED", "submitted_at": "2026-05-06T08:00:00Z"}]}
     checks = {"abc": [{"name": "ci", "status": "completed", "conclusion": "failure"}]}
     result = await handle(_ctx(prs=prs, reviews_by_pr=reviews, check_runs_by_sha=checks))
@@ -65,7 +76,9 @@ async def test_skips_when_checks_red():
 
 @pytest.mark.asyncio
 async def test_skips_when_approval_too_recent():
-    prs = [{"number": 1, "title": "x", "html_url": "u", "user": {"login": "a"}, "head": {"sha": "abc"}}]
+    prs = [
+        {"number": 1, "title": "x", "html_url": "u", "user": {"login": "a"}, "head": {"sha": "abc"}}
+    ]
     reviews = {1: [{"state": "APPROVED", "submitted_at": "2026-05-06T11:00:00Z"}]}
     checks = {"abc": [{"name": "ci", "status": "completed", "conclusion": "success"}]}
     result = await handle(_ctx(prs=prs, reviews_by_pr=reviews, check_runs_by_sha=checks))

@@ -10,18 +10,18 @@ from __future__ import annotations
 from typing import Any
 
 CHANNEL_IDS: dict[str, int] = {
-    "#jarvis":             1500002427389087787,
-    "#code-review":        1495194166886400021,
-    "#ci-alerts":          1495194041246285857,
-    "#blockers":           1495192657545396354,
-    "#weekly-sync":        1499827602397859961,
+    "#jarvis": 1500002427389087787,
+    "#code-review": 1495194166886400021,
+    "#ci-alerts": 1495194041246285857,
+    "#blockers": 1495192657545396354,
+    "#weekly-sync": 1499827602397859961,
     "#milestones-updates": 1495607520444551278,
-    "#decisions-log":      1495192153947766885,
-    "#general":            1495192027913130074,
-    "#infra":              1495193915362508911,
-    "#backend":            1495193663628640256,
-    "#frontend":           1495193789592113156,
-    "#demos":              1499827733302349844,
+    "#decisions-log": 1495192153947766885,
+    "#general": 1495192027913130074,
+    "#infra": 1495193915362508911,
+    "#backend": 1495193663628640256,
+    "#frontend": 1495193789592113156,
+    "#demos": 1499827733302349844,
 }
 
 
@@ -35,7 +35,5 @@ def resolve(client: Any, alias: str):
     cid = CHANNEL_IDS[alias]
     ch = client.get_channel(cid)
     if ch is None:
-        raise UnknownChannelError(
-            f"channel {alias} ({cid}) not in cache — bot not in guild?"
-        )
+        raise UnknownChannelError(f"channel {alias} ({cid}) not in cache — bot not in guild?")
     return ch

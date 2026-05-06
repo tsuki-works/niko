@@ -44,9 +44,7 @@ async def test_main_runs_both_subsystems_and_returns_when_one_finishes(monkeypat
 
     monkeypatch.setattr(main_mod, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main_mod, "_build_handler", lambda settings, **kw: object())
-    monkeypatch.setattr(
-        main_mod, "_build_clients", lambda settings: (object(), object(), None)
-    )
+    monkeypatch.setattr(main_mod, "_build_clients", lambda settings: (object(), object(), None))
     monkeypatch.setattr(
         main_mod,
         "JarvisBot",
@@ -93,9 +91,7 @@ async def test_main_cancels_http_when_gateway_raises(monkeypatch):
 
     monkeypatch.setattr(main_mod, "get_settings", lambda: fake_settings)
     monkeypatch.setattr(main_mod, "_build_handler", lambda settings, **kw: object())
-    monkeypatch.setattr(
-        main_mod, "_build_clients", lambda settings: (object(), object(), None)
-    )
+    monkeypatch.setattr(main_mod, "_build_clients", lambda settings: (object(), object(), None))
     monkeypatch.setattr(
         main_mod,
         "JarvisBot",

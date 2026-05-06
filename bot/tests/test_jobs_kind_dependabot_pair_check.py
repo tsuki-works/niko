@@ -15,27 +15,44 @@ def test_extract_package_from_bumps_title():
 
 
 def _ctx(prs, pairs):
-    job = Job(name="dependabot_pair_check", kind="dependabot_pair_check",
-              cron="* * * * *", channel="#code-review", params={"pairs": pairs})
+    job = Job(
+        name="dependabot_pair_check",
+        kind="dependabot_pair_check",
+        cron="* * * * *",
+        channel="#code-review",
+        params={"pairs": pairs},
+    )
     gh = MagicMock()
     gh.get = AsyncMock(return_value=prs)
     settings = MagicMock()
     settings.github_repo = "tsuki-works/niko"
     return KindContext(
-        job=job, discord_channel=MagicMock(), github_client=gh,
-        anthropic_client=MagicMock(), state=MagicMock(),
+        job=job,
+        discord_channel=MagicMock(),
+        github_client=gh,
+        anthropic_client=MagicMock(),
+        state=MagicMock(),
         now=datetime(2026, 5, 6, 12, 0, tzinfo=timezone.utc),
-        settings=settings, logger=MagicMock(),
+        settings=settings,
+        logger=MagicMock(),
     )
 
 
 @pytest.mark.asyncio
 async def test_emits_post_when_paired_prs_open():
     prs = [
-        {"number": 10, "title": "Bumps react from 19.1.0 to 19.2.5",
-         "html_url": "u/10", "user": {"login": "dependabot[bot]"}},
-        {"number": 11, "title": "Bumps react-dom from 19.1.0 to 19.2.5",
-         "html_url": "u/11", "user": {"login": "dependabot[bot]"}},
+        {
+            "number": 10,
+            "title": "Bumps react from 19.1.0 to 19.2.5",
+            "html_url": "u/10",
+            "user": {"login": "dependabot[bot]"},
+        },
+        {
+            "number": 11,
+            "title": "Bumps react-dom from 19.1.0 to 19.2.5",
+            "html_url": "u/11",
+            "user": {"login": "dependabot[bot]"},
+        },
     ]
     result = await handle(_ctx(prs, pairs=[["react", "react-dom"]]))
     assert len(result.posts) == 1
@@ -46,7 +63,13 @@ async def test_emits_post_when_paired_prs_open():
 
 @pytest.mark.asyncio
 async def test_no_post_when_only_one_of_pair_open():
-    prs = [{"number": 10, "title": "Bumps react from 19.1.0 to 19.2.5",
-            "html_url": "u/10", "user": {"login": "dependabot[bot]"}}]
+    prs = [
+        {
+            "number": 10,
+            "title": "Bumps react from 19.1.0 to 19.2.5",
+            "html_url": "u/10",
+            "user": {"login": "dependabot[bot]"},
+        }
+    ]
     result = await handle(_ctx(prs, pairs=[["react", "react-dom"]]))
     assert result.posts == []

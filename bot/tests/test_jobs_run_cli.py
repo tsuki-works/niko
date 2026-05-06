@@ -23,6 +23,8 @@ async def test_run_named_invokes_executor():
         executor = MagicMock()
         executor.run = AsyncMock()
         mk.return_value = executor
-        with patch("jarvis.jobs.run.JOBS", [Job(name="x", kind="k", cron="* * * * *", channel="#c")]):
+        with patch(
+            "jarvis.jobs.run.JOBS", [Job(name="x", kind="k", cron="* * * * *", channel="#c")]
+        ):
             await run_named("x")
         executor.run.assert_awaited_once()

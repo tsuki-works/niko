@@ -27,10 +27,12 @@ async def handle(ctx: KindContext) -> KindResult:
         check_name = first.get("name") or "unknown"
         check_url = first.get("html_url") or ""
         author = (pr.get("user") or {}).get("login")
-        posts.append(PlannedPost(
-            content=f"❌ PR #{number} — `{check_name}` failed. {mention(author)} {check_url or pr.get('html_url') or ''}",
-            dedup_key=f"PR-{number}_red_{sha}_{check_name}",
-        ))
+        posts.append(
+            PlannedPost(
+                content=f"❌ PR #{number} — `{check_name}` failed. {mention(author)} {check_url or pr.get('html_url') or ''}",
+                dedup_key=f"PR-{number}_red_{sha}_{check_name}",
+            )
+        )
     return KindResult(posts=posts, summary=f"{len(posts)} red PR(s)")
 
 

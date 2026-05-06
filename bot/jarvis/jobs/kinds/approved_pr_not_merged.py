@@ -48,10 +48,12 @@ async def handle(ctx: KindContext) -> KindResult:
 
         author = (pr.get("user") or {}).get("login")
         age = max(1, int((ctx.now - latest_approval).total_seconds() // 3600))
-        posts.append(PlannedPost(
-            content=f"✅ PR #{number} approved {age}h ago and green — {mention(author)} ready to merge? {pr.get('html_url') or ''}",
-            dedup_key=f"PR-{number}_approved_{latest_approval.date().isoformat()}",
-        ))
+        posts.append(
+            PlannedPost(
+                content=f"✅ PR #{number} approved {age}h ago and green — {mention(author)} ready to merge? {pr.get('html_url') or ''}",
+                dedup_key=f"PR-{number}_approved_{latest_approval.date().isoformat()}",
+            )
+        )
 
     return KindResult(posts=posts, summary=f"{len(posts)} mergeable PR(s)")
 

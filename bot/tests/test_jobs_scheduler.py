@@ -15,6 +15,7 @@ from jarvis.jobs.scheduler import (
 def _kind_ok():
     async def _noop(ctx):
         return None
+
     KIND_REGISTRY["__noop"] = _noop  # type: ignore[assignment]
 
 
@@ -44,10 +45,12 @@ def test_validate_manifest_bad_cron():
 def test_validate_manifest_duplicate_names():
     _kind_ok()
     with pytest.raises(ManifestValidationError, match="duplicate"):
-        validate_manifest([
-            Job(name="a", kind="__noop", cron="0 9 * * *", channel="#jarvis"),
-            Job(name="a", kind="__noop", cron="0 9 * * *", channel="#jarvis"),
-        ])
+        validate_manifest(
+            [
+                Job(name="a", kind="__noop", cron="0 9 * * *", channel="#jarvis"),
+                Job(name="a", kind="__noop", cron="0 9 * * *", channel="#jarvis"),
+            ]
+        )
 
 
 def test_build_scheduler_skips_disabled():

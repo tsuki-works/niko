@@ -43,10 +43,12 @@ async def test_list_check_runs_for_ref_returns_check_runs_array():
 @pytest.mark.asyncio
 async def test_list_dependabot_prs_filters_by_login():
     client = AsyncMock()
-    client.get = AsyncMock(return_value=[
-        {"number": 1, "user": {"login": "alice"}},
-        {"number": 2, "user": {"login": "dependabot[bot]"}},
-        {"number": 3, "user": {"login": "dependabot[bot]"}},
-    ])
+    client.get = AsyncMock(
+        return_value=[
+            {"number": 1, "user": {"login": "alice"}},
+            {"number": 2, "user": {"login": "dependabot[bot]"}},
+            {"number": 3, "user": {"login": "dependabot[bot]"}},
+        ]
+    )
     out = await list_dependabot_prs(client, "tsuki-works/niko")
     assert [p["number"] for p in out] == [2, 3]

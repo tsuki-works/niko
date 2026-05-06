@@ -30,15 +30,11 @@ def validate_manifest(jobs: list[Job]) -> None:
                 f"job {job.name}: unknown kind '{job.kind}' (registered: {sorted(KIND_REGISTRY)})"
             )
         if job.channel not in CHANNEL_IDS:
-            raise ManifestValidationError(
-                f"job {job.name}: unknown channel '{job.channel}'"
-            )
+            raise ManifestValidationError(f"job {job.name}: unknown channel '{job.channel}'")
         try:
             CronTrigger.from_crontab(job.cron, timezone=job.timezone)
         except Exception as e:  # noqa: BLE001
-            raise ManifestValidationError(
-                f"job {job.name}: invalid cron '{job.cron}' ({e})"
-            ) from e
+            raise ManifestValidationError(f"job {job.name}: invalid cron '{job.cron}' ({e})") from e
 
 
 def build_scheduler(executor, jobs: list[Job]) -> AsyncIOScheduler:

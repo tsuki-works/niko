@@ -39,10 +39,12 @@ async def handle(ctx: KindContext) -> KindResult:
         url = pr.get("html_url") or ""
 
         msg = f"👀 PR #{number} waiting on review ({age_hours}h) — {mention(target)} {title} {url}"
-        posts.append(PlannedPost(
-            content=msg,
-            dedup_key=f"PR-{number}_{ctx.now.date().isoformat()}",
-        ))
+        posts.append(
+            PlannedPost(
+                content=msg,
+                dedup_key=f"PR-{number}_{ctx.now.date().isoformat()}",
+            )
+        )
 
     return KindResult(
         posts=posts,

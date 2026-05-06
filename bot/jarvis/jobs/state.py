@@ -28,9 +28,7 @@ class FirestoreJobState:
 
     def _dedup_keys(self):
         return (
-            self._client.collection(_DEDUP_COLLECTION)
-            .document(self._job_name)
-            .collection("keys")
+            self._client.collection(_DEDUP_COLLECTION).document(self._job_name).collection("keys")
         )
 
     async def merge_state(self, fields: dict[str, Any]) -> None:
@@ -54,6 +52,4 @@ class FirestoreJobState:
 
     async def mark_dedup_seen(self, key: str, *, ttl: timedelta) -> None:
         now = datetime.now(timezone.utc)
-        await self._dedup_keys().document(key).set(
-            {"seen_at": now, "expires_at": now + ttl}
-        )
+        await self._dedup_keys().document(key).set({"seen_at": now, "expires_at": now + ttl})

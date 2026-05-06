@@ -15,8 +15,12 @@ def test_v1_manifest_has_seven_jobs():
     assert len(JOBS) == 7
     names = {j.name for j in JOBS}
     assert names == {
-        "morning_sprint_brief", "pr_review_nudge", "approved_pr_not_merged",
-        "ci_red_pr_nudge", "dependabot_pair_check", "stuck_in_progress",
+        "morning_sprint_brief",
+        "pr_review_nudge",
+        "approved_pr_not_merged",
+        "ci_red_pr_nudge",
+        "dependabot_pair_check",
+        "stuck_in_progress",
         "end_of_week_recap",
     }
 

@@ -9,11 +9,13 @@ from jarvis.jobs.kinds.digest_via_agent import _build_data_brief, handle
 
 
 def test_build_data_brief_renders_sections_for_present_data():
-    brief = _build_data_brief({
-        "sprint": {"items": [{"title": "Ship X", "number": 1, "status": "In progress"}]},
-        "recent_commits": [{"sha": "abcd", "title": "fix(x)", "author": "Meet"}],
-        "open_prs": [{"number": 5, "title": "T", "user": {"login": "Meet"}}],
-    })
+    brief = _build_data_brief(
+        {
+            "sprint": {"items": [{"title": "Ship X", "number": 1, "status": "In progress"}]},
+            "recent_commits": [{"sha": "abcd", "title": "fix(x)", "author": "Meet"}],
+            "open_prs": [{"number": 5, "title": "T", "user": {"login": "Meet"}}],
+        }
+    )
     assert "Sprint" in brief
     assert "Ship X" in brief
     assert "fix(x)" in brief
@@ -22,10 +24,15 @@ def test_build_data_brief_renders_sections_for_present_data():
 
 def _ctx(polish_text="polished!", anthropic_raises=False):
     job = Job(
-        name="morning", kind="digest_via_agent", cron="* * * * *",
+        name="morning",
+        kind="digest_via_agent",
+        cron="* * * * *",
         channel="#weekly-sync",
-        params={"sources": ["sprint", "recent_commits"], "lookback_hours": 24,
-                "polish_prompt": "morning_sprint_brief"},
+        params={
+            "sources": ["sprint", "recent_commits"],
+            "lookback_hours": 24,
+            "polish_prompt": "morning_sprint_brief",
+        },
     )
     gh = MagicMock()
     gh.graphql = AsyncMock(return_value={"node": {"items": {"nodes": []}}})
@@ -46,10 +53,14 @@ def _ctx(polish_text="polished!", anthropic_raises=False):
     settings.github_project_id = "PVT_x"
 
     return KindContext(
-        job=job, discord_channel=MagicMock(), github_client=gh, anthropic_client=anth,
+        job=job,
+        discord_channel=MagicMock(),
+        github_client=gh,
+        anthropic_client=anth,
         state=MagicMock(),
         now=datetime(2026, 5, 6, 9, 0, tzinfo=timezone.utc),
-        settings=settings, logger=MagicMock(),
+        settings=settings,
+        logger=MagicMock(),
     )
 
 
