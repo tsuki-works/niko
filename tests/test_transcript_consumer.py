@@ -1,6 +1,6 @@
-"""Tests for _consume_transcripts in app/telephony/router.py.
+"""Tests for _consume_transcripts in app/telephony/session.py.
 
-The consumer is the router's bridge between the STT plugin and call
+The consumer is the session's bridge between the STT plugin and call
 state. We feed scripted events into a FakeSTT and assert state changes,
 Firestore emissions, and dispatch into _handle_final_transcript.
 """
