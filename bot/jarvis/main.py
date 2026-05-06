@@ -26,12 +26,25 @@ import uvicorn
 from anthropic import AsyncAnthropic
 from google.cloud.firestore import AsyncClient as AsyncFirestoreClient
 
+# Side-effect: importing kinds populates KIND_REGISTRY so the manifest
+# validates at startup. Keep these imports — without them the scheduler
+# refuses to start.
+import jarvis.jobs.kinds.approved_pr_not_merged  # noqa: F401
+import jarvis.jobs.kinds.ci_red_pr_nudge  # noqa: F401
+import jarvis.jobs.kinds.dependabot_pair_check  # noqa: F401
+import jarvis.jobs.kinds.digest_via_agent  # noqa: F401
+import jarvis.jobs.kinds.pr_review_nudge  # noqa: F401
+import jarvis.jobs.kinds.stuck_in_progress  # noqa: F401
 from jarvis.agent import respond as agent_respond
 from jarvis.client import JarvisBot
 from jarvis.config import Settings, get_settings
 from jarvis.events import OnMessageHandler
 from jarvis.github_client import AsyncGitHubClient
 from jarvis.http.app import build_app
+from jarvis.jobs.executor import JobExecutor
+from jarvis.jobs.manifest import JOBS
+from jarvis.jobs.scheduler import build_scheduler, validate_manifest
+from jarvis.jobs.self_report import SelfReporter
 from jarvis.logging_setup import configure_logging
 from jarvis.memory import ThreadMemory
 from jarvis.ratelimit import InMemoryRateLimiter
@@ -47,21 +60,6 @@ from jarvis.tools.github import (
     build_open_issue_tool,
 )
 from jarvis.tools.sprint import build_get_current_sprint_tool
-
-# Side-effect: importing kinds populates KIND_REGISTRY so the manifest
-# validates at startup. Keep these imports — without them the scheduler
-# refuses to start.
-import jarvis.jobs.kinds.approved_pr_not_merged  # noqa: F401
-import jarvis.jobs.kinds.ci_red_pr_nudge  # noqa: F401
-import jarvis.jobs.kinds.dependabot_pair_check  # noqa: F401
-import jarvis.jobs.kinds.digest_via_agent  # noqa: F401
-import jarvis.jobs.kinds.pr_review_nudge  # noqa: F401
-import jarvis.jobs.kinds.stuck_in_progress  # noqa: F401
-
-from jarvis.jobs.executor import JobExecutor
-from jarvis.jobs.manifest import JOBS
-from jarvis.jobs.scheduler import build_scheduler, validate_manifest
-from jarvis.jobs.self_report import SelfReporter
 
 logger = logging.getLogger(__name__)
 

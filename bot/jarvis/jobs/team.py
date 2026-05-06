@@ -8,7 +8,6 @@ Add new mappings as teammates' GitHub logins are confirmed.
 
 from __future__ import annotations
 
-
 GH_LOGIN_TO_DISCORD: dict[str, int] = {
     "MeetDigrajkar": 295016116881850370,
 }

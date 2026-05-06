@@ -4,7 +4,6 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from jarvis.jobs import Job, KindContext, KindResult, PlannedPost
 from jarvis.jobs.executor import JobExecutor
 from jarvis.jobs.kinds import KIND_REGISTRY

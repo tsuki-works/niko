@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
 from jarvis.jobs import Job
 from jarvis.jobs.kinds import KIND_REGISTRY
 from jarvis.jobs.scheduler import (

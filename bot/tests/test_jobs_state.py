@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from jarvis.jobs.state import FirestoreJobState
 
 

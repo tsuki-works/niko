@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from jarvis.jobs.channels import CHANNEL_IDS, UnknownChannelError, resolve
 
 

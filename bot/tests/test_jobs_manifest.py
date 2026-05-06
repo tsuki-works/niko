@@ -7,7 +7,6 @@ import jarvis.jobs.kinds.dependabot_pair_check  # noqa: F401
 import jarvis.jobs.kinds.digest_via_agent  # noqa: F401
 import jarvis.jobs.kinds.pr_review_nudge  # noqa: F401
 import jarvis.jobs.kinds.stuck_in_progress  # noqa: F401
-
 from jarvis.jobs.manifest import JOBS
 from jarvis.jobs.scheduler import validate_manifest
 

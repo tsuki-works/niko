@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from jarvis.jobs.kinds import KIND_REGISTRY, register_kind
 
 

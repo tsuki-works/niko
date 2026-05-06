@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from jarvis.jobs import Job
 from jarvis.jobs.run import _resolve_job, run_named
 

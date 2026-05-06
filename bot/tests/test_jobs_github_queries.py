@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-
 from jarvis.jobs.github_queries import (
     list_check_runs_for_ref,
     list_dependabot_prs,

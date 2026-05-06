@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from jarvis.jobs import Job
 from jarvis.jobs.self_report import SelfReporter
 

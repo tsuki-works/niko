@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from jarvis.jobs import Job, KindContext
 from jarvis.jobs.kinds.stuck_in_progress import handle
 
