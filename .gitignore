@@ -29,6 +29,7 @@ venv/
 # Local dev helpers (per-developer; not team-shared)
 scripts/dev.ps1
 .claude/statusline-command.sh
+docs/07-local-development-setup.md
 
 # Local runtime logs
 uvicorn.log
