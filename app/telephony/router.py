@@ -28,8 +28,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
-from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
-
 from app.config import settings
 from app.llm.client import stream_reply
 from app.llm.prompts import build_system_prompt
@@ -42,6 +40,13 @@ from app.storage import restaurants as restaurants_storage
 from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
 from app.stt import STTProvider, SpeechStartedEvent, TranscriptEvent, get_stt
 from app.telephony.voicemail_twiml import voicemail_response
+from app.twilio.twiml import (
+    closed_hangup_twiml,
+    empty_twiml,
+    transfer_twiml,
+    unconfigured_hangup_twiml,
+    voice_twiml,
+)
 from app.tts import speak
 from app.twilio.media_stream import send_clear, send_mark
 
@@ -645,9 +650,6 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
     state.llm_task.add_done_callback(lambda _t: _arm_silence_watchdog(state, websocket))
 
 
-_UNCONFIGURED_TWIML_MESSAGE = "Sorry, this number is not currently configured. Goodbye."
-
-
 def _resolve_restaurant_for_voice(
     to_e164: str,
 ) -> Restaurant | None:
@@ -694,23 +696,20 @@ async def voice(request: Request) -> Response:
     call_sid = (form.get("CallSid") or "").strip()
     restaurant = _resolve_restaurant_for_voice(to_e164)
 
-    twiml = VoiceResponse()
     if restaurant is None:
         logger.warning("voice: no restaurant for To=%s — rejecting call", to_e164 or "(missing)")
-        twiml.say(_UNCONFIGURED_TWIML_MESSAGE)
-        twiml.hangup()
-        return Response(content=str(twiml), media_type="application/xml")
+        return Response(
+            content=str(unconfigured_hangup_twiml()),
+            media_type="application/xml",
+        )
 
-    if restaurant is not None and not is_open_now(restaurant):
+    if not is_open_now(restaurant):
         # After-hours: skip the AI flow, drop straight to voicemail.
         if not call_sid:
             # Defensive: Twilio always posts CallSid. Without it, we
             # can't key the recording or call_session — bail.
-            twiml = VoiceResponse()
-            twiml.say("Sorry, we're closed. Please call back during business hours.")
-            twiml.hangup()
             return Response(
-                content=str(twiml),
+                content=str(closed_hangup_twiml()),
                 media_type="application/xml",
             )
         try:
@@ -727,17 +726,10 @@ async def voice(request: Request) -> Response:
         )
 
     host = request.headers.get("host", "localhost:8000")
-    connect = Connect(action="/voice/stream-ended", method="POST")
-    # NOTE: <Connect><Stream> only supports the default ``inbound_track``;
-    # passing ``track="both_tracks"`` makes Twilio reject the TwiML and
-    # the call drops the moment the caller dismisses the trial-account
-    # interstitial. To capture the agent's voice in the recording, the
-    # /media-stream WS handler intercepts the TTS bytes we send out via
-    # ``speak()`` and feeds them directly into the recording session.
-    stream = connect.stream(url=f"wss://{host}/media-stream")
-    stream.parameter(name="restaurant_id", value=restaurant.id)
-    twiml.append(connect)
-    return Response(content=str(twiml), media_type="application/xml")
+    return Response(
+        content=str(voice_twiml(restaurant, host)),
+        media_type="application/xml",
+    )
 
 
 _TRANSFER_STATUS_MAP = {
@@ -765,7 +757,7 @@ async def stream_ended(request: Request) -> Response:
 
     if not call_sid:
         # Twilio always sends CallSid; missing → defensive hangup.
-        return Response(content=str(VoiceResponse()), media_type="application/xml")
+        return Response(content=str(empty_twiml()), media_type="application/xml")
 
     # Resolve the tenant by reading the call_session doc. Uses the legacy
     # flat path because this action callback only receives CallSid — the
@@ -779,7 +771,7 @@ async def stream_ended(request: Request) -> Response:
 
     if rid is None:
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -789,7 +781,7 @@ async def stream_ended(request: Request) -> Response:
 
     if not transfer_requested:
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -813,15 +805,10 @@ async def stream_ended(request: Request) -> Response:
             media_type="application/xml",
         )
 
-    twiml = VoiceResponse()
-    dial = Dial(
-        action=f"/voice/transfer-result?call_sid={call_sid}&rid={rid}",
-        method="POST",
-        timeout=20,
+    return Response(
+        content=str(transfer_twiml(restaurant.fallback_phone, call_sid, rid)),
+        media_type="application/xml",
     )
-    dial.number(restaurant.fallback_phone)
-    twiml.append(dial)
-    return Response(content=str(twiml), media_type="application/xml")
 
 
 @router.post("/voice/transfer-result")
@@ -852,7 +839,7 @@ async def transfer_result(
 
     if internal_status == "answered":
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -883,7 +870,7 @@ async def voicemail_recorded(
 
     if not recording_url or not recording_sid:
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -900,7 +887,7 @@ async def voicemail_recorded(
             recording_sid,
         )
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -910,7 +897,7 @@ async def voicemail_recorded(
             call_sid,
         )
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -928,7 +915,7 @@ async def voicemail_recorded(
             recording_sid,
         )
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -947,7 +934,7 @@ async def voicemail_recorded(
             call_sid,
         )
 
-    return Response(content=str(VoiceResponse()), media_type="application/xml")
+    return Response(content=str(empty_twiml()), media_type="application/xml")
 
 
 @router.post("/voice/voicemail-transcription")
