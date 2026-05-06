@@ -31,6 +31,20 @@ class Settings(BaseSettings):
     # to app/tts/__init__.py.
     tts_provider: str = "deepgram"
 
+    # STT provider selector. Today only "deepgram" is implemented.
+    stt_provider: str = "deepgram"
+
+    # Deepgram live STT options. Defaults match what was inline in
+    # router.py before the plugin extraction; tuning is done by env var
+    # rather than code change.
+    stt_model: str = "nova-2"
+    stt_endpointing_ms: int = 800
+    stt_utterance_end_ms: int = 1000
+    # Comma-separated keyterms. Only sent to Deepgram when non-empty,
+    # and only respected by models that support keyterm prompting
+    # (Nova-3 and later). Parsed lazily in app/deepgram/stt.py.
+    stt_keyterms: str = ""
+
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None
