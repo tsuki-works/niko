@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
@@ -68,6 +69,29 @@ logger = logging.getLogger(__name__)
 # community markers (good first issue, help wanted) are deliberately
 # omitted — those are for human triage, not bot-filed issues.
 _OPEN_ISSUE_LABEL_ALLOWLIST = ["bug", "enhancement", "documentation", "question"]
+
+
+def _detect_commit_sha() -> str:
+    """Return `git rev-parse HEAD` of the bot's repo, or "" on failure.
+
+    Used as a fallback when `Settings.commit_sha` (env `COMMIT_SHA`) is
+    unset — covers the fast-deploy path (`git pull && systemctl restart`)
+    that doesn't re-run `infra/jarvis/startup.sh` and so doesn't refresh
+    `/etc/jarvis/env`.
+    """
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+        return result.stdout.strip()
+    except Exception:  # noqa: BLE001 — best-effort; absence is non-fatal
+        return ""
 
 
 async def serve_http(app, port: int) -> None:
@@ -208,7 +232,8 @@ def _build_clients(settings: Settings) -> tuple[Any, Any, Any]:
 async def run() -> None:
     settings: Settings = get_settings()
     configure_logging(settings.jarvis_log_level)
-    logger.info("jarvis starting commit_sha=%s", settings.commit_sha or "(unset)")
+    commit_sha = settings.commit_sha or _detect_commit_sha()
+    logger.info("jarvis starting commit_sha=%s", commit_sha or "(unset)")
 
     anthropic_client, firestore_client, github_client = _build_clients(settings)
 
@@ -274,14 +299,14 @@ async def run() -> None:
             validate_manifest(JOBS)
         except Exception:  # noqa: BLE001
             logger.exception("manifest validation failed; scheduler disabled")
-            await self_reporter.boot(commit_sha=settings.commit_sha, job_count=0)
+            await self_reporter.boot(commit_sha=commit_sha, job_count=0)
             return
         sched = build_scheduler(executor, JOBS)
         sched.start()
-        await self_reporter.boot(commit_sha=settings.commit_sha, job_count=len(sched.get_jobs()))
+        await self_reporter.boot(commit_sha=commit_sha, job_count=len(sched.get_jobs()))
         bot._scheduler = sched  # type: ignore[attr-defined]
 
-    app = build_app(commit_sha=settings.commit_sha)
+    app = build_app(commit_sha=commit_sha)
 
     # Start the gateway BEFORE the scheduler poller so bot.start() has a chance
     # to begin login (sets the internal _ready event) before

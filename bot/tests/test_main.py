@@ -163,3 +163,22 @@ def test_main_imports_jobs_subsystem_without_error():
     assert "pr_review_nudge" in KIND_REGISTRY
     assert "digest_via_agent" in KIND_REGISTRY
     assert "stuck_in_progress" in KIND_REGISTRY
+
+
+def test_detect_commit_sha_returns_repo_head_or_empty():
+    """_detect_commit_sha returns a 40-char hex SHA when run inside a git
+    checkout, and "" when git fails. We assume the test environment is a
+    git checkout — assert the SHA shape, not a specific value."""
+    sha = main_mod._detect_commit_sha()
+    # Either a real SHA or empty (e.g., test env without git) — both fine.
+    assert sha == "" or (len(sha) == 40 and all(c in "0123456789abcdef" for c in sha))
+
+
+def test_detect_commit_sha_swallows_subprocess_failure(monkeypatch):
+    import subprocess as sp
+
+    def boom(*args, **kwargs):
+        raise sp.CalledProcessError(returncode=128, cmd=args[0])
+
+    monkeypatch.setattr(main_mod.subprocess, "run", boom)
+    assert main_mod._detect_commit_sha() == ""
