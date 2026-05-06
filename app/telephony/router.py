@@ -516,6 +516,11 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                 state.in_flight_transcript = ""
                 full_reply = "".join(full_reply_parts).strip()
                 if full_reply:
+                    logger.info(
+                        "agent_reply call_sid=%s text=%r",
+                        state.call_sid,
+                        full_reply,
+                    )
                     _bg_call_event(
                         state.call_sid,
                         _state_rid(state),
