@@ -16,7 +16,7 @@ from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 
 from app.config import settings
 from app.deepgram import _api_key
-from app.stt.base import STTEvent, TranscriptEvent
+from app.stt.base import STTEvent, SpeechStartedEvent, TranscriptEvent
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,9 @@ class DeepgramSTT:
         dg = DeepgramClient(_api_key())
         self._conn = dg.listen.asynclive.v("1")
         self._conn.on(LiveTranscriptionEvents.Transcript, self._on_transcript)
+        self._conn.on(
+            LiveTranscriptionEvents.SpeechStarted, self._on_speech_started
+        )
         self._conn.on(LiveTranscriptionEvents.Error, self._on_error)
 
         keyterms = _parse_keyterms(settings.stt_keyterms)
@@ -152,6 +155,15 @@ class DeepgramSTT:
         self._queue.put_nowait(
             TranscriptEvent(text=text, is_final=is_final, confidence=confidence)
         )
+
+    async def _on_speech_started(
+        self, _dg_handle: Any, _event: Any, **_kwargs: Any
+    ) -> None:
+        # Deepgram passes the connection handle as the first arg to bound
+        # handlers in addition to self; we ignore it. The event payload
+        # is also unused — we only need the signal that speech started.
+        logger.info("speech_started call_sid=%s", self._call_sid)
+        self._queue.put_nowait(SpeechStartedEvent())
 
     async def _on_error(self, _dg_handle: Any, error: Any, **_kwargs: Any) -> None:
         # Deepgram passes the connection handle as the first arg to bound

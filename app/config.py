@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # (Nova-3 and later). Parsed lazily in app/deepgram/stt.py.
     stt_keyterms: str = ""
 
+    # Instant barge-in via Deepgram VAD speech-started events. When True
+    # (default), a barge-in fires ~50ms after the caller begins speaking
+    # instead of waiting for the final transcript (~800-1800ms). Flip to
+    # False if VAD turns out to misfire on coughs or background noise on
+    # a real call — the existing final-transcript barge-in path absorbs
+    # the fallback case with no other code changes.
+    stt_instant_barge_in: bool = True
+
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None
