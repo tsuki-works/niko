@@ -39,6 +39,7 @@ from app.storage import call_sessions, recordings
 from app.storage import restaurants as restaurants_storage
 from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
 from app.stt import STTProvider, SpeechStartedEvent, TranscriptEvent, get_stt
+import app.twilio as app_twilio
 from app.telephony.voicemail_twiml import voicemail_response
 from app.twilio.twiml import (
     closed_hangup_twiml,
@@ -891,7 +892,7 @@ async def voicemail_recorded(
             media_type="application/xml",
         )
 
-    if not settings.twilio_account_sid or not settings.twilio_auth_token:
+    if app_twilio.twilio_basic_auth() is None:
         logger.error(
             "voicemail upload: twilio creds missing call_sid=%s",
             call_sid,
@@ -902,11 +903,10 @@ async def voicemail_recorded(
         )
 
     try:
-        gs_url = recordings.upload_voicemail_from_twilio(
+        gs_url = app_twilio.upload_voicemail(
             call_sid=call_sid,
             restaurant_id=rid,
             twilio_recording_url=recording_url,
-            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
         )
     except Exception:
         logger.exception(
