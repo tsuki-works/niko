@@ -3,12 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from jarvis.jobs.github_queries import (
-    list_check_runs_for_ref,
-    list_dependabot_prs,
-    list_open_prs,
-    list_pr_reviews,
-)
+from jarvis.jobs.github_queries import list_dependabot_prs, list_open_prs
 
 
 @pytest.mark.asyncio
@@ -21,23 +16,6 @@ async def test_list_open_prs_calls_correct_endpoint_and_returns_payload():
     args = client.get.call_args
     assert args.args[0] == "/repos/tsuki-works/niko/pulls"
     assert args.kwargs["params"]["state"] == "open"
-
-
-@pytest.mark.asyncio
-async def test_list_pr_reviews_uses_pulls_review_endpoint():
-    client = AsyncMock()
-    client.get = AsyncMock(return_value=[{"state": "APPROVED"}])
-    out = await list_pr_reviews(client, "tsuki-works/niko", 191)
-    assert out[0]["state"] == "APPROVED"
-    client.get.assert_awaited_once_with("/repos/tsuki-works/niko/pulls/191/reviews")
-
-
-@pytest.mark.asyncio
-async def test_list_check_runs_for_ref_returns_check_runs_array():
-    client = AsyncMock()
-    client.get = AsyncMock(return_value={"total_count": 2, "check_runs": [{"name": "ci"}]})
-    out = await list_check_runs_for_ref(client, "tsuki-works/niko", "abcd")
-    assert out == [{"name": "ci"}]
 
 
 @pytest.mark.asyncio

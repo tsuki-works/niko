@@ -25,15 +25,6 @@ async def list_open_prs(client: Any, repo: str, *, max_pages: int = 2) -> list[d
     return out
 
 
-async def list_pr_reviews(client: Any, repo: str, number: int) -> list[dict[str, Any]]:
-    return await client.get(f"/repos/{repo}/pulls/{number}/reviews") or []
-
-
-async def list_check_runs_for_ref(client: Any, repo: str, ref: str) -> list[dict[str, Any]]:
-    raw = await client.get(f"/repos/{repo}/commits/{ref}/check-runs")
-    return (raw or {}).get("check_runs") or []
-
-
 async def list_dependabot_prs(client: Any, repo: str) -> list[dict[str, Any]]:
     prs = await list_open_prs(client, repo)
     return [p for p in prs if (p.get("user") or {}).get("login") == "dependabot[bot]"]

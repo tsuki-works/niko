@@ -160,9 +160,9 @@ def test_main_imports_jobs_subsystem_without_error():
     import jarvis.main  # noqa: F401
     from jarvis.jobs.kinds import KIND_REGISTRY
 
-    assert "pr_review_nudge" in KIND_REGISTRY
     assert "digest_via_agent" in KIND_REGISTRY
     assert "stuck_in_progress" in KIND_REGISTRY
+    assert "dependabot_pair_check" in KIND_REGISTRY
 
 
 def test_detect_commit_sha_returns_repo_head_or_empty():

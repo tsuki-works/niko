@@ -1,4 +1,11 @@
-"""v1 manifest — seven jobs covering the team's most painful workflow gaps."""
+"""v1 manifest — synthesis-and-signal jobs for a 4-person team.
+
+The original v1 included three PR-nag kinds (pr_review_nudge,
+approved_pr_not_merged, ci_red_pr_nudge); they were removed before they
+ever fired — judged too noisy for a small team where everyone already
+sees PR state in #ci-alerts and the GitHub UI. If reintroduced later,
+their kinds + tests live in git history and can be cherry-picked back.
+"""
 
 from __future__ import annotations
 
@@ -15,27 +22,6 @@ JOBS: list[Job] = [
             "lookback_hours": 24,
             "polish_prompt": "morning_sprint_brief",
         },
-    ),
-    Job(
-        name="pr_review_nudge",
-        kind="pr_review_nudge",
-        cron="0 10-18/4 * * 1-5",
-        channel="#code-review",
-        params={"min_age_hours": 4, "dedup_window": "1d"},
-    ),
-    Job(
-        name="approved_pr_not_merged",
-        kind="approved_pr_not_merged",
-        cron="0 10-18/3 * * 1-5",
-        channel="#code-review",
-        params={"min_age_after_approval_hours": 2, "dedup_window": "12h"},
-    ),
-    Job(
-        name="ci_red_pr_nudge",
-        kind="ci_red_pr_nudge",
-        cron="0 10-18/2 * * 1-5",
-        channel="#code-review",
-        params={"dedup_window": "6h"},
     ),
     Job(
         name="dependabot_pair_check",
