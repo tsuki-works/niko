@@ -12,12 +12,8 @@ envelope, TwiML XML, or Twilio's REST API lives under this package.
 
 from __future__ import annotations
 
-import logging
-
 from app.config import settings
 from app.storage import recordings as _recordings
-
-logger = logging.getLogger(__name__)
 
 
 def twilio_basic_auth() -> tuple[str, str] | None:
