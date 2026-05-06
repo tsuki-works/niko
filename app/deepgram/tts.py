@@ -1,7 +1,7 @@
-"""Deepgram Aura TTS client for the niko voice agent.
+"""Deepgram Aura TTS implementation.
 
-Streams LLM reply text through Deepgram Aura and pipes mulaw 8 kHz audio
-back to the caller via the active Twilio Media Streams WebSocket.
+Streams Aura audio through Twilio Media Streams. Implements the SpeakFunc
+contract from app/tts/base.py.
 
 Why Deepgram Aura (over ElevenLabs):
   - Server-to-server design — no abuse detector that blocks Cloud Run egress.
@@ -13,17 +13,17 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 import httpx
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
+from app.deepgram import _DEEPGRAM_BASE, _api_key
 
 logger = logging.getLogger(__name__)
 
-_DEEPGRAM_BASE = "https://api.deepgram.com/v1"
 
 # Process-wide reusable client (#151). Constructing an httpx.AsyncClient
 # costs a TLS handshake on every speak() call; reusing one across the
@@ -43,22 +43,13 @@ def _get_client() -> httpx.AsyncClient:
     return _default_client
 
 
-def _api_key() -> str:
-    key = settings.deepgram_api_key
-    if not key:
-        raise RuntimeError(
-            "DEEPGRAM_API_KEY not set — cannot call TTS. Fetch credentials via /shared-creds."
-        )
-    return key
-
-
 async def speak(
     text: str,
     websocket: WebSocket,
     stream_sid: str,
     *,
     client: Optional[httpx.AsyncClient] = None,
-    recording_session: Optional[Any] = None,
+    on_chunk: Optional[Callable[[bytes], None]] = None,
     on_first_byte: Optional[Callable[[], None]] = None,
 ) -> None:
     """Stream Deepgram Aura TTS audio back into the Twilio call.
@@ -67,25 +58,6 @@ async def speak(
     bytes that Twilio's Media Streams accepts directly. Each binary chunk
     is base64-encoded and sent as a Twilio ``media`` WebSocket event
     immediately, keeping latency low.
-
-    Args:
-        text:              LLM reply text to synthesize.
-        websocket:         Active Twilio Media Streams WebSocket.
-        stream_sid:        Twilio streamSid from the ``start`` event.
-        client:            Optional injected httpx.AsyncClient (for unit tests).
-        recording_session: Optional ``RecordingUploadSession`` from
-                           ``app.storage.recordings``. When set, each TTS
-                           chunk is also fed into the recording's
-                           outbound side via ``append_chunks(session, b"",
-                           chunk)``. ``<Connect><Stream>`` only sends us
-                           inbound audio from Twilio, so the only way
-                           to get the agent's voice into the recording is
-                           to capture the bytes we generate ourselves.
-        on_first_byte:     Optional zero-arg sync callable fired exactly once
-                           when the first non-empty chunk arrives from
-                           Deepgram. Used by the router to measure actual
-                           TTS network latency (#152). Exceptions are
-                           swallowed so a buggy callback never breaks a call.
     """
     if not text.strip():
         return
@@ -143,13 +115,8 @@ async def speak(
             except WebSocketDisconnect:
                 logger.info("tts: websocket disconnected mid-stream stream_sid=%s", stream_sid)
                 return
-            if recording_session is not None:
+            if on_chunk is not None:
                 try:
-                    from app.storage import recordings as _recordings
-
-                    _recordings.append_chunks(recording_session, b"", chunk)
+                    on_chunk(chunk)
                 except Exception:
-                    logger.exception(
-                        "tts: failed to feed chunk into recording session stream_sid=%s",
-                        stream_sid,
-                    )
+                    logger.exception("tts: on_chunk callback raised stream_sid=%s", stream_sid)

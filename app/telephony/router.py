@@ -38,7 +38,7 @@ from app.storage import call_sessions, recordings
 from app.storage import restaurants as restaurants_storage
 from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
 from app.telephony.voicemail_twiml import voicemail_response
-from app.tts.client import speak
+from app.tts import speak
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -362,6 +362,29 @@ async def _open_deepgram_connection(
     return conn
 
 
+def _make_recording_chunk_handler(state: "_CallState") -> Callable[[bytes], None] | None:
+    """Return a chunk handler that appends outbound TTS audio to the
+    recording session, or None when no session is active.
+
+    Returning None means ``speak()`` won't fire ``on_chunk`` at all,
+    which is the desired behaviour when ``RECORDINGS_BUCKET`` is unset
+    and ``state.recording_session`` therefore stays None.
+    """
+    if state.recording_session is None:
+        return None
+    rs = state.recording_session
+
+    def _handle(chunk: bytes) -> None:
+        try:
+            recordings.append_chunks(rs, b"", chunk)
+        except Exception:
+            logger.exception(
+                "tts: recording append failed call_sid=%s", state.call_sid
+            )
+
+    return _handle
+
+
 def _state_rid(state: _CallState) -> str | None:
     """Restaurant id from state, or None if start hasn't resolved a tenant
     yet (early-lifecycle defense)."""
@@ -378,7 +401,7 @@ async def _silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
                 SILENCE_PROMPT,
                 websocket,
                 state.stream_sid,
-                recording_session=state.recording_session,
+                on_chunk=_make_recording_chunk_handler(state),
             )
     except asyncio.CancelledError:
         pass
@@ -488,7 +511,7 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                             chunk,
                             websocket,
                             state.stream_sid,
-                            recording_session=state.recording_session,
+                            on_chunk=_make_recording_chunk_handler(state),
                             on_first_byte=on_first_byte,
                         )
 
@@ -506,7 +529,7 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                         remainder,
                         websocket,
                         state.stream_sid,
-                        recording_session=state.recording_session,
+                        on_chunk=_make_recording_chunk_handler(state),
                         on_first_byte=on_first_byte,
                     )
                 state.history = event.final.history
@@ -1028,7 +1051,7 @@ async def media_stream(websocket: WebSocket) -> None:
                         f"Test build {settings.commit_sha[:7]}.",
                         websocket,
                         state.stream_sid,
-                        recording_session=state.recording_session,
+                        on_chunk=_make_recording_chunk_handler(state),
                     )
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)

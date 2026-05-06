@@ -1,4 +1,4 @@
-"""Unit tests for app.tts.client.speak().
+"""Unit tests for app.deepgram.tts.speak().
 
 All tests mock httpx and WebSocket — no real API calls made.
 """
@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-import app.tts.client as tts_module
-from app.tts.client import speak
+import app.deepgram.tts as tts_module
+from app.config import settings
+from app.deepgram.tts import speak
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,11 +57,24 @@ def make_mock_websocket() -> AsyncMock:
 
 @pytest.fixture(autouse=True)
 def _patch_settings():
-    """Default settings for every test — keeps the suite independent of local .env."""
-    with patch("app.tts.client.settings") as mock_settings:
-        mock_settings.deepgram_api_key = "test-key"
-        mock_settings.deepgram_tts_model = "aura-2-thalia-en"
-        yield mock_settings
+    """Default settings for every test — keeps the suite independent of local .env.
+
+    Both ``app.deepgram`` (where _api_key reads the key) and
+    ``app.deepgram.tts`` (where the model is read) use their own import of
+    ``settings``, so we patch both module-level names. We yield the
+    ``app.deepgram`` mock because _api_key() reads from there; tests that
+    want to test missing-key behaviour set deepgram_api_key = None on the
+    yielded object and it propagates correctly.
+    """
+    with patch("app.deepgram.settings") as mock_dg, patch(
+        "app.deepgram.tts.settings"
+    ) as mock_tts:
+        mock_dg.deepgram_api_key = "test-key"
+        mock_tts.deepgram_api_key = "test-key"
+        mock_tts.deepgram_tts_model = "aura-2-thalia-en"
+        # Keep the two mocks in sync when the test sets deepgram_api_key = None
+        # on the yielded object. We yield mock_dg so _api_key() sees the change.
+        yield mock_dg
 
 
 # ---------------------------------------------------------------------------
@@ -165,59 +179,39 @@ async def test_speak_uses_configured_model_and_mulaw_format():
 
 
 @pytest.mark.asyncio
-async def test_speak_feeds_recording_session_each_chunk(monkeypatch):
-    """When ``recording_session`` is passed, each TTS chunk is also fed
-    into the recording's outbound side via ``append_chunks``. This is
-    how the agent's voice gets into the recording — Twilio's
-    ``<Connect><Stream>`` only sends us inbound audio, so we capture
-    the bytes we generate ourselves."""
+async def test_speak_on_chunk_receives_each_audio_chunk():
+    """When ``on_chunk`` is passed, each TTS chunk is forwarded to it.
+    This is how the router captures outbound audio for the recording
+    session — the callback is constructed by _make_recording_chunk_handler."""
     chunks = [b"\xab\xcd", b"\xef\x01\x02", b"\x03"]
     client = make_mock_client(chunks)
     ws = make_mock_websocket()
-    fake_session = MagicMock(broken=False)
 
-    captured: list[tuple] = []
-
-    def fake_append(session, inbound, outbound):
-        captured.append((session, inbound, outbound))
-
-    monkeypatch.setattr("app.storage.recordings.append_chunks", fake_append)
+    captured: list[bytes] = []
 
     await speak(
         "Hello",
         ws,
         stream_sid="MZ123",
         client=client,
-        recording_session=fake_session,
+        on_chunk=captured.append,
     )
 
-    # One append_chunks call per TTS chunk. inbound side is always
-    # empty (caller side is captured separately by the WS handler).
-    assert len(captured) == 3
-    for (session, inbound, outbound), expected_chunk in zip(captured, chunks):
-        assert session is fake_session
-        assert inbound == b""
-        assert outbound == expected_chunk
+    assert captured == chunks
 
 
 @pytest.mark.asyncio
-async def test_speak_without_recording_session_skips_append(monkeypatch):
-    """If no recording session is passed, append_chunks is never called.
-    Defensive: the storage module's import should not be required when
-    recording is disabled or unavailable."""
+async def test_speak_without_on_chunk_skips_callback():
+    """If no on_chunk is passed, the call still completes normally
+    and no callback-related error is raised."""
     chunks = [b"\xab", b"\xcd"]
     client = make_mock_client(chunks)
     ws = make_mock_websocket()
 
-    called: list = []
-    monkeypatch.setattr(
-        "app.storage.recordings.append_chunks",
-        lambda *a, **kw: called.append(a),
-    )
-
+    # Should not raise; two media events sent
     await speak("Hello", ws, stream_sid="MZ123", client=client)
 
-    assert called == []
+    assert ws.send_json.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -363,3 +357,68 @@ async def test_speak_without_on_first_byte_works(monkeypatch):
     # No on_first_byte kwarg
     await speak("Hello", ws, stream_sid="MZ123", client=mock_client)
     ws.send_json.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# on_chunk callback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_chunk_receives_each_audio_chunk(monkeypatch):
+    """Every non-empty body chunk Deepgram returns is forwarded to on_chunk."""
+    monkeypatch.setattr(settings, "deepgram_api_key", "test-key")
+
+    chunks_seen: list[bytes] = []
+    fake_chunks = [b"\x01\x02", b"\x03\x04", b"\x05"]
+
+    async def fake_aiter_bytes():
+        for c in fake_chunks:
+            yield c
+
+    response = AsyncMock()
+    response.status_code = 200
+    response.aiter_bytes = fake_aiter_bytes
+
+    stream_cm = AsyncMock()
+    stream_cm.__aenter__ = AsyncMock(return_value=response)
+    stream_cm.__aexit__ = AsyncMock(return_value=None)
+
+    fake_client = AsyncMock()
+    fake_client.stream = MagicMock(return_value=stream_cm)
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+
+    await speak("hello", ws, "MZ123", client=fake_client, on_chunk=chunks_seen.append)
+
+    assert chunks_seen == fake_chunks
+
+
+@pytest.mark.asyncio
+async def test_on_chunk_exceptions_are_swallowed(monkeypatch, caplog):
+    """A buggy on_chunk callback never breaks a call."""
+    monkeypatch.setattr(settings, "deepgram_api_key", "test-key")
+
+    async def fake_aiter_bytes():
+        yield b"\x01"
+
+    response = AsyncMock()
+    response.status_code = 200
+    response.aiter_bytes = fake_aiter_bytes
+
+    stream_cm = AsyncMock()
+    stream_cm.__aenter__ = AsyncMock(return_value=response)
+    stream_cm.__aexit__ = AsyncMock(return_value=None)
+
+    fake_client = AsyncMock()
+    fake_client.stream = MagicMock(return_value=stream_cm)
+
+    ws = AsyncMock()
+    ws.send_json = AsyncMock()
+
+    def bad(_chunk: bytes) -> None:
+        raise RuntimeError("boom")
+
+    # No exception escapes; the assertion is that this returns normally.
+    await speak("hi", ws, "MZ123", client=fake_client, on_chunk=bad)
