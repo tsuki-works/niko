@@ -2,7 +2,9 @@
 
 Constructs the dependency graph (Anthropic client, Firestore client,
 ThreadMemory, OnMessageHandler) and starts the Discord gateway +
-FastAPI /healthz on the same asyncio event loop.
+FastAPI /healthz on the same asyncio event loop. Also boots the
+APScheduler-driven jobs subsystem after the gateway is ready, then
+posts a self-report into #jarvis.
 
 If either subsystem exits or raises, the other is cancelled and the
 exception (if any) is re-raised so the supervising process exits
@@ -24,12 +26,25 @@ import uvicorn
 from anthropic import AsyncAnthropic
 from google.cloud.firestore import AsyncClient as AsyncFirestoreClient
 
+# Side-effect: importing kinds populates KIND_REGISTRY so the manifest
+# validates at startup. Keep these imports — without them the scheduler
+# refuses to start.
+import jarvis.jobs.kinds.approved_pr_not_merged  # noqa: F401
+import jarvis.jobs.kinds.ci_red_pr_nudge  # noqa: F401
+import jarvis.jobs.kinds.dependabot_pair_check  # noqa: F401
+import jarvis.jobs.kinds.digest_via_agent  # noqa: F401
+import jarvis.jobs.kinds.pr_review_nudge  # noqa: F401
+import jarvis.jobs.kinds.stuck_in_progress  # noqa: F401
 from jarvis.agent import respond as agent_respond
 from jarvis.client import JarvisBot
 from jarvis.config import Settings, get_settings
 from jarvis.events import OnMessageHandler
 from jarvis.github_client import AsyncGitHubClient
 from jarvis.http.app import build_app
+from jarvis.jobs.executor import JobExecutor
+from jarvis.jobs.manifest import JOBS
+from jarvis.jobs.scheduler import build_scheduler, validate_manifest
+from jarvis.jobs.self_report import SelfReporter
 from jarvis.logging_setup import configure_logging
 from jarvis.memory import ThreadMemory
 from jarvis.ratelimit import InMemoryRateLimiter
@@ -62,31 +77,46 @@ async def serve_http(app, port: int) -> None:
     await server.serve()
 
 
-def _build_handler(settings: Settings) -> OnMessageHandler:
-    if not settings.anthropic_api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is required for PR 2 chat. Set it in .env or Secret Manager."
-        )
-    anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-    fs_kwargs = {}
-    if settings.gcp_project_id:
-        fs_kwargs["project"] = settings.gcp_project_id
-    firestore_client = AsyncFirestoreClient(**fs_kwargs)
+def _build_handler(
+    settings: Settings,
+    *,
+    anthropic_client: Optional[Any] = None,
+    firestore_client: Optional[Any] = None,
+    github_client: Optional[Any] = None,
+) -> OnMessageHandler:
+    """Build the OnMessageHandler.
+
+    Clients can be passed in (run() does this so the same instances are
+    shared with the scheduler subsystem). If omitted, they're built
+    locally — kept for backwards-compat with older tests that patch
+    only `_build_handler`.
+    """
+    if anthropic_client is None:
+        if not settings.anthropic_api_key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is required for PR 2 chat. Set it in .env or Secret Manager."
+            )
+        anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+    if firestore_client is None:
+        fs_kwargs = {}
+        if settings.gcp_project_id:
+            fs_kwargs["project"] = settings.gcp_project_id
+        firestore_client = AsyncFirestoreClient(**fs_kwargs)
+
     memory = ThreadMemory(firestore_client)
 
     rate_limiter = InMemoryRateLimiter(max_per_window=20, window_seconds=3600.0)
 
     tool_registry: Optional[ToolRegistry] = None
-    github_client = None
 
-    # get_recent_messages doesn't need GitHub — register it
-    # unconditionally so the bot can still ground replies in chat
-    # history when GITHUB_TOKEN is unset.
     chat_only_registry = ToolRegistry()
     chat_only_registry.register(build_get_recent_messages_tool())
 
-    if settings.github_token:
+    if github_client is None and settings.github_token:
         github_client = AsyncGitHubClient(token=settings.github_token)
+
+    if github_client is not None:
         tool_registry = ToolRegistry()
         tool_registry.register(
             build_get_current_sprint_tool(
@@ -149,10 +179,6 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
             docs_root=Path("docs"),
         )
 
-    # We don't know our own user id until on_ready fires. Capture it
-    # there and replace the placeholder. For now bot_user_id=0 — the
-    # router will simply not match it, which means the bot ignores
-    # everything until on_ready replaces it.
     return OnMessageHandler(
         bot_user_id=0,
         memory=memory,
@@ -165,22 +191,40 @@ def _build_handler(settings: Settings) -> OnMessageHandler:
     )
 
 
+def _build_clients(settings: Settings) -> tuple[Any, Any, Any]:
+    """Construct (anthropic, firestore, github) — extracted so tests can patch
+    one function instead of three module-level classes."""
+    if not settings.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is required.")
+    anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+    fs_kwargs = {"project": settings.gcp_project_id} if settings.gcp_project_id else {}
+    firestore_client = AsyncFirestoreClient(**fs_kwargs)
+    github_client = (
+        AsyncGitHubClient(token=settings.github_token) if settings.github_token else None
+    )
+    return anthropic_client, firestore_client, github_client
+
+
 async def run() -> None:
     settings: Settings = get_settings()
     configure_logging(settings.jarvis_log_level)
     logger.info("jarvis starting commit_sha=%s", settings.commit_sha or "(unset)")
 
-    handler = _build_handler(settings)
-    bot = JarvisBot(
-        guild_id=settings.discord_guild_id,
-        on_message_handler=handler,
+    anthropic_client, firestore_client, github_client = _build_clients(settings)
+
+    handler = _build_handler(
+        settings,
+        anthropic_client=anthropic_client,
+        firestore_client=firestore_client,
+        github_client=github_client,
     )
+    bot = JarvisBot(guild_id=settings.discord_guild_id, on_message_handler=handler)
+
     # discord.Client doesn't expose its user id until on_ready. Wrap
     # the existing on_ready so the handler's bot_user_id is updated as
     # soon as the gateway delivers it. Until that happens the handler's
     # initial bot_user_id=0 means the router never matches a mention,
     # so any too-early message is harmlessly ignored.
-    # Guard with hasattr: test stubs that replace JarvisBot don't have on_ready.
     if hasattr(bot, "on_ready"):
         original_on_ready = bot.on_ready
 
@@ -191,6 +235,39 @@ async def run() -> None:
                 logger.info("jarvis bot_user_id captured: %d", bot.user.id)
 
         bot.on_ready = patched_on_ready  # type: ignore[method-assign]
+
+    # --- scheduled jobs subsystem ---
+    self_reporter = SelfReporter(bot)
+    executor = JobExecutor(
+        discord_client=bot,
+        github_client=github_client,
+        anthropic_client=anthropic_client,
+        firestore_client=firestore_client,
+        self_reporter=self_reporter,
+        settings=settings,
+    )
+
+    async def start_scheduler_after_ready() -> None:
+        # Fake gateways in tests don't expose wait_until_ready — guard so
+        # those tests don't AttributeError here.
+        if hasattr(bot, "wait_until_ready"):
+            try:
+                await bot.wait_until_ready()
+            except Exception:  # noqa: BLE001
+                logger.exception("wait_until_ready raised; scheduler disabled")
+                return
+        try:
+            validate_manifest(JOBS)
+        except Exception:  # noqa: BLE001
+            logger.exception("manifest validation failed; scheduler disabled")
+            await self_reporter.boot(commit_sha=settings.commit_sha, job_count=0)
+            return
+        sched = build_scheduler(executor, JOBS)
+        sched.start()
+        await self_reporter.boot(commit_sha=settings.commit_sha, job_count=len(sched.get_jobs()))
+        bot._scheduler = sched  # type: ignore[attr-defined]
+
+    scheduler_task = asyncio.create_task(start_scheduler_after_ready(), name="scheduler-startup")
 
     app = build_app(commit_sha=settings.commit_sha)
 
@@ -208,6 +285,18 @@ async def run() -> None:
         for task in done:
             task.result()
     finally:
+        sched_attr = getattr(bot, "_scheduler", None)
+        if sched_attr is not None:
+            try:
+                sched_attr.shutdown(wait=False)
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler shutdown failed")
+        if not scheduler_task.done():
+            scheduler_task.cancel()
+            try:
+                await scheduler_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
         try:
             await bot.close()
         except Exception:  # noqa: BLE001 — close() is best-effort on shutdown

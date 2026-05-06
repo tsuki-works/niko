@@ -1,0 +1,39 @@
+%% Jarvis 2.0 scheduled jobs — runtime architecture
+%% regenerate: npx -p @mermaid-js/mermaid-cli mmdc -i jarvis-scheduled-jobs.mmd -o jarvis-scheduled-jobs.svg -b transparent
+flowchart TB
+  subgraph VM["GCE VM (e2-micro) — systemd: jarvis"]
+    subgraph BotProc["bot/jarvis — single asyncio loop"]
+      Gateway["JarvisBot<br/>Discord gateway<br/>(existing)"]
+      Sched["APScheduler<br/>AsyncIOScheduler<br/>(new)"]
+      Exec["JobExecutor<br/>• validate manifest<br/>• acquire dedup lock<br/>• dispatch to kind<br/>• post to channel<br/>• emit self-report"]
+      Reg["kind registry<br/>━━━━━━━━━━<br/>digest_via_agent<br/>pr_review_nudge<br/>approved_pr_not_merged<br/>ci_red_pr_nudge<br/>dependabot_pair_check<br/>stuck_in_progress"]
+      Tools["tool helpers<br/>(direct calls — no agent loop)<br/>AsyncGitHubClient<br/>sprint helpers<br/>search_repo_docs"]
+      Self["SelfReporter<br/>(middleware)"]
+    end
+  end
+
+  Discord[("Discord API")]
+  FS[("Firestore<br/>job_state/{name}<br/>job_dedup/{job}/{key}")]
+  GH[("GitHub API")]
+  Anth[("Anthropic API<br/>polish only · tools=[]")]
+
+  Gateway -.shares loop.- Sched
+  Sched -->|fires per cron| Exec
+  Exec --> Reg
+  Reg --> Tools
+  Tools --> GH
+  Reg -. digest kinds only .-> Anth
+  Exec <--> FS
+  Exec --> Self
+  Self -->|status to #jarvis| Discord
+  Exec -->|posts to target channel| Discord
+  Gateway <--> Discord
+
+  classDef new fill:#dcfce7,stroke:#16a34a,color:#0f172a,stroke-width:2px
+  classDef existing fill:#f5f5f5,stroke:#525252,color:#262626,stroke-width:1px
+  classDef ext fill:#dbeafe,stroke:#1d4ed8,color:#0f172a,stroke-width:2px
+  classDef store fill:#ede9fe,stroke:#6d28d9,color:#0f172a,stroke-width:2px
+  class Sched,Exec,Reg,Self new
+  class Gateway,Tools existing
+  class Discord,GH,Anth ext
+  class FS store
