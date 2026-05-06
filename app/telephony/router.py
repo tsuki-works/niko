@@ -256,6 +256,35 @@ async def clear_twilio_audio(websocket: WebSocket, stream_sid: str | None) -> No
         logger.exception("clear: failed to send Twilio clear event stream_sid=%s", stream_sid)
 
 
+async def _barge_in_now(
+    state: "_CallState",
+    websocket: WebSocket,
+    *,
+    trigger: str,
+) -> None:
+    """Stop the bot mid-utterance.
+
+    Three mechanical steps:
+      1. Cancel the in-flight LLM/TTS task → halt audio generation.
+      2. Cancel the silence watchdog → caller is speaking; "are you still
+         there?" would be wrong.
+      3. Send Twilio 'clear' → flush already-buffered audio playback (#74).
+
+    The barge_in Firestore event is NOT emitted here. It's emitted by
+    _run_llm_tts_turn's existing CancelledError handler when the task we
+    just cancelled actually receives the cancellation. Trigger
+    information flows via state.barge_in_trigger, which is set ONLY when
+    there is actually a task to cancel — preventing stale triggers from
+    leaking into the next turn's barge-in event, and preventing phantom
+    barge_in events on cleanup-path cancellations (WS shutdown).
+    """
+    if state.llm_task and not state.llm_task.done():
+        state.barge_in_trigger = trigger
+        state.llm_task.cancel()
+    _cancel_silence_task(state)
+    await clear_twilio_audio(websocket, state.stream_sid)
+
+
 @dataclass
 class _CallState:
     call_sid: str | None = None
@@ -289,6 +318,10 @@ class _CallState:
     # turn's user words aren't lost (#170). Cleared by ``_run_llm_tts_turn``
     # the moment ``event.final`` writes ``state.history``.
     in_flight_transcript: str = ""
+    # Set by _barge_in_now() before cancelling state.llm_task; read and
+    # cleared by _run_llm_tts_turn's CancelledError handler when emitting
+    # the barge_in Firestore event. None at all other times.
+    barge_in_trigger: str | None = None
 
 
 async def _open_deepgram_connection(
@@ -588,8 +621,28 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                             )
 
     except asyncio.CancelledError:
-        logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)
-        _bg_call_event(state.call_sid, _state_rid(state), kind="barge_in")
+        trigger = state.barge_in_trigger
+        state.barge_in_trigger = None
+        if trigger is not None:
+            # User-driven barge-in: trigger was set by _barge_in_now
+            # before cancelling the task. Emit the timeline event.
+            logger.info(
+                "llm_turn cancelled (barge-in trigger=%s) call_sid=%s",
+                trigger,
+                state.call_sid,
+            )
+            _bg_call_event(
+                state.call_sid,
+                _state_rid(state),
+                kind="barge_in",
+                detail={"trigger": trigger},
+            )
+        else:
+            # Cleanup-path cancellation: WS handler's finally block
+            # cancels the task during call teardown. No barge_in event.
+            logger.info(
+                "llm_turn cancelled (cleanup) call_sid=%s", state.call_sid
+            )
         raise
     except Exception as exc:
         logger.exception("llm_turn errored call_sid=%s", state.call_sid)
@@ -607,26 +660,32 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
 
 async def _handle_final_transcript(text: str, state: _CallState, websocket: WebSocket) -> None:
     interrupted = bool(state.llm_task and not state.llm_task.done())
-    if interrupted:
-        state.llm_task.cancel()
     # Carry forward — if any prior turn (cancelled or errored) left a
     # transcript on state without persisting it to history, prepend it
     # so Haiku sees the full caller intent in this turn (#170). The
-    # field is cleared by `_run_llm_tts_turn` only on `event.final`,
+    # field is cleared by ``_run_llm_tts_turn`` only on ``event.final``,
     # so a non-empty value here always means "user words from a prior
     # turn that never made it into history."
     if state.in_flight_transcript.strip():
         text = f"{state.in_flight_transcript} {text}".strip()
     silence_was_active = bool(state.silence_task and not state.silence_task.done())
-    _cancel_silence_task(state)
     # Caller spoke — abort any pending auto-hangup (#78). Even if they
     # spoke during the grace window after a confirmation, we want to
     # keep the call alive and process this transcript.
     _abort_pending_hangup(state)
-    if interrupted or silence_was_active:
-        # Drop Twilio's pending audio buffer so the caller actually hears
-        # us pause instead of getting talked over (#74).
+
+    if interrupted:
+        # True barge-in: a turn is running and we're interrupting it.
+        # The barge_in Firestore event fires from _run_llm_tts_turn's
+        # CancelledError handler.
+        await _barge_in_now(state, websocket, trigger="final_transcript")
+    elif silence_was_active:
+        # Caller resumed after a silence prompt — flush any leftover
+        # prompt audio still buffered, but this isn't a barge-in (no
+        # task to cancel, no event to emit).
+        _cancel_silence_task(state)
         await clear_twilio_audio(websocket, state.stream_sid)
+
     state.in_flight_transcript = text
     state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
     state.llm_task.add_done_callback(lambda _t: _arm_silence_watchdog(state, websocket))
