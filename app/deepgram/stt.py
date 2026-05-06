@@ -157,11 +157,15 @@ class DeepgramSTT:
         )
 
     async def _on_speech_started(
-        self, _dg_handle: Any, _event: Any, **_kwargs: Any
+        self, _dg_handle: Any, _event: Any = None, **_kwargs: Any
     ) -> None:
-        # Deepgram passes the connection handle as the first arg to bound
-        # handlers in addition to self; we ignore it. The event payload
-        # is also unused — we only need the signal that speech started.
+        # Deepgram's SDK calls _on_transcript and _on_error with
+        # (handle, payload), but SpeechStarted is invoked with just
+        # (handle) — no second positional arg. The `_event=None` default
+        # tolerates both shapes. Removing the default crashes the live
+        # SDK at runtime even though the unit test passes (the test was
+        # explicitly supplying a second arg, hiding the real SDK calling
+        # convention).
         logger.info("speech_started call_sid=%s", self._call_sid)
         self._queue.put_nowait(SpeechStartedEvent())
 

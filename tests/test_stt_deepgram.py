@@ -264,7 +264,15 @@ async def test_close_terminates_events_iterator(fake_deepgram_client):
 @pytest.mark.asyncio
 async def test_speech_started_callback_emits_event(fake_deepgram_client):
     """Deepgram's SpeechStarted event becomes a SpeechStartedEvent on
-    the queue."""
+    the queue.
+
+    The live Deepgram SDK invokes the SpeechStarted callback with just
+    the connection handle — NO second positional argument — unlike the
+    Transcript and Error callbacks which both receive a payload. We
+    invoke the handler the same way here (single positional arg) so a
+    regression that removes the `= None` default on _event is caught
+    by tests instead of by a real call (call CA061e6bf3 on 2026-05-06
+    crashed for exactly this reason)."""
     from deepgram import LiveTranscriptionEvents
     from app.deepgram.stt import DeepgramSTT
     from app.stt.base import SpeechStartedEvent
@@ -274,7 +282,8 @@ async def test_speech_started_callback_emits_event(fake_deepgram_client):
     handler = fake_deepgram_client._handlers[
         LiveTranscriptionEvents.SpeechStarted
     ]
-    await handler(stt, None)
+    # Mirror the live SDK: single positional arg (the connection handle).
+    await handler(stt)
 
     received = []
 
