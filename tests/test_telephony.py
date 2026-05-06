@@ -574,12 +574,12 @@ async def test_tool_use_turn_two_timing_events_handled_by_router(monkeypatch):
 @pytest.mark.asyncio
 async def test_clear_twilio_audio_sends_clear_event_with_stream_sid():
     """The helper emits the documented Twilio clear payload."""
-    from app.telephony.router import clear_twilio_audio
+    from app.twilio.media_stream import send_clear
 
     ws = AsyncMock()
     ws.send_json = AsyncMock()
 
-    await clear_twilio_audio(ws, "MZtest456")
+    await send_clear(ws, "MZtest456")
 
     ws.send_json.assert_awaited_once_with({"event": "clear", "streamSid": "MZtest456"})
 
@@ -587,12 +587,12 @@ async def test_clear_twilio_audio_sends_clear_event_with_stream_sid():
 @pytest.mark.asyncio
 async def test_clear_twilio_audio_skips_when_stream_sid_missing():
     """No stream means we never opened the start frame — nothing to clear."""
-    from app.telephony.router import clear_twilio_audio
+    from app.twilio.media_stream import send_clear
 
     ws = AsyncMock()
     ws.send_json = AsyncMock()
 
-    await clear_twilio_audio(ws, None)
+    await send_clear(ws, None)
 
     ws.send_json.assert_not_called()
 
@@ -628,12 +628,13 @@ def test_looks_like_goodbye_rejects_simple_acknowledgements():
 
 @pytest.mark.asyncio
 async def test_send_end_of_call_mark_emits_mark_payload():
-    from app.telephony.router import END_OF_CALL_MARK, send_end_of_call_mark
+    from app.telephony.router import END_OF_CALL_MARK
+    from app.twilio.media_stream import send_mark
 
     ws = AsyncMock()
     ws.send_json = AsyncMock()
 
-    sent = await send_end_of_call_mark(ws, "MZtest456")
+    sent = await send_mark(ws, "MZtest456", name=END_OF_CALL_MARK)
 
     assert sent is True
     ws.send_json.assert_awaited_once_with(
@@ -647,10 +648,10 @@ async def test_send_end_of_call_mark_emits_mark_payload():
 
 @pytest.mark.asyncio
 async def test_send_end_of_call_mark_returns_false_when_stream_sid_missing():
-    from app.telephony.router import send_end_of_call_mark
+    from app.twilio.media_stream import send_mark
 
     ws = AsyncMock()
-    sent = await send_end_of_call_mark(ws, None)
+    sent = await send_mark(ws, None, name="end_of_call")
     assert sent is False
     ws.send_json.assert_not_called()
 
@@ -810,13 +811,13 @@ async def test_clear_twilio_audio_swallows_websocket_disconnect():
     must not let that exception escape into the call loop."""
     from starlette.websockets import WebSocketDisconnect
 
-    from app.telephony.router import clear_twilio_audio
+    from app.twilio.media_stream import send_clear
 
     ws = AsyncMock()
     ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
 
     # No exception escaping is the assertion.
-    await clear_twilio_audio(ws, "MZtest456")
+    await send_clear(ws, "MZtest456")
 
 
 # ---------------------------------------------------------------------------
