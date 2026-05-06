@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # override via DEEPGRAM_TTS_MODEL.
     deepgram_tts_model: str = "aura-2-thalia-en"
 
+    # TTS provider selector. Today only "deepgram" is implemented; the
+    # selector seam exists so a second provider becomes a one-line add
+    # to app/tts/__init__.py.
+    tts_provider: str = "deepgram"
+
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None

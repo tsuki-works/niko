@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.config import settings
-from app.tts.client import speak
+from app.deepgram.tts import speak
 
 pytestmark = pytest.mark.skipif(
     not settings.deepgram_api_key,
