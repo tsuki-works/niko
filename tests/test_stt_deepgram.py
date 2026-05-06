@@ -259,3 +259,32 @@ async def test_close_terminates_events_iterator(fake_deepgram_client):
         received.append(event)
     assert received == []
     fake_deepgram_client.finish.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_speech_started_callback_emits_event(fake_deepgram_client):
+    """Deepgram's SpeechStarted event becomes a SpeechStartedEvent on
+    the queue."""
+    from deepgram import LiveTranscriptionEvents
+    from app.deepgram.stt import DeepgramSTT
+    from app.stt.base import SpeechStartedEvent
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    handler = fake_deepgram_client._handlers[
+        LiveTranscriptionEvents.SpeechStarted
+    ]
+    await handler(stt, None)
+
+    received = []
+
+    async def consume():
+        async for event in stt.events():
+            received.append(event)
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)
+    await stt.close()
+    await task
+
+    assert received == [SpeechStartedEvent()]

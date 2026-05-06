@@ -117,14 +117,22 @@ async def test_high_confidence_resets_counter(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_speech_started_currently_ignored(monkeypatch):
-    """Until α-7 wires VAD-triggered barge-in, SpeechStartedEvents are
-    silently dropped by the consumer."""
+async def test_speech_started_triggers_barge_in_when_llm_task_running(monkeypatch):
+    """VAD speech-started while a turn is in flight fires _barge_in_now
+    with trigger='vad'."""
     state = _make_state()
-    handler = AsyncMock()
-    monkeypatch.setattr(
-        "app.telephony.router._handle_final_transcript", handler
-    )
+
+    async def long_turn():
+        await asyncio.sleep(60)
+
+    state.llm_task = asyncio.create_task(long_turn())
+
+    barge_in_calls: list[str] = []
+
+    async def fake_barge(state_, ws_, *, trigger):
+        barge_in_calls.append(trigger)
+
+    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
 
     fake = FakeSTT(events=[SpeechStartedEvent()])
     await fake.open()
@@ -133,7 +141,77 @@ async def test_speech_started_currently_ignored(monkeypatch):
     await fake.close()
     await task
 
-    handler.assert_not_called()
+    assert barge_in_calls == ["vad"]
+
+    # Cleanup
+    state.llm_task.cancel()
+    try:
+        await state.llm_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_speech_started_no_op_when_no_llm_task(monkeypatch):
+    """VAD with no in-flight turn does nothing — there's nothing to
+    barge in on."""
+    state = _make_state()
+    state.llm_task = None
+
+    barge_in_calls: list[str] = []
+
+    async def fake_barge(state_, ws_, *, trigger):
+        barge_in_calls.append(trigger)
+
+    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+
+    fake = FakeSTT(events=[SpeechStartedEvent()])
+    await fake.open()
+    task = asyncio.create_task(_consume_transcripts(fake, state, AsyncMock()))
+    await asyncio.sleep(0)
+    await fake.close()
+    await task
+
+    assert barge_in_calls == []
+
+
+@pytest.mark.asyncio
+async def test_speech_started_disabled_by_setting(monkeypatch):
+    """When STT_INSTANT_BARGE_IN is False, VAD events are ignored even
+    with a turn in flight — caller falls back to final-transcript-driven
+    barge-in."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "stt_instant_barge_in", False)
+    state = _make_state()
+
+    async def long_turn():
+        await asyncio.sleep(60)
+
+    state.llm_task = asyncio.create_task(long_turn())
+
+    barge_in_calls: list[str] = []
+
+    async def fake_barge(state_, ws_, *, trigger):
+        barge_in_calls.append(trigger)
+
+    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+
+    fake = FakeSTT(events=[SpeechStartedEvent()])
+    await fake.open()
+    task = asyncio.create_task(_consume_transcripts(fake, state, AsyncMock()))
+    await asyncio.sleep(0)
+    await fake.close()
+    await task
+
+    assert barge_in_calls == []
+
+    # Cleanup
+    state.llm_task.cancel()
+    try:
+        await state.llm_task
+    except asyncio.CancelledError:
+        pass
 
 
 @pytest.mark.asyncio
@@ -179,3 +257,98 @@ async def test_consumer_propagates_cancellation(monkeypatch):
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_vad_then_final_transcript_creates_one_barge_in_then_new_turn(
+    monkeypatch,
+):
+    """The realistic production interleaving: VAD fires (instant
+    barge-in), then the caller's final transcript arrives. The consumer
+    should call _barge_in_now exactly once for the VAD event and dispatch
+    _handle_final_transcript exactly once for the final. Pins that the
+    consumer keeps iterating after a VAD event (would catch a future
+    refactor that turned `continue` into `return`)."""
+    state = _make_state()
+
+    async def long_turn():
+        await asyncio.sleep(60)
+
+    state.llm_task = asyncio.create_task(long_turn())
+
+    barge_in_calls: list[str] = []
+
+    async def fake_barge(state_, ws_, *, trigger):
+        barge_in_calls.append(trigger)
+
+    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+
+    handler = AsyncMock()
+    monkeypatch.setattr(
+        "app.telephony.router._handle_final_transcript", handler
+    )
+    monkeypatch.setattr("app.telephony.router._bg_call_event", MagicMock())
+
+    fake = FakeSTT(
+        events=[
+            SpeechStartedEvent(),
+            TranscriptEvent("two pizzas", True, 0.95),
+        ]
+    )
+    await fake.open()
+    ws = AsyncMock()
+    task = asyncio.create_task(_consume_transcripts(fake, state, ws))
+    await asyncio.sleep(0)
+    await fake.close()
+    await task
+
+    assert barge_in_calls == ["vad"]
+    handler.assert_awaited_once_with("two pizzas", state, ws)
+
+    # Cleanup
+    state.llm_task.cancel()
+    try:
+        await state.llm_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_off_still_processes_final_transcripts(monkeypatch):
+    """When STT_INSTANT_BARGE_IN is False, the consumer skips VAD events
+    but must continue iterating to handle the final transcript that
+    follows. Guards against a future refactor that turned the kill-switch
+    `continue` into a `return`."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "stt_instant_barge_in", False)
+    state = _make_state()
+
+    barge_in_calls: list[str] = []
+
+    async def fake_barge(state_, ws_, *, trigger):
+        barge_in_calls.append(trigger)
+
+    monkeypatch.setattr("app.telephony.router._barge_in_now", fake_barge)
+
+    handler = AsyncMock()
+    monkeypatch.setattr(
+        "app.telephony.router._handle_final_transcript", handler
+    )
+    monkeypatch.setattr("app.telephony.router._bg_call_event", MagicMock())
+
+    fake = FakeSTT(
+        events=[
+            SpeechStartedEvent(),
+            TranscriptEvent("hello", True, 0.95),
+        ]
+    )
+    await fake.open()
+    task = asyncio.create_task(_consume_transcripts(fake, state, AsyncMock()))
+    await asyncio.sleep(0)
+    await fake.close()
+    await task
+
+    assert barge_in_calls == []  # VAD ignored
+    handler.assert_awaited_once()  # but final still flowed through
+    assert handler.await_args.args[0] == "hello"

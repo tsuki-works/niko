@@ -396,13 +396,22 @@ async def _consume_transcripts(
 
     All state mutation, Firestore emission, and dispatch into
     _handle_final_transcript happens here — the plugin is pure and
-    knows nothing about call state. SpeechStartedEvent is silently
-    ignored in this commit; α-7 wires VAD-triggered barge-in.
+    knows nothing about call state. SpeechStartedEvent triggers an
+    instant barge-in via _barge_in_now (gated on STT_INSTANT_BARGE_IN).
     """
     try:
         async for event in stt.events():
             if isinstance(event, SpeechStartedEvent):
-                continue  # α-7 will handle this
+                # Instant barge-in: fire ~50ms after the caller starts
+                # speaking instead of waiting for the final transcript
+                # (~800-1800ms). The final-transcript path in
+                # _handle_final_transcript still runs as a fallback for
+                # short utterances or missed VAD signals.
+                if not settings.stt_instant_barge_in:
+                    continue
+                if state.llm_task and not state.llm_task.done():
+                    await _barge_in_now(state, websocket, trigger="vad")
+                continue
 
             # event is a TranscriptEvent
             if not event.is_final:
