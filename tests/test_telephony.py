@@ -21,7 +21,7 @@ from app.llm.client import LLMResponse, StreamEvent
 from app.main import app
 from app.orders.models import Order
 from app.storage import restaurants as restaurants_storage
-from app.telephony.router import _MIN_CHUNK_CHARS, _should_flush_chunk
+from app.telephony.session import _MIN_CHUNK_CHARS, _should_flush_chunk
 
 client = TestClient(app)
 
@@ -93,8 +93,9 @@ def mock_pipeline(monkeypatch):
         lambda **kw: (fake_stt, "deepgram"),
     )
     monkeypatch.setattr("app.telephony.router.speak", fake_speak)
+    monkeypatch.setattr("app.telephony.session.speak", fake_speak)
     monkeypatch.setattr(
-        "app.telephony.router.stream_reply", _make_fake_stream_reply()
+        "app.telephony.session.stream_reply", _make_fake_stream_reply()
     )
     monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
@@ -388,7 +389,7 @@ def test_media_stream_finalizes_recording_on_stop(mock_pipeline, monkeypatch):
 
 def test_ai_greeting_spawned_on_start(mock_pipeline, monkeypatch):
     """On start event, stream_reply is called with GREETING_TRANSCRIPT."""
-    from app.telephony.router import GREETING_TRANSCRIPT
+    from app.telephony.session import GREETING_TRANSCRIPT
 
     calls: list[str] = []
 
@@ -397,7 +398,7 @@ def test_ai_greeting_spawned_on_start(mock_pipeline, monkeypatch):
         yield StreamEvent(text_delta="Hello!")
         yield StreamEvent(final=LLMResponse(reply_text="Hello!", order=order, history=history))
 
-    monkeypatch.setattr("app.telephony.router.stream_reply", recording_stream_reply)
+    monkeypatch.setattr("app.telephony.session.stream_reply", recording_stream_reply)
 
     with client.websocket_connect("/media-stream") as ws:
         ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
@@ -442,7 +443,7 @@ def test_stop_event_persists_ready_order(mock_pipeline, monkeypatch):
         persisted.append(order)
         return order
 
-    monkeypatch.setattr("app.telephony.router.stream_reply", fake_stream_reply)
+    monkeypatch.setattr("app.telephony.session.stream_reply", fake_stream_reply)
     monkeypatch.setattr("app.telephony.router.persist_on_confirm", fake_persist)
 
     with client.websocket_connect("/media-stream") as ws:
@@ -490,8 +491,8 @@ async def test_tool_use_turn_two_timing_events_handled_by_router(monkeypatch):
     first_audio Firestore event detail because it arrives before speak()
     fires for the first time."""
     from app.storage import call_sessions
-    from app.telephony import router as router_mod
-    from app.telephony.router import _CallState, _run_llm_tts_turn
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
 
     first_timing = {
         "ttft_seconds": 0.8,
@@ -536,10 +537,10 @@ async def test_tool_use_turn_two_timing_events_handled_by_router(monkeypatch):
     def fake_bg_call_event(call_sid, rid, **kwargs):
         recorded_events.append({"call_sid": call_sid, "rid": rid, **kwargs})
 
-    monkeypatch.setattr(router_mod, "stream_reply", fake_stream_reply_tool_only_then_text)
-    monkeypatch.setattr(router_mod, "speak", fake_speak)
-    monkeypatch.setattr(router_mod, "_bg_call_event", fake_bg_call_event)
-    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "stream_reply", fake_stream_reply_tool_only_then_text)
+    monkeypatch.setattr(session_mod, "speak", fake_speak)
+    monkeypatch.setattr(session_mod, "_bg_call_event", fake_bg_call_event)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
 
     state = _CallState(
@@ -598,7 +599,7 @@ async def test_send_clear_skips_when_stream_sid_missing():
 
 
 def test_looks_like_goodbye_matches_terminal_phrases():
-    from app.telephony.router import _looks_like_goodbye
+    from app.telephony.session import _looks_like_goodbye
 
     assert _looks_like_goodbye("Great, your order is in — we'll have it ready for you soon!")
     assert _looks_like_goodbye("Perfect, see you soon!")
@@ -608,7 +609,7 @@ def test_looks_like_goodbye_matches_terminal_phrases():
 
 def test_looks_like_goodbye_rejects_questions():
     """A reply that ends with '?' is still asking the caller something."""
-    from app.telephony.router import _looks_like_goodbye
+    from app.telephony.session import _looks_like_goodbye
 
     assert not _looks_like_goodbye("Got that. Anything else, or are you all set?")
     # Even with goodbye-shaped phrasing earlier, trailing '?' = still asking.
@@ -618,7 +619,7 @@ def test_looks_like_goodbye_rejects_questions():
 def test_looks_like_goodbye_rejects_simple_acknowledgements():
     """Bot acknowledging an item mid-conversation must NOT trigger the
     auto-hangup fallback."""
-    from app.telephony.router import _looks_like_goodbye
+    from app.telephony.session import _looks_like_goodbye
 
     assert not _looks_like_goodbye("One large margarita, got it.")
     assert not _looks_like_goodbye("Sure, what size would you like?")
@@ -628,7 +629,7 @@ def test_looks_like_goodbye_rejects_simple_acknowledgements():
 
 @pytest.mark.asyncio
 async def test_send_mark_emits_mark_payload():
-    from app.telephony.router import END_OF_CALL_MARK
+    from app.telephony.session import END_OF_CALL_MARK
     from app.twilio.media_stream import send_mark
 
     ws = AsyncMock()
@@ -648,7 +649,7 @@ async def test_send_mark_emits_mark_payload():
 
 @pytest.mark.asyncio
 async def test_send_mark_returns_false_when_stream_sid_missing():
-    from app.telephony.router import END_OF_CALL_MARK
+    from app.telephony.session import END_OF_CALL_MARK
     from app.twilio.media_stream import send_mark
 
     ws = AsyncMock()
@@ -663,13 +664,13 @@ async def test_hang_up_after_grace_sets_should_hangup_event(monkeypatch):
     should_hangup event so the loop exits and the WebSocket closes —
     Twilio's <Connect> ends and the call hangs up. The REST update path
     is gone (it 404'd on <Connect>-state calls)."""
-    from app.telephony.router import (
+    from app.telephony.session import (
         HANGUP_GRACE_SECONDS,
         _CallState,
         _hang_up_after_grace,
     )
 
-    monkeypatch.setattr("app.telephony.router.HANGUP_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("app.telephony.session.HANGUP_GRACE_SECONDS", 0.01)
 
     state = _CallState(call_sid="CAtest", pending_hangup=True)
     assert not state.should_hangup.is_set()
@@ -684,9 +685,9 @@ async def test_hang_up_after_grace_sets_should_hangup_event(monkeypatch):
 async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
     """If pending_hangup gets cleared during the grace window (caller
     spoke), the should_hangup event MUST NOT fire."""
-    from app.telephony.router import _CallState, _hang_up_after_grace
+    from app.telephony.session import _CallState, _hang_up_after_grace
 
-    monkeypatch.setattr("app.telephony.router.HANGUP_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr("app.telephony.session.HANGUP_GRACE_SECONDS", 0.01)
 
     state = _CallState(call_sid="CAtest", pending_hangup=True)
     # Simulate: caller spoke during the grace window — _handle_final_transcript
@@ -700,7 +701,7 @@ async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
 
 def test_looks_like_goodbye_excludes_coming_right_up():
     """'coming right up' is mid-order, not a wrap-up — must NOT trigger fallback."""
-    from app.telephony.router import _looks_like_goodbye
+    from app.telephony.session import _looks_like_goodbye
 
     assert _looks_like_goodbye("One large Margherita coming right up.") is False
     assert _looks_like_goodbye("Two Cokes coming right up!") is False
@@ -708,7 +709,7 @@ def test_looks_like_goodbye_excludes_coming_right_up():
 
 def test_looks_like_goodbye_remaining_patterns_still_match():
     """Positive coverage so a drive-by removal of a pattern is caught."""
-    from app.telephony.router import _looks_like_goodbye
+    from app.telephony.session import _looks_like_goodbye
 
     assert _looks_like_goodbye("Thanks for ordering, see you soon!")
     assert _looks_like_goodbye("Your order is in — we'll have it ready shortly.")
@@ -719,7 +720,7 @@ def test_looks_like_goodbye_remaining_patterns_still_match():
 
 def test_hangup_grace_seconds_is_five():
     """Grace window must be 5s so callers can add late items."""
-    from app.telephony.router import HANGUP_GRACE_SECONDS
+    from app.telephony.session import HANGUP_GRACE_SECONDS
 
     assert HANGUP_GRACE_SECONDS == 5.0
 
@@ -730,13 +731,13 @@ async def test_mark_echo_timeout_fires_grace_window(monkeypatch):
     the grace window anyway so the call terminates."""
     import asyncio
 
-    from app.telephony import router as router_mod
-    from app.telephony.router import (
+    from app.telephony import session as session_mod
+    from app.telephony.session import (
         _CallState,
         _hang_up_after_mark_timeout,
     )
 
-    monkeypatch.setattr(router_mod, "MARK_ECHO_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(session_mod, "MARK_ECHO_TIMEOUT_SECONDS", 0.05)
 
     state = _CallState()
     state.call_sid = "CA_timeout_test"
@@ -747,7 +748,7 @@ async def test_mark_echo_timeout_fires_grace_window(monkeypatch):
     async def fake_grace(s):
         grace_started["flag"] = True
 
-    monkeypatch.setattr(router_mod, "_hang_up_after_grace", fake_grace)
+    monkeypatch.setattr(session_mod, "_hang_up_after_grace", fake_grace)
 
     await _hang_up_after_mark_timeout(state)
 
@@ -762,10 +763,10 @@ async def test_mark_echo_timeout_skips_grace_when_pending_hangup_cleared(monkeyp
     _abort_pending_hangup raced), the timeout must NOT fire the grace window."""
     import asyncio
 
-    from app.telephony import router as router_mod
-    from app.telephony.router import _CallState, _hang_up_after_mark_timeout
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _hang_up_after_mark_timeout
 
-    monkeypatch.setattr(router_mod, "MARK_ECHO_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(session_mod, "MARK_ECHO_TIMEOUT_SECONDS", 0.05)
 
     state = _CallState()
     state.call_sid = "CA_abort_race"
@@ -776,7 +777,7 @@ async def test_mark_echo_timeout_skips_grace_when_pending_hangup_cleared(monkeyp
     async def fake_grace(s):
         grace_started["flag"] = True
 
-    monkeypatch.setattr(router_mod, "_hang_up_after_grace", fake_grace)
+    monkeypatch.setattr(session_mod, "_hang_up_after_grace", fake_grace)
 
     await _hang_up_after_mark_timeout(state)
 
@@ -791,7 +792,7 @@ async def test_abort_pending_hangup_cancels_mark_timeout_task():
     timer doesn't fire after the caller speaks during the grace window."""
     import asyncio
 
-    from app.telephony.router import _abort_pending_hangup, _CallState
+    from app.telephony.session import _abort_pending_hangup, _CallState
 
     state = _CallState(call_sid="CAtest", pending_hangup=True)
 
@@ -894,9 +895,9 @@ def test_run_llm_tts_turn_flushes_at_long_comma_clause(monkeypatch, mock_pipelin
     async def capture_speak(text, websocket, stream_sid, **kw):
         chunks_spoken.append(text)
 
-    monkeypatch.setattr("app.telephony.router.speak", capture_speak)
+    monkeypatch.setattr("app.telephony.session.speak", capture_speak)
     monkeypatch.setattr(
-        "app.telephony.router.stream_reply",
+        "app.telephony.session.stream_reply",
         _make_fake_stream_reply_deltas(
             "One Chicken Fried Rice coming up,",
             " what size would you like?",
@@ -922,9 +923,9 @@ def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch, mock_pipeli
     async def capture_speak(text, websocket, stream_sid, **kw):
         chunks_spoken.append(text)
 
-    monkeypatch.setattr("app.telephony.router.speak", capture_speak)
+    monkeypatch.setattr("app.telephony.session.speak", capture_speak)
     monkeypatch.setattr(
-        "app.telephony.router.stream_reply",
+        "app.telephony.session.stream_reply",
         _make_fake_stream_reply_deltas("Got it,", " moving on."),
     )
 
@@ -962,8 +963,8 @@ def test_first_tts_byte_event_emitted_on_turn(mock_pipeline, monkeypatch):
     def capture_bg_event(call_sid, restaurant_id, **kwargs):
         recorded_events.append({"call_sid": call_sid, "rid": restaurant_id, **kwargs})
 
-    monkeypatch.setattr("app.telephony.router.speak", speak_with_callback)
-    monkeypatch.setattr("app.telephony.router._bg_call_event", capture_bg_event)
+    monkeypatch.setattr("app.telephony.session.speak", speak_with_callback)
+    monkeypatch.setattr("app.telephony.session._bg_call_event", capture_bg_event)
 
     with client.websocket_connect("/media-stream") as ws:
         ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
@@ -994,7 +995,7 @@ def test_first_tts_byte_event_emitted_on_turn(mock_pipeline, monkeypatch):
 
 def test_call_state_has_transfer_trigger_fields():
     """The new fields on _CallState are needed by the trigger detector."""
-    from app.telephony.router import _CallState
+    from app.telephony.session import _CallState
 
     state = _CallState()
     assert state.consecutive_low_confidence_turns == 0
@@ -1678,7 +1679,7 @@ def test_voice_after_hours_without_call_sid_bails_with_hangup(monkeypatch):
 def test_call_state_has_in_flight_transcript_field():
     """#170 — _CallState carries the cancelled-turn transcript forward
     so the next turn can prepend it to the new utterance."""
-    from app.telephony.router import _CallState
+    from app.telephony.session import _CallState
 
     state = _CallState()
     assert state.in_flight_transcript == ""
@@ -1694,8 +1695,8 @@ async def test_cancelled_turn_transcript_carried_forward(monkeypatch):
     chicken fried rice because turn 1 was cancelled by turn 2 1s later
     and only "and a coke" reached the model.
     """
-    import app.telephony.router as router_mod
-    from app.telephony.router import _CallState, _handle_final_transcript
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
 
     captured: list[str] = []
 
@@ -1704,10 +1705,10 @@ async def test_cancelled_turn_transcript_carried_forward(monkeypatch):
         # Stay in flight long enough to be cancelled by the next call.
         await asyncio.sleep(10.0)
 
-    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
     # Suppress the silence watchdog — its done_callback would otherwise
     # arm a real watchdog that tries to call the real speak() later.
-    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
 
     state = _CallState(call_sid="CAtest", stream_sid="MZtest")
     ws = AsyncMock()
@@ -1739,8 +1740,8 @@ async def test_cancelled_turn_transcript_carried_forward(monkeypatch):
 async def test_chained_cancels_accumulate_transcripts(monkeypatch):
     """#170 — a rapid burst of three finals should accumulate. Turn 3
     must see all three concatenated as one combined caller intent."""
-    import app.telephony.router as router_mod
-    from app.telephony.router import _CallState, _handle_final_transcript
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
 
     captured: list[str] = []
 
@@ -1748,8 +1749,8 @@ async def test_chained_cancels_accumulate_transcripts(monkeypatch):
         captured.append(transcript)
         await asyncio.sleep(10.0)
 
-    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
-    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
 
     state = _CallState(call_sid="CAtest", stream_sid="MZtest")
     ws = AsyncMock()
@@ -1780,8 +1781,8 @@ async def test_run_llm_tts_turn_clears_in_flight_transcript_on_final(monkeypatch
     """#170 — once a turn completes successfully (yields event.final),
     the carry-forward field must be cleared. The user message is now in
     state.history, so prepending it to the next turn would duplicate it."""
-    import app.telephony.router as router_mod
-    from app.telephony.router import _CallState, _run_llm_tts_turn
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
 
     async def fake_stream_reply(*, transcript, history, order, **kw):
         yield StreamEvent(final=LLMResponse(reply_text="ok", order=order, history=history))
@@ -1789,9 +1790,9 @@ async def test_run_llm_tts_turn_clears_in_flight_transcript_on_final(monkeypatch
     async def fake_speak(*a, **kw):
         pass
 
-    monkeypatch.setattr(router_mod, "stream_reply", fake_stream_reply)
-    monkeypatch.setattr(router_mod, "speak", fake_speak)
-    monkeypatch.setattr(router_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "stream_reply", fake_stream_reply)
+    monkeypatch.setattr(session_mod, "speak", fake_speak)
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
 
     state = _CallState(call_sid="CAtest", stream_sid="MZtest")
     state.in_flight_transcript = "chicken fried rice and a coke"
@@ -1808,8 +1809,8 @@ async def test_errored_turn_carries_transcript_forward(monkeypatch):
     user's words also never reach history. The next final transcript
     must still pick up the carry-forward — same class of bug as cancel,
     different code path."""
-    import app.telephony.router as router_mod
-    from app.telephony.router import _CallState, _handle_final_transcript
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
 
     captured: list[str] = []
 
@@ -1823,13 +1824,13 @@ async def test_errored_turn_carries_transcript_forward(monkeypatch):
         captured.append(transcript)
         await asyncio.sleep(10.0)
 
-    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
 
     state = _CallState(call_sid="CAtest", stream_sid="MZtest")
     ws = AsyncMock()
 
     # Turn 1 errors. in_flight_transcript should remain set.
-    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", erroring_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", erroring_run_llm_tts_turn)
     await _handle_final_transcript("i'll get one chicken fried rice", state, ws)
     # Wait for the error to propagate.
     if state.llm_task is not None:
@@ -1841,7 +1842,7 @@ async def test_errored_turn_carries_transcript_forward(monkeypatch):
 
     # Turn 2 with a fresh transcript — must still carry forward despite
     # state.llm_task.done() == True (errored, not running).
-    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", normal_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", normal_run_llm_tts_turn)
     await _handle_final_transcript("and a coke", state, ws)
     await asyncio.sleep(0)
 
@@ -1865,8 +1866,8 @@ async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch
     in the next turn's text. Today the trailing ``.strip()`` would clean
     it up regardless, but if a future refactor moves or removes that
     strip we want this test to catch the leak."""
-    import app.telephony.router as router_mod
-    from app.telephony.router import _CallState, _handle_final_transcript
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
 
     captured: list[str] = []
 
@@ -1874,8 +1875,8 @@ async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch
         captured.append(transcript)
         await asyncio.sleep(10.0)
 
-    monkeypatch.setattr(router_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
-    monkeypatch.setattr(router_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
 
     state = _CallState(call_sid="CAtest", stream_sid="MZtest")
     state.in_flight_transcript = "   \t\n  "

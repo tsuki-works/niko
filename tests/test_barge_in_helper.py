@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.telephony.router import _CallState, _barge_in_now
+from app.telephony.session import _CallState, _barge_in_now
 
 
 @pytest.mark.asyncio
