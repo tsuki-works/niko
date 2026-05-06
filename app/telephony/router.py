@@ -43,6 +43,7 @@ from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing
 from app.stt import STTProvider, SpeechStartedEvent, TranscriptEvent, get_stt
 from app.telephony.voicemail_twiml import voicemail_response
 from app.tts import speak
+from app.twilio.media_stream import send_clear, send_mark
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -138,32 +139,6 @@ def _bg_call_event(call_sid: str | None, restaurant_id: str | None, **kwargs) ->
     )
 
 
-async def send_end_of_call_mark(websocket: WebSocket, stream_sid: str | None) -> bool:
-    """Append a named ``mark`` event to Twilio's outgoing media stream.
-
-    Twilio echoes the same mark back over the WebSocket once its audio
-    buffer drains past it — i.e. once the caller has heard everything
-    we sent. We use that as the precise trigger for auto-hangup (#78).
-    Returns True if the send succeeded.
-    """
-    if not stream_sid:
-        return False
-    try:
-        await websocket.send_json(
-            {
-                "event": "mark",
-                "streamSid": stream_sid,
-                "mark": {"name": END_OF_CALL_MARK},
-            }
-        )
-        return True
-    except WebSocketDisconnect:
-        return False
-    except Exception:
-        logger.exception("mark: failed to send end_of_call mark stream_sid=%s", stream_sid)
-        return False
-
-
 async def _hang_up_after_grace(state: _CallState) -> None:
     """Wait HANGUP_GRACE_SECONDS, then close the WebSocket to end the
     call.
@@ -238,28 +213,6 @@ def _abort_pending_hangup(state: _CallState) -> None:
     state.mark_timeout_task = None
 
 
-async def clear_twilio_audio(websocket: WebSocket, stream_sid: str | None) -> None:
-    """Tell Twilio to flush its audio buffer and stop playback.
-
-    Cancelling the LLM task only stops *generation* of new audio — bytes
-    already in Twilio's buffer keep playing for another 1–3 seconds, which
-    is exactly what callers experience as "the bot doesn't pause when I
-    interrupt." Twilio's Media Streams API has a dedicated ``clear`` event
-    that drops the buffer in ~80ms; we fire it whenever we cancel an
-    in-flight reply (#74).
-    """
-    if not stream_sid:
-        return
-    try:
-        await websocket.send_json({"event": "clear", "streamSid": stream_sid})
-    except WebSocketDisconnect:
-        # Caller already hung up — nothing to clear.
-        return
-    except Exception:
-        # Don't let a transient send failure break the call loop.
-        logger.exception("clear: failed to send Twilio clear event stream_sid=%s", stream_sid)
-
-
 async def _barge_in_now(
     state: "_CallState",
     websocket: WebSocket,
@@ -286,7 +239,7 @@ async def _barge_in_now(
         state.barge_in_trigger = trigger
         state.llm_task.cancel()
     _cancel_silence_task(state)
-    await clear_twilio_audio(websocket, state.stream_sid)
+    await send_clear(websocket, state.stream_sid)
 
 
 @dataclass
@@ -612,7 +565,7 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                             state.order = state.order.model_copy(
                                 update={"status": OrderStatus.CONFIRMED}
                             )
-                        sent = await send_end_of_call_mark(websocket, state.stream_sid)
+                        sent = await send_mark(websocket, state.stream_sid, name=END_OF_CALL_MARK)
                         if sent:
                             state.pending_hangup = True
                             if state.mark_timeout_task and not state.mark_timeout_task.done():
@@ -685,7 +638,7 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
         # prompt audio still buffered, but this isn't a barge-in (no
         # task to cancel, no event to emit).
         _cancel_silence_task(state)
-        await clear_twilio_audio(websocket, state.stream_sid)
+        await send_clear(websocket, state.stream_sid)
 
     state.in_flight_transcript = text
     state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
