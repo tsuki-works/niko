@@ -120,6 +120,13 @@ async def test_high_confidence_resets_counter(monkeypatch):
 async def test_speech_started_triggers_barge_in_when_llm_task_running(monkeypatch):
     """VAD speech-started while a turn is in flight fires _barge_in_now
     with trigger='vad'."""
+    from app.config import settings
+
+    # Pin the kill-switch ON so this test doesn't depend on local .env
+    # state (a developer with STT_INSTANT_BARGE_IN=false set for a real
+    # call would otherwise see this test fail spuriously).
+    monkeypatch.setattr(settings, "stt_instant_barge_in", True)
+
     state = _make_state()
 
     async def long_turn():
@@ -154,7 +161,12 @@ async def test_speech_started_triggers_barge_in_when_llm_task_running(monkeypatc
 @pytest.mark.asyncio
 async def test_speech_started_no_op_when_no_llm_task(monkeypatch):
     """VAD with no in-flight turn does nothing — there's nothing to
-    barge in on."""
+    barge in on. Pinning kill-switch ON ensures the no-op comes from
+    the no-task branch and not from the kill-switch."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "stt_instant_barge_in", True)
+
     state = _make_state()
     state.llm_task = None
 
@@ -269,6 +281,12 @@ async def test_vad_then_final_transcript_creates_one_barge_in_then_new_turn(
     _handle_final_transcript exactly once for the final. Pins that the
     consumer keeps iterating after a VAD event (would catch a future
     refactor that turned `continue` into `return`)."""
+    from app.config import settings
+
+    # Pin the kill-switch ON so this test doesn't depend on local .env
+    # state.
+    monkeypatch.setattr(settings, "stt_instant_barge_in", True)
+
     state = _make_state()
 
     async def long_turn():
