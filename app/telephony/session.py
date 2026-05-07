@@ -173,6 +173,11 @@ class _CallState:
     stt: "STTProvider | None" = None
     stt_provider: str | None = None
     transcript_task: asyncio.Task | None = None
+    # Chained init_call_session + record_event(kind="start"). Held on
+    # state so a strong reference exists for the task's lifetime;
+    # serialising the two writes ensures the start event never races
+    # init's parent-doc set() and 404s on Firestore.
+    session_init_task: asyncio.Task | None = None
 
 
 def _make_recording_chunk_handler(state: "_CallState") -> Callable[[bytes], None] | None:

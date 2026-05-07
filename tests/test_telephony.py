@@ -226,6 +226,39 @@ def test_media_stream_handles_full_call_lifecycle(mock_pipeline):
     assert mock_pipeline.closed is True
 
 
+def test_start_event_records_after_init_call_session(mock_pipeline, monkeypatch):
+    """init_call_session creates the parent doc; record_event(kind='start')
+    update()s it. The start event must run AFTER init (the doc exists);
+    otherwise update() hits a not-yet-created doc and Firestore 404s.
+
+    Pre-fix the two were dispatched as parallel fire-and-forget
+    asyncio.to_thread tasks, so the start event raced init's
+    parent-doc set() and lost on slow Firestore writes.
+    """
+    from app.storage import call_sessions
+
+    call_order: list[str] = []
+
+    def track_init(*_a, **_kw) -> None:
+        call_order.append("init")
+
+    def track_record(*_a, **kw) -> None:
+        if kw.get("kind") == "start":
+            call_order.append("record_start")
+
+    monkeypatch.setattr(call_sessions, "init_call_session", track_init)
+    monkeypatch.setattr(call_sessions, "record_event", track_record)
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert call_order == ["init", "record_start"], (
+        f"init must run before record_event(kind='start'); got {call_order!r}"
+    )
+
+
 def test_media_stream_begins_recording_on_start(mock_pipeline, monkeypatch):
     """On WS start, after tenant resolution, begin_recording is called
     with the resolved restaurant id and the tenant's retention setting."""

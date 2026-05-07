@@ -407,18 +407,30 @@ async def media_stream(websocket: WebSocket) -> None:
                     state.restaurant.id,
                 )
                 if state.call_sid:
-                    asyncio.get_running_loop().create_task(
-                        asyncio.to_thread(
-                            call_sessions.init_call_session,
-                            state.call_sid,
-                            state.restaurant.id,
+                    # init_call_session creates the parent doc; record_event
+                    # (kind="start") then update()s it. Chain them in a single
+                    # task so the start event never races init and 404s.
+                    # Tracked on state.session_init_task so the WS finally
+                    # block can await it — otherwise a fast hangup tears the
+                    # loop down before the chained record_event lands.
+                    init_sid = state.call_sid
+                    init_rid = state.restaurant.id
+                    init_stream_sid = state.stream_sid or ""
+
+                    async def _init_then_start_event() -> None:
+                        await asyncio.to_thread(
+                            call_sessions.init_call_session, init_sid, init_rid
                         )
-                    )
-                    _bg_call_event(
-                        state.call_sid,
-                        state.restaurant.id,
-                        kind="start",
-                        detail={"stream_sid": state.stream_sid or ""},
+                        await asyncio.to_thread(
+                            call_sessions.record_event,
+                            init_sid,
+                            init_rid,
+                            kind="start",
+                            detail={"stream_sid": init_stream_sid},
+                        )
+
+                    state.session_init_task = asyncio.create_task(
+                        _init_then_start_event()
                     )
                 # Compute per-tenant keyterms from the loaded menu and
                 # log them once so the call audit has a record of what
