@@ -34,23 +34,26 @@ class Settings(BaseSettings):
     # STT provider selector. Today only "deepgram" is implemented.
     stt_provider: str = "deepgram"
 
-    # Deepgram live STT options. Defaults match what was inline in
-    # router.py before the plugin extraction; tuning is done by env var
-    # rather than code change.
-    stt_model: str = "nova-2"
-    stt_endpointing_ms: int = 800
-    stt_utterance_end_ms: int = 1000
-    # Comma-separated keyterms. Only sent to Deepgram when non-empty,
-    # and only respected by models that support keyterm prompting
-    # (Nova-3 and later). Parsed lazily in app/deepgram/stt.py.
+    # Deepgram live STT options. Migrated to Flux English mono in #257.
+    # Flux owns turn detection natively (prosody-aware, ~260ms confirmed
+    # end-of-turn) so the Nova-2 endpointing knobs were removed; if Flux
+    # turn-detection ever needs tuning, expose `eager_eot_threshold` /
+    # `eot_threshold` / `eot_timeout_ms` here, all per the v2 connect API.
+    stt_model: str = "flux-general-en"
+    # Comma-separated debug-override keyterms. When non-empty, REPLACES
+    # the per-tenant heuristic output entirely (used to A/B test what
+    # Flux does with a specific term list). Empty in production —
+    # session.py computes keyterms from each restaurant's menu.
     stt_keyterms: str = ""
 
-    # Instant barge-in via Deepgram VAD speech-started events. When True
-    # (default), a barge-in fires ~50ms after the caller begins speaking
-    # instead of waiting for the final transcript (~800-1800ms). Flip to
-    # False if VAD turns out to misfire on coughs or background noise on
-    # a real call — the existing final-transcript barge-in path absorbs
-    # the fallback case with no other code changes.
+    # Instant barge-in. When True (default), a barge-in fires as soon as
+    # the STT provider signals "user started speaking" (Flux fires
+    # `TurnInfo.event="StartOfTurn"` on the first frame of detected
+    # speech) instead of waiting for the confirmed final transcript.
+    # Flip to False if the start-of-turn signal turns out to misfire
+    # on coughs or background noise on real calls — the
+    # final-transcript path in _handle_final_transcript absorbs the
+    # fallback case with no other code changes.
     stt_instant_barge_in: bool = True
 
     twilio_account_sid: Optional[str] = None
