@@ -30,8 +30,8 @@ from app.storage import restaurants as restaurants_storage
 from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
 from app.stt import (
     EarlyTurnEndEvent,
-    STTProvider,
     SpeechStartedEvent,
+    STTProvider,
     TranscriptEvent,
     TurnResumedEvent,
 )

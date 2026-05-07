@@ -14,8 +14,8 @@ import pytest
 
 from app.stt.base import (
     EarlyTurnEndEvent,
-    STTEvent,
     SpeechStartedEvent,
+    STTEvent,
     TranscriptEvent,
     TurnResumedEvent,
 )

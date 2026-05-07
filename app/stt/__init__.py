@@ -6,9 +6,9 @@ TranscriptEvent`` instead of reaching into ``app.stt.base``.
 
 from app.stt.base import (
     EarlyTurnEndEvent,
+    SpeechStartedEvent,
     STTEvent,
     STTProvider,
-    SpeechStartedEvent,
     TranscriptEvent,
     TurnResumedEvent,
 )
