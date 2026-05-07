@@ -122,43 +122,36 @@ async def test_double_close_is_safe() -> None:
 
 
 @pytest.mark.asyncio
-async def test_events_can_only_be_drained_by_one_consumer() -> None:
-    """The fake's queue is single-consumer. Two concurrent events()
-    consumers will starve each other; this test pins that contract so
-    the design is explicit and a future refactor doesn't quietly change
-    it."""
-    seeded = [
-        TranscriptEvent("a", True, 0.9),
-        TranscriptEvent("b", True, 0.9),
-    ]
-    fake = FakeSTT(events=seeded)
+async def test_each_event_goes_to_exactly_one_consumer() -> None:
+    """The fake's queue is single-consumer: each enqueued item is
+    handed to exactly one waiting events() iterator. Two consumers
+    blocked on an empty queue, then one event is fed — exactly one
+    receives it."""
+    fake = FakeSTT()
     await fake.open()
 
     a_received: list[TranscriptEvent] = []
     b_received: list[TranscriptEvent] = []
 
-    async def drain_a() -> None:
+    async def drain(into: list[TranscriptEvent]) -> None:
         async for event in fake.events():
-            a_received.append(event)
+            into.append(event)
 
-    async def drain_b() -> None:
-        async for event in fake.events():
-            b_received.append(event)
-
-    task_a = asyncio.create_task(drain_a())
-    task_b = asyncio.create_task(drain_b())
+    task_a = asyncio.create_task(drain(a_received))
+    task_b = asyncio.create_task(drain(b_received))
+    # Let both consumers reach `await queue.get()` with the queue empty.
     await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    fake.feed(TranscriptEvent("only", True, 0.9))
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
     await fake.close()
-    # close() puts ONE _CLOSED. Whichever consumer dequeues it returns.
-    # The other will hang waiting for the next item — that's the contract.
-    # Cancel the unfinished task so the test exits.
     await asyncio.sleep(0)
     if not task_a.done():
         task_a.cancel()
     if not task_b.done():
         task_b.cancel()
-    # Both tasks may have grabbed events before close — what we're
-    # asserting is that the seeded events ended up split between them
-    # (one each), proving they're competing on a single queue.
-    total = len(a_received) + len(b_received)
-    assert total <= 2  # at most the seeded count; depending on scheduling
+
+    assert len(a_received) + len(b_received) == 1

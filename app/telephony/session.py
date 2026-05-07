@@ -230,7 +230,7 @@ def _arm_silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
     if state.llm_task and state.llm_task.cancelled():
         return  # barge-in — caller spoke again, no watchdog needed
     _cancel_silence_task(state)
-    state.silence_task = asyncio.get_event_loop().create_task(_silence_watchdog(state, websocket))
+    state.silence_task = asyncio.create_task(_silence_watchdog(state, websocket))
 
 
 async def _hang_up_after_grace(state: _CallState) -> None:

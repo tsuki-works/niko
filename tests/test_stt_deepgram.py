@@ -125,7 +125,7 @@ async def test_open_calls_v2_connect_with_configured_options(
 
 @pytest.mark.asyncio
 async def test_env_keyterms_override_replaces_constructor_list(
-    fake_v2_connection, monkeypatch
+    fake_v2_connection, monkeypatch, caplog
 ):
     from app.config import settings
     from app.deepgram.stt import DeepgramSTT
@@ -135,10 +135,19 @@ async def test_env_keyterms_override_replaces_constructor_list(
     stt = DeepgramSTT(
         call_sid="CAtest", keyterms=["Twilight", "Pepper Shrimp"]
     )
-    await stt.open()
+    with caplog.at_level("WARNING", logger="app.deepgram.stt"):
+        await stt.open()
     try:
         kwargs = fake_v2_connection._connect_mock.call_args.kwargs
         assert kwargs["keyterm"] == ["alpha", "beta", "gamma"]
+        # Override is process-wide and silently kills per-tenant biasing,
+        # so it must log loudly with the call_sid for traceability.
+        override_warnings = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "STT_KEYTERMS env override" in r.message
+        ]
+        assert len(override_warnings) == 1
+        assert "CAtest" in override_warnings[0].message
     finally:
         await stt.close()
 

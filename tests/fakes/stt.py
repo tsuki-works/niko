@@ -14,6 +14,10 @@ Usage:
     fake.feed(SpeechStartedEvent())             # inject mid-test
     fake.feed_error(RuntimeError("dropped"))    # surface error in events()
     await fake.close()
+
+Note: events seeded via the constructor are visible from ``events()``
+regardless of whether ``open()`` was called — chosen for test ergonomics.
+Real STTProviders gate event emission on ``open()``.
 """
 
 from __future__ import annotations
@@ -23,7 +27,6 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from app.stt.base import STTEvent
-
 
 _CLOSED = object()
 

@@ -75,6 +75,7 @@ class _ErrorBox:
 
 def _resolve_keyterms(
     constructor_keyterms: Optional[Sequence[str]],
+    call_sid: Optional[str] = None,
 ) -> Optional[list[str]]:
     """Return the keyterm list to send to Flux, or None.
 
@@ -89,6 +90,17 @@ def _resolve_keyterms(
     env_override = settings.stt_keyterms.strip()
     if env_override:
         items = [t.strip() for t in env_override.split(",") if t.strip()]
+        # The override is process-wide and silently replaces every
+        # tenant's per-call biasing. Log loudly so a misconfigured
+        # deploy is visible in #ci-alerts rather than degrading every
+        # call's keyterms in silence.
+        logger.warning(
+            "stt: STT_KEYTERMS env override active — per-tenant keyterms "
+            "REPLACED for this call (call_sid=%s, n=%d). Unset STT_KEYTERMS "
+            "in non-debug environments.",
+            call_sid,
+            len(items),
+        )
         return items or None
     if constructor_keyterms:
         items = [t for t in constructor_keyterms if t and t.strip()]
@@ -155,7 +167,7 @@ class DeepgramSTT:
         # the SDK with a confusing error message.
         api_key = _api_key()
 
-        keyterms = _resolve_keyterms(self._keyterms_arg)
+        keyterms = _resolve_keyterms(self._keyterms_arg, call_sid=self._call_sid)
 
         self._client = AsyncDeepgramClient(api_key=api_key)
         self._cm = self._client.listen.v2.connect(
