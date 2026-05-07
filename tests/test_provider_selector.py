@@ -54,3 +54,37 @@ def test_get_stt_raises_for_unknown_provider(monkeypatch):
 
     with pytest.raises(ValueError, match="Unknown STT provider"):
         get_stt(call_sid="CAtest")
+
+
+def test_get_stt_forwards_keyterms_to_deepgram_provider(monkeypatch):
+    """The selector must thread ``keyterms`` into DeepgramSTT so the
+    per-tenant heuristic output reaches Flux on connect. A regression
+    here would silently drop the menu bias on every call."""
+    monkeypatch.setattr(settings, "stt_provider", "deepgram")
+    monkeypatch.setattr(settings, "deepgram_api_key", "test-key")
+
+    from app.stt import get_stt
+
+    provider, _name = get_stt(
+        call_sid="CAtest",
+        keyterms=["Twilight Family Restaurant", "Pepper Shrimp"],
+    )
+    # DeepgramSTT exposes the resolved list via its private attribute;
+    # the selector test pins that the constructor argument flowed
+    # through unchanged.
+    assert provider._keyterms_arg == [
+        "Twilight Family Restaurant",
+        "Pepper Shrimp",
+    ]
+
+
+def test_get_stt_default_keyterms_is_none(monkeypatch):
+    """Callers who don't provide keyterms get a clean default — no
+    accidental empty-list shenanigans, no global state."""
+    monkeypatch.setattr(settings, "stt_provider", "deepgram")
+    monkeypatch.setattr(settings, "deepgram_api_key", "test-key")
+
+    from app.stt import get_stt
+
+    provider, _name = get_stt(call_sid="CAtest")
+    assert provider._keyterms_arg is None

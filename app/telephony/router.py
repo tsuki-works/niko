@@ -19,21 +19,23 @@ import logging
 
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 
+import app.twilio as app_twilio
 from app.config import settings
 from app.llm.prompts import build_system_prompt
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
 from app.orders.models import Order
+from app.restaurants.keyterms import compute_keyterms
 from app.restaurants.open_check import is_open_now
 from app.storage import call_sessions, recordings
 from app.storage import restaurants as restaurants_storage
 from app.stt import get_stt
 from app.telephony.session import (
-    GREETING_TRANSCRIPT,
     END_OF_CALL_MARK,
-    _CallState,
+    GREETING_TRANSCRIPT,
     _abort_pending_hangup,
     _arm_silence_watchdog,
     _bg_call_event,
+    _CallState,
     _cancel_silence_task,
     _consume_transcripts,
     _hang_up_after_grace,
@@ -44,7 +46,6 @@ from app.telephony.session import (
 )
 from app.telephony.voicemail_twiml import voicemail_response
 from app.tts import speak
-import app.twilio as app_twilio
 from app.twilio.twiml import (
     closed_hangup_twiml,
     empty_twiml,
@@ -419,7 +420,24 @@ async def media_stream(websocket: WebSocket) -> None:
                         kind="start",
                         detail={"stream_sid": state.stream_sid or ""},
                     )
-                state.stt, state.stt_provider = get_stt(call_sid=state.call_sid)
+                # Compute per-tenant keyterms from the loaded menu and
+                # log them once so the call audit has a record of what
+                # was biased. Empty list when the menu is unusably thin
+                # — the heuristic always includes the restaurant name
+                # at minimum, so the list is never literally empty.
+                keyterms = compute_keyterms(
+                    state.restaurant.menu, state.restaurant.name
+                )
+                logger.info(
+                    "keyterms call_sid=%s rid=%s n=%d preview=%r",
+                    state.call_sid,
+                    state.restaurant.id,
+                    len(keyterms),
+                    keyterms[:5],
+                )
+                state.stt, state.stt_provider = get_stt(
+                    call_sid=state.call_sid, keyterms=keyterms
+                )
                 try:
                     await state.stt.open()
                 except Exception:

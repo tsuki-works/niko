@@ -28,7 +28,13 @@ from app.restaurants.models import Restaurant
 from app.storage import call_sessions, recordings
 from app.storage import restaurants as restaurants_storage
 from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
-from app.stt import STTProvider, SpeechStartedEvent
+from app.stt import (
+    EarlyTurnEndEvent,
+    SpeechStartedEvent,
+    STTProvider,
+    TranscriptEvent,
+    TurnResumedEvent,
+)
 from app.tts import speak
 from app.twilio.media_stream import send_clear, send_mark
 
@@ -345,35 +351,58 @@ async def _consume_transcripts(
     try:
         async for event in stt.events():
             if isinstance(event, SpeechStartedEvent):
-                # Instant barge-in: fire ~50ms after the caller starts
-                # speaking instead of waiting for the final transcript
-                # (~800-1800ms). The final-transcript path in
-                # _handle_final_transcript still runs as a fallback for
-                # short utterances or missed VAD signals.
+                # Instant barge-in: fire as soon as the STT provider
+                # reports the caller began speaking (Flux:
+                # TurnInfo.event="StartOfTurn") instead of waiting for
+                # the confirmed final transcript. The final-transcript
+                # path in _handle_final_transcript still runs as a
+                # fallback for short utterances or missed VAD signals.
                 if not settings.stt_instant_barge_in:
                     continue
                 if state.llm_task and not state.llm_task.done():
                     await _barge_in_now(state, websocket, trigger="vad")
                 continue
 
-            # event is a TranscriptEvent
-            if not event.is_final:
-                continue   # interim: captured in plugin logs only
+            if isinstance(event, (EarlyTurnEndEvent, TurnResumedEvent)):
+                # Speculative end-of-turn signals from Flux. The
+                # speculative-drafting work that consumes them lives
+                # in a separate follow-up PR; for now we drop them
+                # to keep behavior identical to today.
+                continue
 
-            state.last_caller_transcript = event.text
-            if event.confidence < 0.5:
-                state.consecutive_low_confidence_turns += 1
-            else:
-                state.consecutive_low_confidence_turns = 0
+            if isinstance(event, TranscriptEvent):
+                if not event.is_final:
+                    continue  # interim: captured in plugin logs only
 
-            _bg_call_event(
+                state.last_caller_transcript = event.text
+                if event.confidence < 0.5:
+                    state.consecutive_low_confidence_turns += 1
+                else:
+                    state.consecutive_low_confidence_turns = 0
+
+                _bg_call_event(
+                    state.call_sid,
+                    _state_rid(state),
+                    kind="transcript_final",
+                    text=event.text,
+                    detail={
+                        "text": event.text,
+                        "confidence": event.confidence,
+                    },
+                )
+                await _handle_final_transcript(
+                    event.text, state, websocket
+                )
+                continue
+
+            # Unknown event type — providers may extend the event union
+            # in the future. Log once and keep going rather than crash
+            # the call.
+            logger.debug(
+                "stt: unknown event type=%s call_sid=%s",
+                type(event).__name__,
                 state.call_sid,
-                _state_rid(state),
-                kind="transcript_final",
-                text=event.text,
-                detail={"text": event.text, "confidence": event.confidence},
             )
-            await _handle_final_transcript(event.text, state, websocket)
     except asyncio.CancelledError:
         raise
     except Exception as exc:

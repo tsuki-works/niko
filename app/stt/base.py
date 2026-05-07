@@ -32,7 +32,30 @@ class TranscriptEvent:
     confidence: float
 
 
-STTEvent = Union[TranscriptEvent, SpeechStartedEvent]
+@dataclass(frozen=True)
+class EarlyTurnEndEvent:
+    """The provider speculates the caller's turn is ending. A consumer
+    that wants minimal-latency replies may use this to start drafting
+    speculatively; a ``TurnResumedEvent`` will follow if the caller
+    keeps talking. Providers without prosody-aware turn detection (e.g.
+    Whisper) never emit this event — consumers must treat it as
+    advisory and tolerate its absence."""
+
+
+@dataclass(frozen=True)
+class TurnResumedEvent:
+    """The caller resumed speaking after an ``EarlyTurnEndEvent``. A
+    consumer that started speculative work in response to the eager
+    end should cancel it. Providers that do not emit
+    ``EarlyTurnEndEvent`` will likewise never emit this event."""
+
+
+STTEvent = Union[
+    TranscriptEvent,
+    SpeechStartedEvent,
+    EarlyTurnEndEvent,
+    TurnResumedEvent,
+]
 
 
 class STTProvider(Protocol):
