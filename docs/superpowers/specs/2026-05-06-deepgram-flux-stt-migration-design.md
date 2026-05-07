@@ -9,7 +9,9 @@
 
 ## Summary
 
-Migrate live STT from Deepgram Nova-2 to Deepgram Flux English mono (`flux-general-en`) with per-tenant keyterm prompting computed from each restaurant's menu. Hard cutover — no Nova-2 fallback path is preserved. Bundled with `numerals=true`. `smart_format` stays off.
+Migrate live STT from Deepgram Nova-2 to Deepgram Flux English mono (`flux-general-en`) with per-tenant keyterm prompting computed from each restaurant's menu. Hard cutover — no Nova-2 fallback path is preserved.
+
+> **SDK probe correction (2026-05-06, post-spec):** Flux v2's `connect()` does **not** accept `numerals` or `smart_format` — those are Nova-only. Whatever digit/word formatting Flux produces natively is what we ship. The original "migration + numerals" decision is moot at the API level. `smart_format` was already out of scope.
 
 Flux's prosody-aware turn detection replaces Nova-2's silence-based endpointing, dropping confirmed-final transcript latency from 800–1800ms to ~260ms. Keyterm prompting (silently no-op'd on Nova-2) becomes the mechanism that fixes anecdotal misrecognitions like "coke→smoke" and "pepper shrimp→pepper soup."
 
@@ -39,7 +41,7 @@ Each links back to a question debated during brainstorming.
 | # | Decision | Why |
 |---|---|---|
 | D1 | **Hard cutover.** Replace `app/deepgram/stt.py` outright; delete Nova-2 model selection. Revert path is `git revert`. | Nova-2 is a dead end; one live tenant; 4-person team — dual-provider maintenance cost outweighs A/B safety. |
-| D2 | **Migration + `numerals=true`.** `smart_format=false`. | Numerals are zero-risk for our pipeline (LLM handles either form natively). `smart_format` reshapes more transcript surface and offers no measurable benefit since we don't regex-parse transcripts. |
+| D2 | ~~Migration + `numerals=true`~~. **Superseded by SDK probe:** Flux v2 has no `numerals` flag. Ship Flux's native formatting as-is. `smart_format` similarly out of scope. | Flux's connect signature exposes only `keyterm`, `language_hint`, and EOT thresholds — no Nova-style formatting flags. |
 | D3 | **In-memory keyterm computation at call-open.** Pure function `compute_keyterms(menu, restaurant_name) -> list[str]`; result is logged then handed to Flux's `connect(keyterm=[...])`. No Firestore field, no menu schema change. | Persistence is only valuable when something else reads it; nothing does today. The dashboard PR that introduces an editor is the right place to introduce the schema. |
 | D4 | **Auto-detect heuristic in code, no per-item menu tags.** Restaurant name is auto-included. | Heuristic deploys instantly across all tenants; menu schema stays untouched; Twilight needs no backfill. The investigation doc's prioritization rules drive the heuristic. |
 | D5 | **Common-named events at the protocol layer, vendor translation inside the provider.** `app/stt/base.py` grows from 2 to 4 event types. Flux provider emits all four; Whisper (future) emits two. | Keeps the protocol vendor-neutral; Flux jargon (`EagerEndOfTurn`) does not appear at the seam. |
@@ -87,7 +89,7 @@ async for event in stt.events():
 | `Connected` | (none — lifecycle) | Provider state only. |
 | `TurnInfo(end_of_turn=False)` | `TranscriptEvent(is_final=False)` | Interim, logged only by consumer. |
 | `TurnInfo(end_of_turn=True)` | `TranscriptEvent(is_final=True)` | The committed turn-end. THIS is what triggers `_handle_final_transcript`. |
-| First-speech indication (TBD which Flux signal) | `SpeechStartedEvent` | Fast barge-in path. Implementation-time research item — see "Open items." |
+| `TurnInfo(event="StartOfTurn")` | `SpeechStartedEvent` | Fast barge-in path. (Resolved post-probe: Flux signals turn start via `TurnInfo.event="StartOfTurn"`.) |
 | `EagerEndOfTurn` | `EarlyTurnEndEvent` | Emitted; consumer drops. |
 | `TurnResumed` | `TurnResumedEvent` | Emitted; consumer drops. |
 | `Close` | (none — lifecycle) | Provider state only. |
@@ -100,7 +102,7 @@ async for event in stt.events():
 | `app/stt/base.py` | Add `EarlyTurnEndEvent` and `TurnResumedEvent` dataclasses. Widen `STTEvent` union from 2 to 4 members. Update the docstring on `STTProvider`. |
 | `app/restaurants/keyterms.py` | **NEW.** Pure function `compute_keyterms(menu: dict, restaurant_name: str) -> list[str]`. Heuristic ranks confusables, proper-noun dishes, brand drinks, and common modifiers; restaurant name always included. Capped well under 500 tokens (target ≤450 tokens — 50-token safety margin). See "Keyterm computation" below. |
 | `app/telephony/session.py` | Two changes: (1) call `compute_keyterms` and pass the result into Flux; (2) add the trailing `continue` in the event loop to defensively drop `EarlyTurnEndEvent` / `TurnResumedEvent`. |
-| `app/config.py` | Set `stt_model` default to `flux-general-en`. **Remove** `stt_endpointing_ms` and `stt_utterance_end_ms` (Flux owns turn detection — these have no analog). Keep `stt_keyterms` as a debug override: when non-empty, **replaces** the heuristic output entirely. (Augment-mode is YAGNI; revisit if a tenant-level use case appears.) Add `stt_numerals: bool = True`. |
+| `app/config.py` | Set `stt_model` default to `flux-general-en`. **Remove** `stt_endpointing_ms` and `stt_utterance_end_ms` (Flux owns turn detection — these have no analog). Keep `stt_keyterms` as a debug override: when non-empty, **replaces** the heuristic output entirely. (Augment-mode is YAGNI; revisit if a tenant-level use case appears.) ~~Add `stt_numerals: bool = True`.~~ Per probe correction, no numerals setting. |
 | `requirements.txt` | Bump `deepgram-sdk` minimum version to whatever first exposes `AsyncDeepgramClient` and `listen.v2`. **Verification needed in plan** — current pin is `>=3.0,<4.0` and the local install is 3.11.0; Flux v2 surface likely requires v4. |
 | `tests/test_stt_deepgram.py` | Update fixtures and translation tests for the Flux SDK shape. Add tests for emission of `EarlyTurnEndEvent` and `TurnResumedEvent`. |
 | `tests/test_keyterms.py` | **NEW.** Token-budget cap, restaurant-name inclusion, prioritization edge cases. |
@@ -230,8 +232,8 @@ These need to be resolved during plan-writing or implementation, not before.
 
 | # | Item | Resolution path |
 |---|---|---|
-| O1 | **Which Flux event maps to `SpeechStartedEvent`.** Flux's published event list is `Connected, TurnInfo, EagerEndOfTurn, TurnResumed, Close`. There may be no dedicated "user-speaking-now" event; if so, the first interim `TurnInfo` becomes the trigger (~150-250ms delay vs Nova-2's ~50ms VAD). This may degrade barge-in responsiveness. | Implementation-time empirical check. If degraded beyond acceptable, evaluate whether Flux supports a `vad_events`-equivalent or whether to layer a server-side VAD. |
-| O2 | **`deepgram-sdk` minimum version.** Current pin: `>=3.0,<4.0`; local install: 3.11.0. The investigation cites `AsyncDeepgramClient` and `listen.v2` — likely v4. | Plan: verify via `pip show` + SDK changelog, bump the pin in `requirements.txt`. |
+| O1 | ~~Which Flux event maps to `SpeechStartedEvent`.~~ **Resolved by probe: `TurnInfo.event="StartOfTurn"` fires when a turn begins.** Latency vs Nova-2 VAD's ~50ms still needs measurement on real calls. | Resolved at the API surface; latency comparison is post-merge measurement. |
+| O2 | ~~`deepgram-sdk` minimum version.~~ **Resolved by probe: bump to `>=7.1,<8.0`.** v3 didn't expose `AsyncDeepgramClient`. | Resolved. |
 | O3 | **`Keyterm limit exceeded` error vs silent truncation.** Spec assumes Flux errors. Should be confirmed empirically; if Flux truncates instead, the safety margin is less critical. | Implementation-time. Either way, the conservative budget covers both. |
 | O4 | **Token-counting heuristic accuracy.** `word_count * 1.3` is approximate. | Plan to gate against a small empirical check on Twilight's menu (estimated tokens vs Flux's reported behavior). |
 | O5 | **Pricing verification.** Investigation flagged conflicting per-minute estimates from two summarizer sources; should be confirmed at Deepgram's pricing page before merge so we know the actual per-call delta. | Out-of-band; not a blocker for the plan. |

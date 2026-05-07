@@ -5,17 +5,21 @@ TranscriptEvent`` instead of reaching into ``app.stt.base``.
 """
 
 from app.stt.base import (
+    EarlyTurnEndEvent,
     STTEvent,
     STTProvider,
     SpeechStartedEvent,
     TranscriptEvent,
+    TurnResumedEvent,
 )
 
 __all__ = [
+    "EarlyTurnEndEvent",
     "STTEvent",
     "STTProvider",
     "SpeechStartedEvent",
     "TranscriptEvent",
+    "TurnResumedEvent",
     "get_stt",
 ]
 
