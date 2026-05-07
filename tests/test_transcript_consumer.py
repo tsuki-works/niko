@@ -352,3 +352,92 @@ async def test_kill_switch_off_still_processes_final_transcripts(monkeypatch):
     assert barge_in_calls == []  # VAD ignored
     handler.assert_awaited_once()  # but final still flowed through
     assert handler.await_args.args[0] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_early_turn_end_event_is_dropped(monkeypatch):
+    """EarlyTurnEndEvent flows from the Flux provider; this PR does
+    not consume it (speculative drafting is a future PR). The consumer
+    must silently drop it — no barge-in, no Firestore, no LLM dispatch."""
+    from app.stt.base import EarlyTurnEndEvent
+
+    state = _make_state()
+    monkeypatch.setattr("app.telephony.session._barge_in_now", AsyncMock())
+    handler = AsyncMock()
+    monkeypatch.setattr(
+        "app.telephony.session._handle_final_transcript", handler
+    )
+    bg = MagicMock()
+    monkeypatch.setattr("app.telephony.session._bg_call_event", bg)
+
+    fake = FakeSTT(events=[EarlyTurnEndEvent()])
+    await fake.open()
+    task = asyncio.create_task(_consume_transcripts(fake, state, AsyncMock()))
+    await asyncio.sleep(0)
+    await fake.close()
+    await task
+
+    handler.assert_not_called()
+    bg.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_turn_resumed_event_is_dropped(monkeypatch):
+    """TurnResumedEvent is the cancel signal for the speculative
+    draft. Until speculation lands the consumer drops it cleanly."""
+    from app.stt.base import TurnResumedEvent
+
+    state = _make_state()
+    monkeypatch.setattr("app.telephony.session._barge_in_now", AsyncMock())
+    handler = AsyncMock()
+    monkeypatch.setattr(
+        "app.telephony.session._handle_final_transcript", handler
+    )
+    bg = MagicMock()
+    monkeypatch.setattr("app.telephony.session._bg_call_event", bg)
+
+    fake = FakeSTT(events=[TurnResumedEvent()])
+    await fake.open()
+    task = asyncio.create_task(_consume_transcripts(fake, state, AsyncMock()))
+    await asyncio.sleep(0)
+    await fake.close()
+    await task
+
+    handler.assert_not_called()
+    bg.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_speculation_events_interleaved_with_finals_pass_through(
+    monkeypatch,
+):
+    """A real Flux call delivers EarlyTurnEnd and TurnResumed in
+    between the SpeechStarted and final TranscriptEvent. The consumer
+    must drop the speculative ones and still process the final."""
+    from app.stt.base import EarlyTurnEndEvent, TurnResumedEvent
+
+    state = _make_state()
+    monkeypatch.setattr("app.telephony.session._barge_in_now", AsyncMock())
+    handler = AsyncMock()
+    monkeypatch.setattr(
+        "app.telephony.session._handle_final_transcript", handler
+    )
+    monkeypatch.setattr("app.telephony.session._bg_call_event", MagicMock())
+
+    fake = FakeSTT(
+        events=[
+            SpeechStartedEvent(),
+            TranscriptEvent("hi the", False, 0.8),
+            EarlyTurnEndEvent(),
+            TurnResumedEvent(),
+            TranscriptEvent("hi there", True, 0.9),
+        ]
+    )
+    await fake.open()
+    task = asyncio.create_task(_consume_transcripts(fake, state, AsyncMock()))
+    await asyncio.sleep(0)
+    await fake.close()
+    await task
+
+    handler.assert_awaited_once()
+    assert handler.await_args.args[0] == "hi there"
