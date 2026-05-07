@@ -543,6 +543,18 @@ async def media_stream(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         logger.info("media-stream disconnected call_sid=%s", state.call_sid)
+    except RuntimeError:
+        # Server-initiated close (auto-hangup #78) flips Starlette's
+        # application_state to DISCONNECTED before the next receive_text()
+        # iteration; that guard then raises RuntimeError instead of the
+        # WebSocketDisconnect we'd otherwise catch. Gate on should_hangup
+        # so any other RuntimeError still surfaces as a real bug.
+        if not state.should_hangup.is_set():
+            raise
+        logger.info(
+            "media-stream disconnected (server-initiated close) call_sid=%s",
+            state.call_sid,
+        )
     finally:
         _cancel_silence_task(state)
         # Auto-hangup: stop any pending grace-window timer; the call is

@@ -732,6 +732,55 @@ async def test_hang_up_after_grace_aborts_when_caller_speaks(monkeypatch):
     assert not state.should_hangup.is_set()
 
 
+@pytest.mark.asyncio
+async def test_media_stream_swallows_runtimeerror_after_server_close(monkeypatch):
+    """Server-initiated close (auto-hangup #78) flips Starlette's
+    application_state to DISCONNECTED before the close frame is sent.
+    The next receive_text() iteration then raises RuntimeError instead
+    of WebSocketDisconnect — the handler must treat this as a clean
+    disconnect when should_hangup is set, so the error doesn't surface
+    as 'Exception in ASGI application'."""
+    from app.telephony import router as router_mod
+    from app.telephony.session import _CallState
+
+    # Pre-arm should_hangup so the RuntimeError handler treats the
+    # error as the expected post-close path. Mirrors what
+    # _hang_up_after_grace does in production right before close().
+    original_init = _CallState.__init__
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.should_hangup.set()
+
+    monkeypatch.setattr(_CallState, "__init__", patched_init)
+
+    ws = AsyncMock()
+    ws.receive_text = AsyncMock(
+        side_effect=RuntimeError(
+            'WebSocket is not connected. Need to call "accept" first.'
+        )
+    )
+
+    # Must NOT raise — the handler should swallow the RuntimeError.
+    await router_mod.media_stream(ws)
+
+
+@pytest.mark.asyncio
+async def test_media_stream_propagates_runtimeerror_when_no_pending_hangup(monkeypatch):
+    """If the loop hits a RuntimeError without should_hangup set, that's
+    a real bug — must propagate, not be silently swallowed by the
+    auto-hangup-tolerant handler."""
+    from app.telephony import router as router_mod
+
+    ws = AsyncMock()
+    ws.receive_text = AsyncMock(
+        side_effect=RuntimeError("something genuinely unexpected")
+    )
+
+    with pytest.raises(RuntimeError, match="something genuinely unexpected"):
+        await router_mod.media_stream(ws)
+
+
 def test_looks_like_goodbye_excludes_coming_right_up():
     """'coming right up' is mid-order, not a wrap-up — must NOT trigger fallback."""
     from app.telephony.session import _looks_like_goodbye
