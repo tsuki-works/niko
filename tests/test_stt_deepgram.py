@@ -363,6 +363,169 @@ async def test_close_terminates_events_iterator(fake_v2_connection):
 
 
 @pytest.mark.asyncio
+async def test_translates_dict_form_messages(fake_v2_connection):
+    """Production path: deepgram-sdk 7.1's ``recv()`` returns plain
+    dicts because ``construct_type`` on a Union doesn't pick a
+    discriminator and falls through to the raw JSON. The translator
+    must route by the dict's ``type`` field directly.
+
+    Without this path the live call sees recv messages, drops every
+    one in ``_translate``, and the silence watchdog fires after 10s
+    despite the caller speaking — that's the bug a 2026-05-06 live
+    call surfaced before this test pinned the dict shape."""
+    from app.deepgram.stt import DeepgramSTT
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        # Connected (lifecycle, no consumer event).
+        fake_v2_connection._recv_queue.put_nowait(
+            {"type": "Connected", "request_id": "abc", "sequence_id": 0}
+        )
+        # StartOfTurn — should produce SpeechStartedEvent.
+        fake_v2_connection._recv_queue.put_nowait(
+            {
+                "type": "TurnInfo",
+                "request_id": "abc",
+                "event": "StartOfTurn",
+                "turn_index": 0,
+                "audio_window_start": 0.0,
+                "audio_window_end": 0.24,
+                "transcript": "",
+                "words": [],
+                "end_of_turn_confidence": 0.05,
+                "sequence_id": 1,
+            }
+        )
+        # Update with text — should produce interim TranscriptEvent.
+        fake_v2_connection._recv_queue.put_nowait(
+            {
+                "type": "TurnInfo",
+                "request_id": "abc",
+                "event": "Update",
+                "turn_index": 0,
+                "audio_window_start": 0.0,
+                "audio_window_end": 1.0,
+                "transcript": "and a coke",
+                "words": [
+                    {"word": "and", "confidence": 0.9},
+                    {"word": "a", "confidence": 0.85},
+                    {"word": "coke", "confidence": 0.95},
+                ],
+                "end_of_turn_confidence": 0.4,
+                "sequence_id": 2,
+            }
+        )
+        # EndOfTurn — final TranscriptEvent.
+        fake_v2_connection._recv_queue.put_nowait(
+            {
+                "type": "TurnInfo",
+                "request_id": "abc",
+                "event": "EndOfTurn",
+                "turn_index": 0,
+                "audio_window_start": 0.0,
+                "audio_window_end": 1.5,
+                "transcript": "and a Coke.",
+                "words": [
+                    {"word": "and", "confidence": 0.93},
+                    {"word": "a", "confidence": 0.88},
+                    {"word": "Coke.", "confidence": 0.97},
+                ],
+                "end_of_turn_confidence": 0.92,
+                "sequence_id": 3,
+            }
+        )
+
+        first = await _next_event(stt)
+        assert isinstance(first, SpeechStartedEvent)
+
+        second = await _next_event(stt)
+        assert isinstance(second, TranscriptEvent)
+        assert second.is_final is False
+        assert second.text == "and a coke"
+        assert second.confidence == pytest.approx((0.9 + 0.85 + 0.95) / 3)
+
+        third = await _next_event(stt)
+        assert isinstance(third, TranscriptEvent)
+        assert third.is_final is True
+        assert third.text == "and a Coke."
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_translates_dict_form_speculation_events(fake_v2_connection):
+    """EagerEndOfTurn and TurnResumed must also route via the dict
+    path. The session consumer drops them in this PR, but the
+    provider still has to translate them so the speculation-aware
+    follow-up PR doesn't have to revisit the wire-format question."""
+    from app.deepgram.stt import DeepgramSTT
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        fake_v2_connection._recv_queue.put_nowait(
+            {
+                "type": "TurnInfo",
+                "request_id": "abc",
+                "event": "EagerEndOfTurn",
+                "turn_index": 0,
+                "audio_window_start": 0.0,
+                "audio_window_end": 1.0,
+                "transcript": "",
+                "words": [],
+                "end_of_turn_confidence": 0.7,
+                "sequence_id": 1,
+            }
+        )
+        fake_v2_connection._recv_queue.put_nowait(
+            {
+                "type": "TurnInfo",
+                "request_id": "abc",
+                "event": "TurnResumed",
+                "turn_index": 0,
+                "audio_window_start": 0.0,
+                "audio_window_end": 1.2,
+                "transcript": "",
+                "words": [],
+                "end_of_turn_confidence": 0.3,
+                "sequence_id": 2,
+            }
+        )
+
+        first = await _next_event(stt)
+        assert isinstance(first, EarlyTurnEndEvent)
+        second = await _next_event(stt)
+        assert isinstance(second, TurnResumedEvent)
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_dict_form_configure_failure_surfaces_error(fake_v2_connection):
+    """A ConfigureFailure dict from Flux should raise out of events()
+    so the call-flow can react (today: end the call cleanly)."""
+    from app.deepgram.stt import DeepgramSTT
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        fake_v2_connection._recv_queue.put_nowait(
+            {
+                "type": "ConfigureFailure",
+                "request_id": "abc",
+                "sequence_id": 1,
+                "description": "bad model",
+            }
+        )
+        with pytest.raises(RuntimeError, match="deepgram error"):
+            async for _ev in stt.events():
+                pass
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
 async def test_recv_exception_surfaces_as_runtime_error(fake_v2_connection):
     """If the SDK's recv() raises (e.g. WS dropped mid-call), the
     error should surface from events() so the consumer can react.

@@ -2,8 +2,8 @@
 
 Implements the STTProvider contract from app/stt/base.py. Uses
 ``AsyncDeepgramClient.listen.v2.connect`` (Flux v2 API) and translates
-Flux's ``ListenV2TurnInfo`` events into the vendor-neutral common-named
-events the consumer expects.
+Flux's wire messages into the vendor-neutral common-named events the
+consumer expects.
 
 Translation map (Flux ``TurnInfo.event`` → common-named event):
 
@@ -20,12 +20,21 @@ session-loop consumer drops them in this PR. They exist on the wire
 so a follow-up speculative-drafting PR can wire them in without
 changing the protocol.
 
-Lifecycle: ``open()`` enters the v2 connect context, registers a
-background reader task that drains ``recv()`` into an internal queue,
-and returns. ``send()`` forwards Twilio mulaw bytes via
-``send_media``. ``events()`` is an async generator yielding STTEvents
-until ``close()``. ``close()`` cancels the reader, sends close-stream,
-and exits the context manager.
+A note on the SDK's wire format: ``deepgram-sdk`` 7.1's
+``recv()`` returns Union-typed messages by passing the JSON to
+``construct_type(Union[...], ...)``, which does NOT pick a Union
+discriminator and falls through to the raw dict. So in practice every
+message arrives as a ``dict`` with a ``type`` field. ``_translate``
+routes on that field for dicts, and keeps an ``isinstance``
+fallback in case a future SDK revision starts returning concrete
+Pydantic models.
+
+Lifecycle: ``open()`` enters the v2 connect context and starts a
+background reader task that drains ``recv()`` into an internal queue.
+``send()`` forwards Twilio mulaw bytes via ``send_media``.
+``events()`` is an async generator yielding STTEvents until
+``close()``. ``close()`` cancels the reader, sends close-stream, and
+exits the context manager.
 """
 
 from __future__ import annotations
@@ -87,28 +96,32 @@ def _resolve_keyterms(
     return None
 
 
-def _confidence_from_words(turn_info: ListenV2TurnInfo) -> float:
+def _confidence_from_words_payload(words: Any) -> float:
     """Average word-level confidence as a single transcript confidence.
 
-    Flux exposes per-word confidence (Nova-2 only exposed per-utterance).
-    Averaging gives the consumer a single 0-1 value to drive the
-    consecutive-low-confidence transfer-trigger heuristic.
-
-    Falls back to end-of-turn confidence when the words list is empty,
-    and to 1.0 (worst-case-visible) if neither is present.
+    Accepts either a list of pydantic ``ListenV2TurnInfoWordsItem``
+    instances (attribute access) or a list of plain dicts (key access),
+    which is what Flux's ``recv()`` returns when ``construct_type``
+    falls through to the raw JSON path. Returns 1.0 as the
+    worst-case-visible default when no per-word confidence is
+    available — picking 0.0 would mask genuine low-confidence turns.
     """
-    words = getattr(turn_info, "words", None) or []
-    if words:
-        try:
-            return sum(float(w.confidence) for w in words) / len(words)
-        except (AttributeError, TypeError, ValueError):
-            pass
-    eot = getattr(turn_info, "end_of_turn_confidence", None)
-    if eot is not None:
-        try:
-            return float(eot)
-        except (TypeError, ValueError):
-            pass
+    if not words:
+        return 1.0
+    try:
+        confs: list[float] = []
+        for w in words:
+            if isinstance(w, dict):
+                c = w.get("confidence")
+            else:
+                c = getattr(w, "confidence", None)
+            if c is None:
+                continue
+            confs.append(float(c))
+        if confs:
+            return sum(confs) / len(confs)
+    except (TypeError, ValueError):
+        pass
     return 1.0
 
 
@@ -168,55 +181,99 @@ class DeepgramSTT:
         ``recv()`` blocks until the next message; the background task
         translates each one into a common-named event and enqueues it
         for the consumer. The task ends when the connection closes
-        (recv raises) or when ``close()`` cancels it.
+        (``recv`` raises) or when ``close()`` cancels it. The
+        ``msg_count`` in the cancelled/crashed logs gives the postmortem
+        a quick read on how many wire messages were actually delivered.
         """
+        msg_count = 0
         try:
             while True:
                 msg = await self._conn.recv()
+                msg_count += 1
                 self._translate(msg)
         except asyncio.CancelledError:
+            logger.info(
+                "deepgram reader cancelled call_sid=%s msg_count=%d",
+                self._call_sid,
+                msg_count,
+            )
             raise
         except Exception as exc:
             logger.exception(
-                "deepgram reader crashed call_sid=%s", self._call_sid
+                "deepgram reader crashed call_sid=%s msg_count=%d",
+                self._call_sid,
+                msg_count,
             )
             self._queue.put_nowait(_ErrorBox(exc))
 
     def _translate(self, msg: Any) -> None:
         """Translate one Flux wire message into a common-named event.
 
-        Drops messages that have no consumer-visible meaning (Connected
-        is lifecycle; unknown TurnInfo.event values are no-ops).
+        The SDK's ``recv()`` returns ``dict`` for typed messages because
+        ``construct_type`` on a Union doesn't pick a discriminator and
+        falls through to returning the raw JSON dict. We route on the
+        ``type`` field of the dict and keep the Pydantic-class
+        ``isinstance`` branches as a safety net for any future SDK
+        version that does parse Union members into concrete classes.
         """
-        if isinstance(msg, ListenV2Connected):
-            logger.info(
-                "deepgram connected call_sid=%s request_id=%s",
+        # Normalize: extract a ``type`` discriminator from either a
+        # dict or a typed model.
+        if isinstance(msg, dict):
+            msg_type = msg.get("type")
+            getter = msg.get
+        elif isinstance(
+            msg,
+            (
+                ListenV2Connected,
+                ListenV2TurnInfo,
+                ListenV2ConfigureFailure,
+                ListenV2FatalError,
+            ),
+        ):
+            msg_type = getattr(msg, "type", None) or type(msg).__name__.replace(
+                "ListenV2", ""
+            )
+
+            def getter(key, default=None, _msg=msg):
+                return getattr(_msg, key, default)
+        else:
+            logger.debug(
+                "deepgram unknown message type=%s call_sid=%s",
+                type(msg).__name__,
                 self._call_sid,
-                getattr(msg, "request_id", "?"),
             )
             return
 
-        if isinstance(msg, ListenV2TurnInfo):
-            event = getattr(msg, "event", "")
-            text = (getattr(msg, "transcript", "") or "").strip()
+        if msg_type == "Connected":
+            logger.info(
+                "deepgram connected call_sid=%s request_id=%s",
+                self._call_sid,
+                getter("request_id", "?"),
+            )
+            return
+
+        if msg_type == "TurnInfo":
+            event = getter("event", "")
+            text = (getter("transcript", "") or "").strip()
 
             if event == "StartOfTurn":
                 logger.info(
                     "speech_started call_sid=%s turn=%s",
                     self._call_sid,
-                    getattr(msg, "turn_index", "?"),
+                    getter("turn_index", "?"),
                 )
                 self._queue.put_nowait(SpeechStartedEvent())
                 return
 
             if event == "Update":
                 # Interim transcript. Skip empty payloads — Flux
-                # occasionally sends "" mid-turn (e.g. on barge-in or
-                # silence) and an empty transcript downstream confuses
-                # logging and the low-confidence counter.
+                # streams an "Update" event every ~250ms with a
+                # rolling end_of_turn_confidence even when there's
+                # no speech yet, and an empty transcript downstream
+                # confuses logging and the low-confidence counter.
                 if not text:
                     return
-                confidence = _confidence_from_words(msg)
+                confidence = _confidence_from_words_payload(getter("words", []))
                 logger.info(
                     "transcript [interim] call_sid=%s text=%r",
                     self._call_sid,
@@ -231,7 +288,7 @@ class DeepgramSTT:
                 logger.info(
                     "eager_eot call_sid=%s turn=%s",
                     self._call_sid,
-                    getattr(msg, "turn_index", "?"),
+                    getter("turn_index", "?"),
                 )
                 self._queue.put_nowait(EarlyTurnEndEvent())
                 return
@@ -240,20 +297,18 @@ class DeepgramSTT:
                 logger.info(
                     "turn_resumed call_sid=%s turn=%s",
                     self._call_sid,
-                    getattr(msg, "turn_index", "?"),
+                    getter("turn_index", "?"),
                 )
                 self._queue.put_nowait(TurnResumedEvent())
                 return
 
             if event == "EndOfTurn":
                 if not text:
-                    # Confirmed turn-end with no transcript. Skipping
-                    # would leave the consumer waiting forever for a
-                    # final, so emit an empty final the consumer can
-                    # drop in its own logic. (Twilio call recording
-                    # has produced empty finals on dead-air calls.)
+                    # Confirmed turn-end with no transcript — caller
+                    # said nothing recognizable. Drop; the consumer
+                    # has nothing to act on.
                     return
-                confidence = _confidence_from_words(msg)
+                confidence = _confidence_from_words_payload(getter("words", []))
                 logger.info(
                     "transcript [final] call_sid=%s text=%r",
                     self._call_sid,
@@ -274,20 +329,21 @@ class DeepgramSTT:
             )
             return
 
-        if isinstance(msg, (ListenV2ConfigureFailure, ListenV2FatalError)):
+        if msg_type in ("ConfigureFailure", "FatalError"):
             logger.error(
-                "deepgram error call_sid=%s msg=%s", self._call_sid, msg
+                "deepgram error call_sid=%s msg_type=%s msg=%s",
+                self._call_sid,
+                msg_type,
+                msg,
             )
             self._queue.put_nowait(
                 _ErrorBox(RuntimeError(f"deepgram error: {msg}"))
             )
             return
 
-        # Some other shape — keep going. The SDK occasionally surfaces
-        # raw protocol frames; logging is enough.
         logger.debug(
-            "deepgram unknown message type=%s call_sid=%s",
-            type(msg).__name__,
+            "deepgram unknown message type=%r call_sid=%s",
+            msg_type,
             self._call_sid,
         )
 
