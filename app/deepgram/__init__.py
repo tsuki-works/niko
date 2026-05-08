@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from app.config import settings
 
-
 _DEEPGRAM_BASE = "https://api.deepgram.com/v1"
 
 

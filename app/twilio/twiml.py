@@ -18,7 +18,6 @@ from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
 
 from app.restaurants.models import Restaurant
 
-
 _UNCONFIGURED_TWIML_MESSAGE = (
     "Sorry, this number is not currently configured. Goodbye."
 )
