@@ -52,9 +52,7 @@ def convert_one(ulaw_path: str) -> str:
 def collect_targets(arg: str) -> list[str]:
     if os.path.isdir(arg):
         return sorted(
-            os.path.join(arg, name)
-            for name in os.listdir(arg)
-            if name.lower().endswith(".ulaw")
+            os.path.join(arg, name) for name in os.listdir(arg) if name.lower().endswith(".ulaw")
         )
     if os.path.isfile(arg):
         return [arg]

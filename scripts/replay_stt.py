@@ -77,9 +77,7 @@ class ReplayResult:
 def _api_key() -> str:
     key = os.getenv("DEEPGRAM_API_KEY", "").strip()
     if not key:
-        sys.exit(
-            "DEEPGRAM_API_KEY not set. Add it to .env or export it before running."
-        )
+        sys.exit("DEEPGRAM_API_KEY not set. Add it to .env or export it before running.")
     return key
 
 
@@ -167,17 +165,29 @@ async def _run_v2(
                 msg_type = msg.get("type") if isinstance(msg, dict) else getattr(msg, "type", None)
                 if msg_type == "Connected":
                     if verbose:
-                        rid = msg.get("request_id") if isinstance(msg, dict) else getattr(msg, "request_id", "?")
+                        rid = (
+                            msg.get("request_id")
+                            if isinstance(msg, dict)
+                            else getattr(msg, "request_id", "?")
+                        )
                         print(f"[connected request_id={rid}]")
                     continue
                 if msg_type == "TurnInfo":
                     event = msg.get("event") if isinstance(msg, dict) else getattr(msg, "event", "")
-                    text = (msg.get("transcript") if isinstance(msg, dict) else getattr(msg, "transcript", "")) or ""
+                    text = (
+                        msg.get("transcript")
+                        if isinstance(msg, dict)
+                        else getattr(msg, "transcript", "")
+                    ) or ""
                     text = text.strip()
                     if event == "Update" and verbose and text:
                         print(f"[interim] {text}")
                     elif event == "EndOfTurn" and text:
-                        words = msg.get("words", []) if isinstance(msg, dict) else getattr(msg, "words", [])
+                        words = (
+                            msg.get("words", [])
+                            if isinstance(msg, dict)
+                            else getattr(msg, "words", [])
+                        )
                         conf = _avg_word_conf(words)
                         result.finals.append((text, conf))
                         print(f"[final  ] {text}   conf={conf:.2f}")
@@ -242,15 +252,29 @@ async def _run_v1(
                 msg = await conn.recv()
                 msg_type = msg.get("type") if isinstance(msg, dict) else getattr(msg, "type", None)
                 if msg_type == "Results":
-                    is_final = msg.get("is_final") if isinstance(msg, dict) else getattr(msg, "is_final", False)
-                    channel = msg.get("channel", {}) if isinstance(msg, dict) else getattr(msg, "channel", None)
+                    is_final = (
+                        msg.get("is_final")
+                        if isinstance(msg, dict)
+                        else getattr(msg, "is_final", False)
+                    )
+                    channel = (
+                        msg.get("channel", {})
+                        if isinstance(msg, dict)
+                        else getattr(msg, "channel", None)
+                    )
                     alts = (
-                        channel.get("alternatives", []) if isinstance(channel, dict) else getattr(channel, "alternatives", [])
+                        channel.get("alternatives", [])
+                        if isinstance(channel, dict)
+                        else getattr(channel, "alternatives", [])
                     ) or []
                     if not alts:
                         continue
                     alt = alts[0]
-                    text = (alt.get("transcript") if isinstance(alt, dict) else getattr(alt, "transcript", "")) or ""
+                    text = (
+                        alt.get("transcript")
+                        if isinstance(alt, dict)
+                        else getattr(alt, "transcript", "")
+                    ) or ""
                     text = text.strip()
                     if not text:
                         continue
@@ -270,7 +294,11 @@ async def _run_v1(
                         print(f"[interim] {text}")
                     continue
                 if msg_type == "Metadata" and verbose:
-                    rid = msg.get("request_id") if isinstance(msg, dict) else getattr(msg, "request_id", "?")
+                    rid = (
+                        msg.get("request_id")
+                        if isinstance(msg, dict)
+                        else getattr(msg, "request_id", "?")
+                    )
                     print(f"[connected request_id={rid}]")
                     continue
                 if msg_type == "UtteranceEnd" and verbose:
@@ -379,7 +407,9 @@ def _print_sweep_table(results: list[ReplayResult]) -> None:
     print("-" * len(header))
     for i, r in enumerate(results, start=1):
         if r.error:
-            row = f"{i:>2}  {r.model:<20}  {len(r.keyterms):>3}  ERROR: {r.error[:40]:<40}  {'-':>5}"
+            row = (
+                f"{i:>2}  {r.model:<20}  {len(r.keyterms):>3}  ERROR: {r.error[:40]:<40}  {'-':>5}"
+            )
         elif r.first_final:
             text, conf = r.first_final
             display = text if len(text) <= 40 else text[:37] + "..."
