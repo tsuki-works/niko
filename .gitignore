@@ -34,6 +34,10 @@ docs/07-local-development-setup.md
 # Local runtime logs
 uvicorn.log
 
+# Local-dev caller-audio dumps (NIKO_LOCAL_AUDIO_DUMP_DIR). Suggested
+# default location; the env var owns the actual path.
+dev_recordings/
+
 # Terraform — local state, plan files, provider plugins, lockfile-overrides
 # (.terraform.lock.hcl is intentionally NOT ignored — it pins provider versions
 # for reproducibility and should be committed.)

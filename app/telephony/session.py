@@ -22,6 +22,7 @@ from typing import Any, Callable
 from fastapi import WebSocket
 
 from app.config import settings
+from app.dev.audio_dump import CallerAudioDump  # noqa: F401  (typing only)
 from app.llm.client import stream_reply
 from app.orders.models import Order, OrderStatus
 from app.restaurants.models import Restaurant
@@ -178,6 +179,10 @@ class _CallState:
     # serialising the two writes ensures the start event never races
     # init's parent-doc set() and 404s on Firestore.
     session_init_task: asyncio.Task | None = None
+    # Local-dev caller-audio dump (#TBD). Set on "start" when
+    # NIKO_LOCAL_AUDIO_DUMP_DIR is configured; otherwise stays None and
+    # the media-event branch and finally-block close are no-ops.
+    caller_dump: "CallerAudioDump | None" = None
 
 
 def _make_recording_chunk_handler(state: "_CallState") -> Callable[[bytes], None] | None:
