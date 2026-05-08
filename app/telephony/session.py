@@ -196,9 +196,7 @@ def _make_recording_chunk_handler(state: "_CallState") -> Callable[[bytes], None
         try:
             recordings.append_chunks(rs, b"", chunk)
         except Exception:
-            logger.exception(
-                "tts: recording append failed call_sid=%s", state.call_sid
-            )
+            logger.exception("tts: recording append failed call_sid=%s", state.call_sid)
 
     return _handle
 
@@ -395,9 +393,7 @@ async def _consume_transcripts(
                         "confidence": event.confidence,
                     },
                 )
-                await _handle_final_transcript(
-                    event.text, state, websocket
-                )
+                await _handle_final_transcript(event.text, state, websocket)
                 continue
 
             # Unknown event type — providers may extend the event union
@@ -411,9 +407,7 @@ async def _consume_transcripts(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.exception(
-            "transcript consumer crashed call_sid=%s", state.call_sid
-        )
+        logger.exception("transcript consumer crashed call_sid=%s", state.call_sid)
         # Mark the call as errored so the transfer-trigger logic in
         # finally has a signal to act on, and surface the failure to the
         # dashboard so it doesn't look like dead air to whoever's watching.
@@ -614,9 +608,7 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
         else:
             # Cleanup-path cancellation: WS handler's finally block
             # cancels the task during call teardown. No barge_in event.
-            logger.info(
-                "llm_turn cancelled (cleanup) call_sid=%s", state.call_sid
-            )
+            logger.info("llm_turn cancelled (cleanup) call_sid=%s", state.call_sid)
         raise
     except Exception as exc:
         logger.exception("llm_turn errored call_sid=%s", state.call_sid)

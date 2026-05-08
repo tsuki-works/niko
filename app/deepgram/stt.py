@@ -153,9 +153,7 @@ class DeepgramSTT:
         keyterms: Optional[Sequence[str]] = None,
     ) -> None:
         self._call_sid = call_sid
-        self._keyterms_arg: Optional[list[str]] = (
-            list(keyterms) if keyterms else None
-        )
+        self._keyterms_arg: Optional[list[str]] = list(keyterms) if keyterms else None
         self._client: Any = None
         self._cm: Any = None
         self._conn: Any = None
@@ -242,9 +240,7 @@ class DeepgramSTT:
                 ListenV2FatalError,
             ),
         ):
-            msg_type = getattr(msg, "type", None) or type(msg).__name__.replace(
-                "ListenV2", ""
-            )
+            msg_type = getattr(msg, "type", None) or type(msg).__name__.replace("ListenV2", "")
 
             def getter(key, default=None, _msg=msg):
                 return getattr(_msg, key, default)
@@ -348,9 +344,7 @@ class DeepgramSTT:
                 msg_type,
                 msg,
             )
-            self._queue.put_nowait(
-                _ErrorBox(RuntimeError(f"deepgram error: {msg}"))
-            )
+            self._queue.put_nowait(_ErrorBox(RuntimeError(f"deepgram error: {msg}")))
             return
 
         logger.debug(
@@ -382,9 +376,7 @@ class DeepgramSTT:
             if item is _CLOSED:
                 return
             if isinstance(item, _ErrorBox):
-                cause = (
-                    item.error if isinstance(item.error, BaseException) else None
-                )
+                cause = item.error if isinstance(item.error, BaseException) else None
                 raise RuntimeError(f"deepgram error: {item.error}") from cause
             yield item
 
@@ -418,8 +410,6 @@ class DeepgramSTT:
             try:
                 await self._cm.__aexit__(None, None, None)
             except Exception:
-                logger.exception(
-                    "deepgram finish failed call_sid=%s", self._call_sid
-                )
+                logger.exception("deepgram finish failed call_sid=%s", self._call_sid)
 
         self._queue.put_nowait(_CLOSED)

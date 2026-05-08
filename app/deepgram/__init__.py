@@ -22,7 +22,6 @@ def _api_key() -> str:
     key = settings.deepgram_api_key
     if not key:
         raise RuntimeError(
-            "DEEPGRAM_API_KEY not set — cannot reach Deepgram. "
-            "Fetch credentials via /shared-creds."
+            "DEEPGRAM_API_KEY not set — cannot reach Deepgram. Fetch credentials via /shared-creds."
         )
     return key

@@ -40,6 +40,7 @@ async def test_events_yields_seeded_events_in_order() -> None:
     await fake.open()
 
     received = []
+
     async def consume():
         async for event in fake.events():
             received.append(event)
@@ -58,6 +59,7 @@ async def test_feed_injects_event_into_live_stream() -> None:
     await fake.open()
 
     received = []
+
     async def consume():
         async for event in fake.events():
             received.append(event)

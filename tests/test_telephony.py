@@ -94,9 +94,7 @@ def mock_pipeline(monkeypatch):
     )
     monkeypatch.setattr("app.telephony.router.speak", fake_speak)
     monkeypatch.setattr("app.telephony.session.speak", fake_speak)
-    monkeypatch.setattr(
-        "app.telephony.session.stream_reply", _make_fake_stream_reply()
-    )
+    monkeypatch.setattr("app.telephony.session.stream_reply", _make_fake_stream_reply())
     monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
@@ -756,9 +754,7 @@ async def test_media_stream_swallows_runtimeerror_after_server_close(monkeypatch
 
     ws = AsyncMock()
     ws.receive_text = AsyncMock(
-        side_effect=RuntimeError(
-            'WebSocket is not connected. Need to call "accept" first.'
-        )
+        side_effect=RuntimeError('WebSocket is not connected. Need to call "accept" first.')
     )
 
     # Must NOT raise — the handler should swallow the RuntimeError.
@@ -773,9 +769,7 @@ async def test_media_stream_propagates_runtimeerror_when_no_pending_hangup(monke
     from app.telephony import router as router_mod
 
     ws = AsyncMock()
-    ws.receive_text = AsyncMock(
-        side_effect=RuntimeError("something genuinely unexpected")
-    )
+    ws.receive_text = AsyncMock(side_effect=RuntimeError("something genuinely unexpected"))
 
     with pytest.raises(RuntimeError, match="something genuinely unexpected"):
         await router_mod.media_stream(ws)

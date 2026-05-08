@@ -66,9 +66,7 @@ def _patch_settings():
     want to test missing-key behaviour set deepgram_api_key = None on the
     yielded object and it propagates correctly.
     """
-    with patch("app.deepgram.settings") as mock_dg, patch(
-        "app.deepgram.tts.settings"
-    ) as mock_tts:
+    with patch("app.deepgram.settings") as mock_dg, patch("app.deepgram.tts.settings") as mock_tts:
         mock_dg.deepgram_api_key = "test-key"
         mock_tts.deepgram_api_key = "test-key"
         mock_tts.deepgram_tts_model = "aura-2-thalia-en"

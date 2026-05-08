@@ -40,10 +40,7 @@ def _make_turn_info(*, event: str, transcript: str = "", confidence: float = 0.9
     )
 
     words = (
-        [
-            ListenV2TurnInfoWordsItem(word=w, confidence=confidence)
-            for w in transcript.split()
-        ]
+        [ListenV2TurnInfoWordsItem(word=w, confidence=confidence) for w in transcript.split()]
         if transcript
         else []
     )
@@ -96,9 +93,7 @@ def fake_v2_connection(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_open_calls_v2_connect_with_configured_options(
-    fake_v2_connection, monkeypatch
-):
+async def test_open_calls_v2_connect_with_configured_options(fake_v2_connection, monkeypatch):
     from app.config import settings
     from app.deepgram.stt import DeepgramSTT
 
@@ -132,9 +127,7 @@ async def test_env_keyterms_override_replaces_constructor_list(
 
     monkeypatch.setattr(settings, "stt_keyterms", "alpha, beta , gamma")
 
-    stt = DeepgramSTT(
-        call_sid="CAtest", keyterms=["Twilight", "Pepper Shrimp"]
-    )
+    stt = DeepgramSTT(call_sid="CAtest", keyterms=["Twilight", "Pepper Shrimp"])
     with caplog.at_level("WARNING", logger="app.deepgram.stt"):
         await stt.open()
     try:
@@ -143,7 +136,8 @@ async def test_env_keyterms_override_replaces_constructor_list(
         # Override is process-wide and silently kills per-tenant biasing,
         # so it must log loudly with the call_sid for traceability.
         override_warnings = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.levelname == "WARNING" and "STT_KEYTERMS env override" in r.message
         ]
         assert len(override_warnings) == 1
@@ -198,33 +192,27 @@ async def test_send_swallows_sdk_exceptions(fake_v2_connection, caplog):
 
     from app.deepgram.stt import DeepgramSTT
 
-    fake_v2_connection.send_media = AsyncMock(
-        side_effect=RuntimeError("dropped")
-    )
+    fake_v2_connection.send_media = AsyncMock(side_effect=RuntimeError("dropped"))
     stt = DeepgramSTT(call_sid="CAtest")
     await stt.open()
     try:
         with caplog.at_level(logging.ERROR, logger="app.deepgram.stt"):
             await stt.send(b"x")
-        assert any(
-            "deepgram send failed" in rec.message for rec in caplog.records
-        ), "expected the swallowed-error log line"
+        assert any("deepgram send failed" in rec.message for rec in caplog.records), (
+            "expected the swallowed-error log line"
+        )
     finally:
         await stt.close()
 
 
 @pytest.mark.asyncio
-async def test_translates_start_of_turn_to_speech_started(
-    fake_v2_connection
-):
+async def test_translates_start_of_turn_to_speech_started(fake_v2_connection):
     from app.deepgram.stt import DeepgramSTT
 
     stt = DeepgramSTT(call_sid="CAtest")
     await stt.open()
     try:
-        fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(event="StartOfTurn")
-        )
+        fake_v2_connection._recv_queue.put_nowait(_make_turn_info(event="StartOfTurn"))
         # Drain one event then close.
         ev = await _next_event(stt)
         assert isinstance(ev, SpeechStartedEvent)
@@ -233,9 +221,7 @@ async def test_translates_start_of_turn_to_speech_started(
 
 
 @pytest.mark.asyncio
-async def test_translates_update_to_interim_transcript(
-    fake_v2_connection
-):
+async def test_translates_update_to_interim_transcript(fake_v2_connection):
     from app.deepgram.stt import DeepgramSTT
 
     stt = DeepgramSTT(call_sid="CAtest")
@@ -260,9 +246,7 @@ async def test_translates_eager_end_of_turn(fake_v2_connection):
     stt = DeepgramSTT(call_sid="CAtest")
     await stt.open()
     try:
-        fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(event="EagerEndOfTurn")
-        )
+        fake_v2_connection._recv_queue.put_nowait(_make_turn_info(event="EagerEndOfTurn"))
         ev = await _next_event(stt)
         assert isinstance(ev, EarlyTurnEndEvent)
     finally:
@@ -276,9 +260,7 @@ async def test_translates_turn_resumed(fake_v2_connection):
     stt = DeepgramSTT(call_sid="CAtest")
     await stt.open()
     try:
-        fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(event="TurnResumed")
-        )
+        fake_v2_connection._recv_queue.put_nowait(_make_turn_info(event="TurnResumed"))
         ev = await _next_event(stt)
         assert isinstance(ev, TurnResumedEvent)
     finally:
@@ -286,18 +268,14 @@ async def test_translates_turn_resumed(fake_v2_connection):
 
 
 @pytest.mark.asyncio
-async def test_translates_end_of_turn_to_final_transcript(
-    fake_v2_connection
-):
+async def test_translates_end_of_turn_to_final_transcript(fake_v2_connection):
     from app.deepgram.stt import DeepgramSTT
 
     stt = DeepgramSTT(call_sid="CAtest")
     await stt.open()
     try:
         fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(
-                event="EndOfTurn", transcript="hello world", confidence=0.92
-            )
+            _make_turn_info(event="EndOfTurn", transcript="hello world", confidence=0.92)
         )
         ev = await _next_event(stt)
         assert isinstance(ev, TranscriptEvent)
@@ -309,9 +287,7 @@ async def test_translates_end_of_turn_to_final_transcript(
 
 
 @pytest.mark.asyncio
-async def test_update_with_empty_transcript_is_dropped(
-    fake_v2_connection
-):
+async def test_update_with_empty_transcript_is_dropped(fake_v2_connection):
     """Flux occasionally sends 'Update' with an empty transcript on
     barge-in or noise — translator drops them so downstream interim
     handling doesn't see phantom ''."""
@@ -320,13 +296,9 @@ async def test_update_with_empty_transcript_is_dropped(
     stt = DeepgramSTT(call_sid="CAtest")
     await stt.open()
     try:
-        fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(event="Update", transcript="")
-        )
+        fake_v2_connection._recv_queue.put_nowait(_make_turn_info(event="Update", transcript=""))
         # Followed by something we DO expect, so the consumer wakes up.
-        fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(event="StartOfTurn")
-        )
+        fake_v2_connection._recv_queue.put_nowait(_make_turn_info(event="StartOfTurn"))
         ev = await _next_event(stt)
         assert isinstance(ev, SpeechStartedEvent)
     finally:
@@ -334,9 +306,7 @@ async def test_update_with_empty_transcript_is_dropped(
 
 
 @pytest.mark.asyncio
-async def test_unknown_turn_info_event_is_ignored(
-    fake_v2_connection
-):
+async def test_unknown_turn_info_event_is_ignored(fake_v2_connection):
     """A future Flux release adding a new event type must not crash
     a live call. Translator drops unknowns and continues."""
     from app.deepgram.stt import DeepgramSTT
@@ -344,12 +314,8 @@ async def test_unknown_turn_info_event_is_ignored(
     stt = DeepgramSTT(call_sid="CAtest")
     await stt.open()
     try:
-        fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(event="SomeFutureEvent")
-        )
-        fake_v2_connection._recv_queue.put_nowait(
-            _make_turn_info(event="StartOfTurn")
-        )
+        fake_v2_connection._recv_queue.put_nowait(_make_turn_info(event="SomeFutureEvent"))
+        fake_v2_connection._recv_queue.put_nowait(_make_turn_info(event="StartOfTurn"))
         ev = await _next_event(stt)
         assert isinstance(ev, SpeechStartedEvent)
     finally:

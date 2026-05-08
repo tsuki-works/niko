@@ -20,8 +20,10 @@ from app.telephony.session import _barge_in_now, _CallState
 async def test_cancels_running_llm_task():
     state = _CallState(websocket=AsyncMock())
     state.stream_sid = "MZ1"
+
     async def long_task():
         await asyncio.sleep(60)
+
     state.llm_task = asyncio.create_task(long_task())
 
     ws = AsyncMock()
@@ -54,8 +56,10 @@ async def test_skips_task_cancel_when_no_llm_task():
 async def test_cancels_silence_task():
     state = _CallState(websocket=AsyncMock())
     state.stream_sid = "MZ1"
+
     async def long_silence():
         await asyncio.sleep(60)
+
     state.silence_task = asyncio.create_task(long_silence())
 
     ws = AsyncMock()
@@ -73,9 +77,7 @@ async def test_sends_twilio_clear_event():
     ws.send_json = AsyncMock()
 
     await _barge_in_now(state, ws, trigger="vad")
-    ws.send_json.assert_awaited_once_with(
-        {"event": "clear", "streamSid": "MZabc"}
-    )
+    ws.send_json.assert_awaited_once_with({"event": "clear", "streamSid": "MZabc"})
 
 
 @pytest.mark.asyncio

@@ -22,9 +22,7 @@ def _estimate_tokens(text: str) -> int:
 
 
 def test_includes_restaurant_name_first_with_empty_menu() -> None:
-    assert compute_keyterms({}, "Twilight Family Restaurant") == [
-        "Twilight Family Restaurant"
-    ]
+    assert compute_keyterms({}, "Twilight Family Restaurant") == ["Twilight Family Restaurant"]
 
 
 def test_walks_menu_in_category_order() -> None:
@@ -116,16 +114,13 @@ def test_token_budget_honored_on_large_menu() -> None:
     """Build a menu wide enough to exceed the budget; verify the
     function returns early and stays under cap."""
     items = [
-        {"name": f"Special Dish Number {i} With Extra Words", "price": 10.0}
-        for i in range(200)
+        {"name": f"Special Dish Number {i} With Extra Words", "price": 10.0} for i in range(200)
     ]
     menu = {"specials": items}
     keyterms = compute_keyterms(menu, "Big Place")
 
     total_tokens = sum(_estimate_tokens(t) for t in keyterms)
-    assert total_tokens <= 450, (
-        f"keyterms exceed token budget: {total_tokens} > 450"
-    )
+    assert total_tokens <= 450, f"keyterms exceed token budget: {total_tokens} > 450"
     # Should have stopped short of all 200 items.
     assert len(keyterms) < 201
     assert keyterms[0] == "Big Place"
@@ -145,11 +140,7 @@ def test_twilight_real_menu_fits_under_budget() -> None:
     """Regression: the live tenant's menu must fit comfortably. If
     this fires, the heuristic needs tightening before the migration
     can ship."""
-    menu_path = (
-        Path(__file__).parent.parent
-        / "restaurants"
-        / "twilight-family-restaurant.json"
-    )
+    menu_path = Path(__file__).parent.parent / "restaurants" / "twilight-family-restaurant.json"
     if not menu_path.exists():
         # Local dev environments may not have the tenant fixture.
         return

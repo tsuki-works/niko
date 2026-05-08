@@ -418,9 +418,7 @@ async def media_stream(websocket: WebSocket) -> None:
                     init_stream_sid = state.stream_sid or ""
 
                     async def _init_then_start_event() -> None:
-                        await asyncio.to_thread(
-                            call_sessions.init_call_session, init_sid, init_rid
-                        )
+                        await asyncio.to_thread(call_sessions.init_call_session, init_sid, init_rid)
                         await asyncio.to_thread(
                             call_sessions.record_event,
                             init_sid,
@@ -429,17 +427,13 @@ async def media_stream(websocket: WebSocket) -> None:
                             detail={"stream_sid": init_stream_sid},
                         )
 
-                    state.session_init_task = asyncio.create_task(
-                        _init_then_start_event()
-                    )
+                    state.session_init_task = asyncio.create_task(_init_then_start_event())
                 # Compute per-tenant keyterms from the loaded menu and
                 # log them once so the call audit has a record of what
                 # was biased. Empty list when the menu is unusably thin
                 # — the heuristic always includes the restaurant name
                 # at minimum, so the list is never literally empty.
-                keyterms = compute_keyterms(
-                    state.restaurant.menu, state.restaurant.name
-                )
+                keyterms = compute_keyterms(state.restaurant.menu, state.restaurant.name)
                 logger.info(
                     "keyterms call_sid=%s rid=%s n=%d preview=%r",
                     state.call_sid,
@@ -447,15 +441,11 @@ async def media_stream(websocket: WebSocket) -> None:
                     len(keyterms),
                     keyterms[:5],
                 )
-                state.stt, state.stt_provider = get_stt(
-                    call_sid=state.call_sid, keyterms=keyterms
-                )
+                state.stt, state.stt_provider = get_stt(call_sid=state.call_sid, keyterms=keyterms)
                 try:
                     await state.stt.open()
                 except Exception:
-                    logger.exception(
-                        "stt: failed to open call_sid=%s", state.call_sid
-                    )
+                    logger.exception("stt: failed to open call_sid=%s", state.call_sid)
                     _bg_call_event(
                         state.call_sid,
                         state.restaurant.id,
@@ -576,9 +566,7 @@ async def media_stream(websocket: WebSocket) -> None:
             try:
                 await state.stt.close()
             except Exception:
-                logger.exception(
-                    "stt: close failed call_sid=%s", state.call_sid
-                )
+                logger.exception("stt: close failed call_sid=%s", state.call_sid)
         if state.llm_task and not state.llm_task.done():
             state.llm_task.cancel()
             try:
