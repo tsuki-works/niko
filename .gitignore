@@ -23,6 +23,17 @@ venv/
 .claude/worktrees/
 **/.claude/worktrees/
 
+# IDE / editor configs — local only
+.idea/
+
+# Local dev helpers (per-developer; not team-shared)
+scripts/dev.ps1
+.claude/statusline-command.sh
+docs/07-local-development-setup.md
+
+# Local runtime logs
+uvicorn.log
+
 # Terraform — local state, plan files, provider plugins, lockfile-overrides
 # (.terraform.lock.hcl is intentionally NOT ignored — it pins provider versions
 # for reproducibility and should be committed.)

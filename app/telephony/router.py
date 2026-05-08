@@ -1,16 +1,13 @@
-"""Twilio telephony endpoints.
+"""Twilio telephony FastAPI surface.
 
-POST /voice        — TwiML webhook: answers the inbound call, opens a
-                     Twilio Media Stream so the STT→LLM→TTS pipeline can
-                     take over.  The AI greeting is delivered via Deepgram
-                     Aura on the 'start' event rather than a static TwiML
-                     <Say>.
-
-WS   /media-stream — Receives the Twilio Media Stream over WebSocket and
-                     runs the full call loop:
-                       Deepgram transcript → stream_reply() → speak()
-                     Supports barge-in (new transcript cancels in-flight TTS)
-                     and a 10-second silence watchdog.
+Five HTTP webhook endpoints (`/voice`, `/voice/stream-ended`,
+`/voice/transfer-result`, `/voice/voicemail-recorded`,
+`/voice/voicemail-transcription`) and one WebSocket
+(`/media-stream`) that runs Twilio's Media Stream loop. Endpoint
+bodies parse Twilio's webhook form and delegate: TwiML construction
+to app/twilio/twiml.py, REST credentials to app/twilio/__init__.py,
+call orchestration (state, barge-in, hangup, LLM turn) to
+app/telephony/session.py.
 """
 
 from __future__ import annotations
@@ -19,617 +16,54 @@ import asyncio
 import base64
 import json
 import logging
-import time
-from dataclasses import dataclass, field
-from typing import Any, Callable
 
-from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
-from twilio.twiml.voice_response import Connect, Dial, VoiceResponse
 
+import app.twilio as app_twilio
 from app.config import settings
-from app.llm.client import stream_reply
 from app.llm.prompts import build_system_prompt
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
-from app.orders.models import Order, OrderStatus
-from app.restaurants.models import Restaurant
+from app.orders.models import Order
+from app.restaurants.keyterms import compute_keyterms
 from app.restaurants.open_check import is_open_now
 from app.storage import call_sessions, recordings
 from app.storage import restaurants as restaurants_storage
-from app.storage.recordings import RecordingUploadSession  # noqa: F401  (typing only)
+from app.stt import get_stt
+from app.telephony.session import (
+    END_OF_CALL_MARK,
+    GREETING_TRANSCRIPT,
+    _abort_pending_hangup,
+    _arm_silence_watchdog,
+    _bg_call_event,
+    _CallState,
+    _cancel_silence_task,
+    _consume_transcripts,
+    _hang_up_after_grace,
+    _make_recording_chunk_handler,
+    _resolve_restaurant_for_voice,
+    _run_llm_tts_turn,
+    _state_rid,
+)
 from app.telephony.voicemail_twiml import voicemail_response
-from app.tts.client import speak
+from app.tts import speak
+from app.twilio.twiml import (
+    closed_hangup_twiml,
+    empty_twiml,
+    transfer_twiml,
+    unconfigured_hangup_twiml,
+    voice_twiml,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-SILENCE_TIMEOUT_SECONDS = 10.0
-SILENCE_PROMPT = "Are you still there?"
-GREETING_TRANSCRIPT = "[call started — greet the caller]"
-
-# Auto-hangup after order confirmation (#78). Twilio echoes back this
-# named mark when its audio buffer drains, signalling the caller has
-# heard the goodbye; we then hold for the grace window in case they
-# squeeze in a late question before terminating the call.
-END_OF_CALL_MARK = "end_of_call"
-HANGUP_GRACE_SECONDS = 5.0
-# Fallback if Twilio never echoes the end_of_call mark back to us
-# (WebSocket dropped, mark lost in transit). After this many seconds
-# we trigger the grace window anyway so the call still terminates
-# instead of hanging open. Picked > typical mark round-trip (1-3s).
-MARK_ECHO_TIMEOUT_SECONDS = 8.0
-
-# Chunking thresholds for TTS handoff (#151). Sentence terminators
-# always flush; soft breaks (commas, semicolons, colons, em dashes)
-# only flush once the buffered chunk is ≥ _MIN_CHUNK_CHARS so that
-# fragments like "Got it," don't become their own Aura round-trip.
-# 20 chars ≈ "One Chicken Fried Rice coming up," length when the
-# 4/26 Twilight call's longest "over budget" turn would have hit.
-_HARD_BREAKS = (".", "?", "!")
-_SOFT_BREAKS = (",", ";", ":", "—")
-_MIN_CHUNK_CHARS = 20
-
-
-def _should_flush_chunk(delta: str, buffered_chars: int) -> bool:
-    """True if the current text-delta should close a TTS chunk.
-
-    ``delta`` is the latest streamed text fragment from Anthropic;
-    ``buffered_chars`` is the total length of all deltas accumulated
-    since the last flush (i.e. the chunk we'd ship if we flushed now).
-    """
-    if delta.endswith(_HARD_BREAKS):
-        return True
-    if delta.endswith(_SOFT_BREAKS) and buffered_chars >= _MIN_CHUNK_CHARS:
-        return True
-    return False
-
-
-# Phrases the model uses when wrapping up. Used as a fallback signal
-# for auto-hangup when Haiku says a goodbye but forgets to mark the
-# order status as confirmed via update_order (#79). Matched
-# case-insensitive against the full assembled reply.
-_GOODBYE_PATTERNS = (
-    "your order is in",
-    "have it ready",
-    "see you soon",
-    "see you in a",
-    "thanks for calling",
-    "thanks for ordering",
-    "have a great day",
-    "have a good day",
-    "enjoy your",
-)
-
-
-def _looks_like_goodbye(reply: str) -> bool:
-    """True if ``reply`` reads as a terminal wrap-up rather than another
-    follow-up question. Combined with ``Order.is_ready_to_confirm`` this
-    is the fallback trigger for auto-hangup."""
-    if not reply:
-        return False
-    stripped = reply.strip()
-    if stripped.endswith("?"):
-        return False
-    lower = stripped.lower()
-    return any(pat in lower for pat in _GOODBYE_PATTERNS)
-
-
-def _bg_call_event(call_sid: str | None, restaurant_id: str | None, **kwargs) -> None:
-    """Fire-and-forget Firestore write so the audio loop never blocks on it.
-
-    The storage module catches its own exceptions, so failures here just
-    drop the event from the live dashboard — the call continues normally.
-    Both ``call_sid`` and ``restaurant_id`` must be set; if either is
-    missing (early-lifecycle event before ``start`` resolved the tenant),
-    we silently skip rather than guess at the path.
-    """
-    if not call_sid or not restaurant_id:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    loop.create_task(
-        asyncio.to_thread(call_sessions.record_event, call_sid, restaurant_id, **kwargs)
-    )
-
-
-async def send_end_of_call_mark(websocket: WebSocket, stream_sid: str | None) -> bool:
-    """Append a named ``mark`` event to Twilio's outgoing media stream.
-
-    Twilio echoes the same mark back over the WebSocket once its audio
-    buffer drains past it — i.e. once the caller has heard everything
-    we sent. We use that as the precise trigger for auto-hangup (#78).
-    Returns True if the send succeeded.
-    """
-    if not stream_sid:
-        return False
-    try:
-        await websocket.send_json(
-            {
-                "event": "mark",
-                "streamSid": stream_sid,
-                "mark": {"name": END_OF_CALL_MARK},
-            }
-        )
-        return True
-    except WebSocketDisconnect:
-        return False
-    except Exception:
-        logger.exception("mark: failed to send end_of_call mark stream_sid=%s", stream_sid)
-        return False
-
-
-async def _hang_up_after_grace(state: _CallState) -> None:
-    """Wait HANGUP_GRACE_SECONDS, then close the WebSocket to end the
-    call.
-
-    Closing our /media-stream WebSocket ends Twilio's <Connect>; with no
-    further TwiML the inbound call hangs up. This avoids the Twilio REST
-    Calls.update endpoint, which returns 404 on calls in <Connect> state
-    (same root cause as the recording 404). The grace window lets a
-    caller squeeze in a late follow-up like *"how long does that
-    take?"* — a final transcript clears ``state.pending_hangup`` and
-    we abort.
-
-    ``state.should_hangup`` is also set as a fallback signal in case
-    the WS close doesn't immediately unblock ``receive_text()`` (rare,
-    but harmless to set both).
-    """
-    try:
-        await asyncio.sleep(HANGUP_GRACE_SECONDS)
-    except asyncio.CancelledError:
-        return
-    if not state.pending_hangup or not state.call_sid:
-        return
-    state.should_hangup.set()
-    if state.websocket is not None:
-        try:
-            await state.websocket.close(code=1000)
-            logger.info(
-                "call ended by server (WS-close path) call_sid=%s",
-                state.call_sid,
-            )
-        except Exception:
-            logger.exception("auto-hangup: WS close failed call_sid=%s", state.call_sid)
-
-
-async def _hang_up_after_mark_timeout(state: _CallState) -> None:
-    """Fallback for when Twilio never echoes the end_of_call mark.
-
-    The primary path is: send mark → Twilio echoes when audio drains →
-    start grace timer. If the echo never arrives, this timer fires
-    after ``MARK_ECHO_TIMEOUT_SECONDS`` and starts the grace window
-    anyway, so the call still ends instead of hanging open.
-
-    Cancelled by the echo handler when the echo arrives, or by
-    ``_abort_pending_hangup`` when the caller speaks.
-    """
-    try:
-        await asyncio.sleep(MARK_ECHO_TIMEOUT_SECONDS)
-    except asyncio.CancelledError:
-        return
-    if not state.pending_hangup or not state.call_sid:
-        return
-    logger.warning(
-        "auto-hangup: mark echo timed out after %.1fs, falling back to grace window call_sid=%s",
-        MARK_ECHO_TIMEOUT_SECONDS,
-        state.call_sid,
-    )
-    if state.hangup_task and not state.hangup_task.done():
-        state.hangup_task.cancel()
-    state.hangup_task = None
-    await _hang_up_after_grace(state)
-
-
-def _abort_pending_hangup(state: _CallState) -> None:
-    """Cancel a pending auto-hangup because the caller spoke during
-    the grace window. Safe to call when no hangup is pending."""
-    state.pending_hangup = False
-    if state.hangup_task and not state.hangup_task.done():
-        state.hangup_task.cancel()
-    state.hangup_task = None
-    if state.mark_timeout_task and not state.mark_timeout_task.done():
-        state.mark_timeout_task.cancel()
-    state.mark_timeout_task = None
-
-
-async def clear_twilio_audio(websocket: WebSocket, stream_sid: str | None) -> None:
-    """Tell Twilio to flush its audio buffer and stop playback.
-
-    Cancelling the LLM task only stops *generation* of new audio — bytes
-    already in Twilio's buffer keep playing for another 1–3 seconds, which
-    is exactly what callers experience as "the bot doesn't pause when I
-    interrupt." Twilio's Media Streams API has a dedicated ``clear`` event
-    that drops the buffer in ~80ms; we fire it whenever we cancel an
-    in-flight reply (#74).
-    """
-    if not stream_sid:
-        return
-    try:
-        await websocket.send_json({"event": "clear", "streamSid": stream_sid})
-    except WebSocketDisconnect:
-        # Caller already hung up — nothing to clear.
-        return
-    except Exception:
-        # Don't let a transient send failure break the call loop.
-        logger.exception("clear: failed to send Twilio clear event stream_sid=%s", stream_sid)
-
-
-@dataclass
-class _CallState:
-    call_sid: str | None = None
-    stream_sid: str | None = None
-    order: Order | None = None
-    history: list[dict] = field(default_factory=list)
-    restaurant: Restaurant | None = None  # tenant for this call (#79)
-    system_prompt: str = ""  # built from restaurant on start
-    llm_task: asyncio.Task | None = None  # current LLM→TTS turn
-    silence_task: asyncio.Task | None = None  # silence watchdog
-    hangup_task: asyncio.Task | None = None  # pending auto-hangup (#78)
-    mark_timeout_task: asyncio.Task | None = None  # mark-echo fallback (#114)
-    pending_hangup: bool = False  # set when goodbye mark sent (#78)
-    recording_session: "RecordingUploadSession | None" = None
-    should_hangup: asyncio.Event = field(default_factory=asyncio.Event)
-    # WS reference so _hang_up_after_grace can close the connection
-    # server-side. Closing the WS ends Twilio's <Connect>; with no
-    # further TwiML the call hangs up. Avoids the Twilio REST
-    # Calls.update endpoint which 404s on <Connect>-state calls.
-    websocket: "WebSocket | None" = None
-    # Transfer trigger accumulators (#7 Sprint 2.4 Track 2). Set by
-    # transcript / LLM-error handlers; read in the finally block to
-    # decide whether to write a transfer flag to the call session.
-    consecutive_low_confidence_turns: int = 0
-    last_caller_transcript: str = ""
-    llm_error_occurred: bool = False
-    # Carry-forward of the most recent transcript fed to an LLM turn
-    # that has not yet been persisted to ``history``. When a new final
-    # transcript arrives mid-turn, ``_handle_final_transcript`` cancels
-    # the in-flight task and prepends this string so the cancelled
-    # turn's user words aren't lost (#170). Cleared by ``_run_llm_tts_turn``
-    # the moment ``event.final`` writes ``state.history``.
-    in_flight_transcript: str = ""
-
-
-async def _open_deepgram_connection(
-    call_sid: str | None,
-    restaurant_id: str | None,
-    on_final: Callable,
-    state: "_CallState | None" = None,
-):
-    assert settings.deepgram_api_key, "DEEPGRAM_API_KEY is not set"
-
-    dg = DeepgramClient(settings.deepgram_api_key)
-    conn = dg.listen.asynclive.v("1")
-
-    async def on_transcript(self, result, **kwargs):
-        alt = result.channel.alternatives[0]
-        text = alt.transcript.strip()
-        if not text:
-            return
-        label = "final" if result.is_final else "interim"
-        logger.info("transcript [%s] call_sid=%s text=%r", label, call_sid, text)
-        if result.is_final:
-            # Track confidence for transfer-trigger detection (#7).
-            # Explicit None check — `or 1.0` would replace 0.0 (falsy)
-            # with 1.0, masking a legitimate worst-case misheard signal.
-            raw_confidence = getattr(alt, "confidence", 1.0)
-            confidence = 1.0 if raw_confidence is None else raw_confidence
-            if state is not None:
-                state.last_caller_transcript = text
-                if confidence < 0.5:
-                    state.consecutive_low_confidence_turns += 1
-                else:
-                    state.consecutive_low_confidence_turns = 0
-            _bg_call_event(
-                call_sid,
-                restaurant_id,
-                kind="transcript_final",
-                text=text,
-                detail={"text": text, "confidence": confidence},
-            )
-            asyncio.get_event_loop().create_task(on_final(text))
-
-    async def on_error(self, error, **kwargs):
-        logger.error("deepgram error call_sid=%s error=%s", call_sid, error)
-
-    conn.on(LiveTranscriptionEvents.Transcript, on_transcript)
-    conn.on(LiveTranscriptionEvents.Error, on_error)
-
-    # endpointing + utterance_end_ms together control how aggressively
-    # Deepgram closes a turn. We picked 800/1000 after a 2026-04-26
-    # Twilight test call where endpointing=300 fired ~7 false barge-ins
-    # in 3 minutes — every micro-pause mid-sentence ("i would like to"
-    # <breath> "have") was treated as a turn ending, and the AI kept
-    # saying "take your time" because it thought the caller had spoken.
-    # 800ms is Deepgram's recommended value for conversational flow;
-    # utterance_end_ms=1000 layers a prosody-aware end-of-utterance
-    # signal on top so we wait for "actually finished" instead of just
-    # "stopped making noise".
-    options = LiveOptions(
-        model="nova-2",
-        encoding="mulaw",
-        sample_rate=8000,
-        channels=1,
-        interim_results=True,
-        endpointing=800,
-        utterance_end_ms=1000,
-        vad_events=True,
-    )
-    started = await conn.start(options)
-    if not started:
-        raise RuntimeError(f"Deepgram connection failed to start call_sid={call_sid}")
-    return conn
-
-
-def _state_rid(state: _CallState) -> str | None:
-    """Restaurant id from state, or None if start hasn't resolved a tenant
-    yet (early-lifecycle defense)."""
-    return state.restaurant.id if state.restaurant else None
-
-
-async def _silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
-    try:
-        await asyncio.sleep(SILENCE_TIMEOUT_SECONDS)
-        logger.info("silence timeout call_sid=%s", state.call_sid)
-        _bg_call_event(state.call_sid, _state_rid(state), kind="silence_timeout")
-        if state.stream_sid:
-            await speak(
-                SILENCE_PROMPT,
-                websocket,
-                state.stream_sid,
-                recording_session=state.recording_session,
-            )
-    except asyncio.CancelledError:
-        pass
-
-
-def _cancel_silence_task(state: _CallState) -> None:
-    if state.silence_task and not state.silence_task.done():
-        state.silence_task.cancel()
-    state.silence_task = None
-
-
-def _arm_silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
-    if state.llm_task and state.llm_task.cancelled():
-        return  # barge-in — caller spoke again, no watchdog needed
-    _cancel_silence_task(state)
-    state.silence_task = asyncio.get_event_loop().create_task(_silence_watchdog(state, websocket))
-
-
-async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSocket) -> None:
-    turn_start = time.monotonic()
-    logger.info("llm_turn start call_sid=%s transcript=%r", state.call_sid, transcript)
-    _bg_call_event(
-        state.call_sid,
-        _state_rid(state),
-        kind="llm_turn_start",
-        text=transcript,
-        detail={"transcript": transcript},
-    )
-    text_buffer: list[str] = []
-    first_speak = True
-    full_reply_parts: list[str] = []
-    # #146 — instrumentation. ``stream_reply`` yields one timing snapshot
-    # the moment the first text content block opens; we stash it and
-    # fold the breakdown into the first_audio Firestore event so the
-    # dashboard can show ttft/tool_prefix/cache without anyone needing
-    # GCP log access.
-    timing_snapshot: dict[str, Any] | None = None
-    first_text_at: float | None = None
-
-    def _record_first_audio() -> None:
-        latency = time.monotonic() - turn_start
-        logger.info(
-            "llm_turn first_audio latency=%.3fs call_sid=%s",
-            latency,
-            state.call_sid,
-        )
-        detail: dict[str, Any] = {"latency_seconds": round(latency, 3)}
-        if first_text_at is not None:
-            detail["first_text_seconds"] = round(first_text_at - turn_start, 3)
-        if timing_snapshot is not None:
-            detail.update(timing_snapshot)
-        _bg_call_event(
-            state.call_sid,
-            _state_rid(state),
-            kind="first_audio",
-            detail=detail,
-        )
-
-    def _record_first_tts_byte() -> None:
-        # #152 — captures the actual moment the first audio byte arrives
-        # from Deepgram Aura, closing the gap that first_audio misses
-        # (first_audio fires before await speak(), hiding TTS network time).
-        latency = time.monotonic() - turn_start
-        logger.info(
-            "llm_turn first_tts_byte latency=%.3fs call_sid=%s",
-            latency,
-            state.call_sid,
-        )
-        _bg_call_event(
-            state.call_sid,
-            _state_rid(state),
-            kind="first_tts_byte",
-            detail={"latency_seconds": round(latency, 3)},
-        )
-
-    try:
-        async for event in stream_reply(
-            transcript=transcript,
-            history=state.history,
-            order=state.order,
-            system_prompt=state.system_prompt,
-        ):
-            if asyncio.current_task().cancelled():
-                return
-
-            if event.timing is not None:
-                timing_snapshot = event.timing
-                continue
-
-            if event.text_delta is not None:
-                if first_text_at is None:
-                    first_text_at = time.monotonic()
-                text_buffer.append(event.text_delta)
-                full_reply_parts.append(event.text_delta)
-                buffered_chars = sum(len(p) for p in text_buffer)
-                if _should_flush_chunk(event.text_delta, buffered_chars):
-                    chunk = "".join(text_buffer).strip()
-                    text_buffer.clear()
-                    if chunk and state.stream_sid:
-                        if first_speak:
-                            _record_first_audio()
-                            first_speak = False
-                            on_first_byte = _record_first_tts_byte
-                        else:
-                            on_first_byte = None
-                        await speak(
-                            chunk,
-                            websocket,
-                            state.stream_sid,
-                            recording_session=state.recording_session,
-                            on_first_byte=on_first_byte,
-                        )
-
-            elif event.final is not None:
-                remainder = "".join(text_buffer).strip()
-                text_buffer.clear()
-                if remainder and state.stream_sid:
-                    if first_speak:
-                        _record_first_audio()
-                        first_speak = False
-                        on_first_byte = _record_first_tts_byte
-                    else:
-                        on_first_byte = None
-                    await speak(
-                        remainder,
-                        websocket,
-                        state.stream_sid,
-                        recording_session=state.recording_session,
-                        on_first_byte=on_first_byte,
-                    )
-                state.history = event.final.history
-                state.order = event.final.order
-                # Transcript is now durably in history — no need to carry
-                # it forward if a future turn is cancelled (#170).
-                state.in_flight_transcript = ""
-                full_reply = "".join(full_reply_parts).strip()
-                if full_reply:
-                    _bg_call_event(
-                        state.call_sid,
-                        _state_rid(state),
-                        kind="agent_reply",
-                        text=full_reply,
-                        detail={"text": full_reply},
-                    )
-                # Decide whether this turn is the wrap-up. Two signals:
-                #  1. Haiku set status=confirmed via update_order (the
-                #     primary path the prompt asks for).
-                #  2. Fallback (#79) — Haiku emitted a goodbye-shaped
-                #     reply ("your order is in", "see you soon", etc.)
-                #     AND the order has the data to actually confirm.
-                #     The model sometimes says the right closing line
-                #     without remembering to flip status.
-                if state.order is not None and state.stream_sid:
-                    explicitly_confirmed = state.order.status == OrderStatus.CONFIRMED
-                    fallback_confirmed = (
-                        state.order.is_ready_to_confirm()
-                        and state.order.status != OrderStatus.CANCELLED
-                        and _looks_like_goodbye(full_reply)
-                    )
-                    if explicitly_confirmed or fallback_confirmed:
-                        if fallback_confirmed and not explicitly_confirmed:
-                            logger.info(
-                                "auto-hangup: heuristic wrap-up detected "
-                                "(LLM didn't set status=confirmed) call_sid=%s",
-                                state.call_sid,
-                            )
-                            # Mirror the explicit-confirmation path locally
-                            # so the finally-block persist sees it too.
-                            state.order = state.order.model_copy(
-                                update={"status": OrderStatus.CONFIRMED}
-                            )
-                        sent = await send_end_of_call_mark(websocket, state.stream_sid)
-                        if sent:
-                            state.pending_hangup = True
-                            if state.mark_timeout_task and not state.mark_timeout_task.done():
-                                state.mark_timeout_task.cancel()
-                            state.mark_timeout_task = asyncio.create_task(
-                                _hang_up_after_mark_timeout(state)
-                            )
-
-    except asyncio.CancelledError:
-        logger.info("llm_turn cancelled (barge-in) call_sid=%s", state.call_sid)
-        _bg_call_event(state.call_sid, _state_rid(state), kind="barge_in")
-        raise
-    except Exception as exc:
-        logger.exception("llm_turn errored call_sid=%s", state.call_sid)
-        # #7: signal the trigger detector at end-of-stream
-        state.llm_error_occurred = True
-        _bg_call_event(
-            state.call_sid,
-            _state_rid(state),
-            kind="error",
-            text=str(exc)[:500],
-            detail={"exception": type(exc).__name__},
-        )
-        raise
-
-
-async def _handle_final_transcript(text: str, state: _CallState, websocket: WebSocket) -> None:
-    interrupted = bool(state.llm_task and not state.llm_task.done())
-    if interrupted:
-        state.llm_task.cancel()
-    # Carry forward — if any prior turn (cancelled or errored) left a
-    # transcript on state without persisting it to history, prepend it
-    # so Haiku sees the full caller intent in this turn (#170). The
-    # field is cleared by `_run_llm_tts_turn` only on `event.final`,
-    # so a non-empty value here always means "user words from a prior
-    # turn that never made it into history."
-    if state.in_flight_transcript.strip():
-        text = f"{state.in_flight_transcript} {text}".strip()
-    silence_was_active = bool(state.silence_task and not state.silence_task.done())
-    _cancel_silence_task(state)
-    # Caller spoke — abort any pending auto-hangup (#78). Even if they
-    # spoke during the grace window after a confirmation, we want to
-    # keep the call alive and process this transcript.
-    _abort_pending_hangup(state)
-    if interrupted or silence_was_active:
-        # Drop Twilio's pending audio buffer so the caller actually hears
-        # us pause instead of getting talked over (#74).
-        await clear_twilio_audio(websocket, state.stream_sid)
-    state.in_flight_transcript = text
-    state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
-    state.llm_task.add_done_callback(lambda _t: _arm_silence_watchdog(state, websocket))
-
-
-_UNCONFIGURED_TWIML_MESSAGE = "Sorry, this number is not currently configured. Goodbye."
-
-
-def _resolve_restaurant_for_voice(
-    to_e164: str,
-) -> Restaurant | None:
-    """Find the tenant for an inbound Twilio call (PR B of #79).
-
-    Looks up by the ``To`` field — Twilio's name for the dialed number,
-    which equals the per-restaurant ``twilio_phone`` we provisioned. If
-    Firestore returns nothing AND the dialed number matches the
-    demo's hardcoded ``twilio_phone``, falls back to building the demo
-    restaurant from ``app.menu.MENU``. The fallback is removed in PR F
-    once the seed is canonical.
-    """
-    restaurant = restaurants_storage.get_restaurant_by_twilio_phone(to_e164)
-    if restaurant is not None:
-        return restaurant
-    demo = restaurants_storage.demo_restaurant_from_menu()
-    if to_e164 == demo.twilio_phone:
-        logger.warning(
-            "voice: demo Twilio number %s not in Firestore — falling back to MENU",
-            to_e164,
-        )
-        return demo
-    return None
+_TRANSFER_STATUS_MAP = {
+    "completed": "answered",
+    "no-answer": "no_answer",
+    "busy": "busy",
+    "failed": "failed",
+    "canceled": "failed",
+}
 
 
 @router.post("/voice")
@@ -653,23 +87,20 @@ async def voice(request: Request) -> Response:
     call_sid = (form.get("CallSid") or "").strip()
     restaurant = _resolve_restaurant_for_voice(to_e164)
 
-    twiml = VoiceResponse()
     if restaurant is None:
         logger.warning("voice: no restaurant for To=%s — rejecting call", to_e164 or "(missing)")
-        twiml.say(_UNCONFIGURED_TWIML_MESSAGE)
-        twiml.hangup()
-        return Response(content=str(twiml), media_type="application/xml")
+        return Response(
+            content=str(unconfigured_hangup_twiml()),
+            media_type="application/xml",
+        )
 
-    if restaurant is not None and not is_open_now(restaurant):
+    if not is_open_now(restaurant):
         # After-hours: skip the AI flow, drop straight to voicemail.
         if not call_sid:
             # Defensive: Twilio always posts CallSid. Without it, we
             # can't key the recording or call_session — bail.
-            twiml = VoiceResponse()
-            twiml.say("Sorry, we're closed. Please call back during business hours.")
-            twiml.hangup()
             return Response(
-                content=str(twiml),
+                content=str(closed_hangup_twiml()),
                 media_type="application/xml",
             )
         try:
@@ -686,26 +117,10 @@ async def voice(request: Request) -> Response:
         )
 
     host = request.headers.get("host", "localhost:8000")
-    connect = Connect(action="/voice/stream-ended", method="POST")
-    # NOTE: <Connect><Stream> only supports the default ``inbound_track``;
-    # passing ``track="both_tracks"`` makes Twilio reject the TwiML and
-    # the call drops the moment the caller dismisses the trial-account
-    # interstitial. To capture the agent's voice in the recording, the
-    # /media-stream WS handler intercepts the TTS bytes we send out via
-    # ``speak()`` and feeds them directly into the recording session.
-    stream = connect.stream(url=f"wss://{host}/media-stream")
-    stream.parameter(name="restaurant_id", value=restaurant.id)
-    twiml.append(connect)
-    return Response(content=str(twiml), media_type="application/xml")
-
-
-_TRANSFER_STATUS_MAP = {
-    "completed": "answered",
-    "no-answer": "no_answer",
-    "busy": "busy",
-    "failed": "failed",
-    "canceled": "failed",
-}
+    return Response(
+        content=str(voice_twiml(restaurant, host)),
+        media_type="application/xml",
+    )
 
 
 @router.post("/voice/stream-ended")
@@ -724,7 +139,7 @@ async def stream_ended(request: Request) -> Response:
 
     if not call_sid:
         # Twilio always sends CallSid; missing → defensive hangup.
-        return Response(content=str(VoiceResponse()), media_type="application/xml")
+        return Response(content=str(empty_twiml()), media_type="application/xml")
 
     # Resolve the tenant by reading the call_session doc. Uses the legacy
     # flat path because this action callback only receives CallSid — the
@@ -738,7 +153,7 @@ async def stream_ended(request: Request) -> Response:
 
     if rid is None:
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -748,7 +163,7 @@ async def stream_ended(request: Request) -> Response:
 
     if not transfer_requested:
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -772,15 +187,10 @@ async def stream_ended(request: Request) -> Response:
             media_type="application/xml",
         )
 
-    twiml = VoiceResponse()
-    dial = Dial(
-        action=f"/voice/transfer-result?call_sid={call_sid}&rid={rid}",
-        method="POST",
-        timeout=20,
+    return Response(
+        content=str(transfer_twiml(restaurant.fallback_phone, call_sid, rid)),
+        media_type="application/xml",
     )
-    dial.number(restaurant.fallback_phone)
-    twiml.append(dial)
-    return Response(content=str(twiml), media_type="application/xml")
 
 
 @router.post("/voice/transfer-result")
@@ -811,7 +221,7 @@ async def transfer_result(
 
     if internal_status == "answered":
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -842,7 +252,7 @@ async def voicemail_recorded(
 
     if not recording_url or not recording_sid:
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -859,26 +269,25 @@ async def voicemail_recorded(
             recording_sid,
         )
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
-    if not settings.twilio_account_sid or not settings.twilio_auth_token:
+    if app_twilio.twilio_basic_auth() is None:
         logger.error(
             "voicemail upload: twilio creds missing call_sid=%s",
             call_sid,
         )
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
     try:
-        gs_url = recordings.upload_voicemail_from_twilio(
+        gs_url = app_twilio.upload_voicemail(
             call_sid=call_sid,
             restaurant_id=rid,
             twilio_recording_url=recording_url,
-            auth=(settings.twilio_account_sid, settings.twilio_auth_token),
         )
     except Exception:
         logger.exception(
@@ -887,7 +296,7 @@ async def voicemail_recorded(
             recording_sid,
         )
         return Response(
-            content=str(VoiceResponse()),
+            content=str(empty_twiml()),
             media_type="application/xml",
         )
 
@@ -906,7 +315,7 @@ async def voicemail_recorded(
             call_sid,
         )
 
-    return Response(content=str(VoiceResponse()), media_type="application/xml")
+    return Response(content=str(empty_twiml()), media_type="application/xml")
 
 
 @router.post("/voice/voicemail-transcription")
@@ -937,20 +346,16 @@ async def voicemail_transcription(
 
 @router.websocket("/media-stream")
 async def media_stream(websocket: WebSocket) -> None:
-    """Full call loop: Twilio Media Stream → Deepgram STT → LLM → Deepgram Aura TTS.
+    """Full call loop: Twilio Media Stream → STT → LLM → TTS.
 
     Twilio event types:
       connected  — protocol handshake
-      start      — stream open; initialises Order, opens Deepgram, fires AI greeting
-      media      — base64 mulaw 8 kHz audio forwarded to Deepgram
+      start      — stream open; initialises Order, opens STT, fires AI greeting
+      media      — base64 mulaw 8 kHz audio forwarded to the STT provider
       stop       — call ended; persists completed orders to Firestore
     """
     await websocket.accept()
     state = _CallState(websocket=websocket)
-    dg_conn = None
-
-    async def on_final(text: str) -> None:
-        await _handle_final_transcript(text, state, websocket)
 
     try:
         while True:
@@ -1002,28 +407,79 @@ async def media_stream(websocket: WebSocket) -> None:
                     state.restaurant.id,
                 )
                 if state.call_sid:
-                    asyncio.get_running_loop().create_task(
-                        asyncio.to_thread(
-                            call_sessions.init_call_session,
-                            state.call_sid,
-                            state.restaurant.id,
+                    # init_call_session creates the parent doc; record_event
+                    # (kind="start") then update()s it. Chain them in a single
+                    # task so the start event never races init and 404s.
+                    # Tracked on state.session_init_task so the WS finally
+                    # block can await it — otherwise a fast hangup tears the
+                    # loop down before the chained record_event lands.
+                    init_sid = state.call_sid
+                    init_rid = state.restaurant.id
+                    init_stream_sid = state.stream_sid or ""
+
+                    async def _init_then_start_event() -> None:
+                        await asyncio.to_thread(call_sessions.init_call_session, init_sid, init_rid)
+                        await asyncio.to_thread(
+                            call_sessions.record_event,
+                            init_sid,
+                            init_rid,
+                            kind="start",
+                            detail={"stream_sid": init_stream_sid},
                         )
-                    )
+
+                    state.session_init_task = asyncio.create_task(_init_then_start_event())
+                # Compute per-tenant keyterms from the loaded menu and
+                # log them once so the call audit has a record of what
+                # was biased. Empty list when the menu is unusably thin
+                # — the heuristic always includes the restaurant name
+                # at minimum, so the list is never literally empty.
+                keyterms = compute_keyterms(state.restaurant.menu, state.restaurant.name)
+                logger.info(
+                    "keyterms call_sid=%s rid=%s n=%d preview=%r",
+                    state.call_sid,
+                    state.restaurant.id,
+                    len(keyterms),
+                    keyterms[:5],
+                )
+                state.stt, state.stt_provider = get_stt(call_sid=state.call_sid, keyterms=keyterms)
+                try:
+                    await state.stt.open()
+                except Exception:
+                    logger.exception("stt: failed to open call_sid=%s", state.call_sid)
                     _bg_call_event(
                         state.call_sid,
                         state.restaurant.id,
-                        kind="start",
-                        detail={"stream_sid": state.stream_sid or ""},
+                        kind="error",
+                        text="STT failed to open",
+                        detail={"provider": state.stt_provider},
                     )
-                dg_conn = await _open_deepgram_connection(
-                    state.call_sid, state.restaurant.id, on_final, state=state
+                    # Speak a brief audible fallback before bailing — without
+                    # this the caller hears dead air until Twilio's idle
+                    # timeout closes the WS. TTS uses a different vendor path,
+                    # so a Deepgram-STT outage doesn't block this audio.
+                    if state.stream_sid:
+                        try:
+                            await speak(
+                                "Sorry, our service is briefly unavailable. Please call back in a moment.",
+                                websocket,
+                                state.stream_sid,
+                                on_chunk=_make_recording_chunk_handler(state),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "stt: fallback speak failed call_sid=%s",
+                                state.call_sid,
+                            )
+                    return
+                state.transcript_task = asyncio.create_task(
+                    _consume_transcripts(state.stt, state, websocket)
                 )
                 if settings.testing_mode and settings.commit_sha and state.stream_sid:
                     await speak(
                         f"Test build {settings.commit_sha[:7]}.",
                         websocket,
                         state.stream_sid,
-                        recording_session=state.recording_session,
+                        on_chunk=_make_recording_chunk_handler(state),
                     )
                 state.llm_task = asyncio.create_task(
                     _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)
@@ -1036,8 +492,8 @@ async def media_stream(websocket: WebSocket) -> None:
                 if track == "inbound":
                     inbound_chunk = payload
                     outbound_chunk = b""
-                    if dg_conn is not None:
-                        await dg_conn.send(payload)
+                    if state.stt is not None:
+                        await state.stt.send(payload)
                 elif track == "outbound":
                     inbound_chunk = b""
                     outbound_chunk = payload
@@ -1077,11 +533,40 @@ async def media_stream(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         logger.info("media-stream disconnected call_sid=%s", state.call_sid)
+    except RuntimeError:
+        # Server-initiated close (auto-hangup #78) flips Starlette's
+        # application_state to DISCONNECTED before the next receive_text()
+        # iteration; that guard then raises RuntimeError instead of the
+        # WebSocketDisconnect we'd otherwise catch. Gate on should_hangup
+        # so any other RuntimeError still surfaces as a real bug.
+        if not state.should_hangup.is_set():
+            raise
+        logger.info(
+            "media-stream disconnected (server-initiated close) call_sid=%s",
+            state.call_sid,
+        )
     finally:
         _cancel_silence_task(state)
         # Auto-hangup: stop any pending grace-window timer; the call is
         # already ending so we don't need to fire the REST close (#78).
         _abort_pending_hangup(state)
+        # Quiesce the transcript consumer FIRST so it can't spawn a new
+        # state.llm_task from a late final transcript while we're cleaning
+        # up the in-flight one. Closing the STT connection here also
+        # short-circuits any pending Deepgram callbacks. Order matters:
+        # if we cancelled state.llm_task first, the consumer could create
+        # a fresh task from a buffered transcript that we'd never await.
+        if state.transcript_task and not state.transcript_task.done():
+            state.transcript_task.cancel()
+            try:
+                await state.transcript_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if state.stt is not None:
+            try:
+                await state.stt.close()
+            except Exception:
+                logger.exception("stt: close failed call_sid=%s", state.call_sid)
         if state.llm_task and not state.llm_task.done():
             state.llm_task.cancel()
             try:
@@ -1156,5 +641,3 @@ async def media_stream(websocket: WebSocket) -> None:
                     "recording: finalize/mark failed call_sid=%s",
                     state.call_sid,
                 )
-        if dg_conn is not None:
-            await dg_conn.finish()

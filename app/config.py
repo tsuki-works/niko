@@ -26,6 +26,36 @@ class Settings(BaseSettings):
     # override via DEEPGRAM_TTS_MODEL.
     deepgram_tts_model: str = "aura-2-thalia-en"
 
+    # TTS provider selector. Today only "deepgram" is implemented; the
+    # selector seam exists so a second provider becomes a one-line add
+    # to app/tts/__init__.py.
+    tts_provider: str = "deepgram"
+
+    # STT provider selector. Today only "deepgram" is implemented.
+    stt_provider: str = "deepgram"
+
+    # Deepgram live STT options. Migrated to Flux English mono in #257.
+    # Flux owns turn detection natively (prosody-aware, ~260ms confirmed
+    # end-of-turn) so the Nova-2 endpointing knobs were removed; if Flux
+    # turn-detection ever needs tuning, expose `eager_eot_threshold` /
+    # `eot_threshold` / `eot_timeout_ms` here, all per the v2 connect API.
+    stt_model: str = "flux-general-en"
+    # Comma-separated debug-override keyterms. When non-empty, REPLACES
+    # the per-tenant heuristic output entirely (used to A/B test what
+    # Flux does with a specific term list). Empty in production —
+    # session.py computes keyterms from each restaurant's menu.
+    stt_keyterms: str = ""
+
+    # Instant barge-in. When True (default), a barge-in fires as soon as
+    # the STT provider signals "user started speaking" (Flux fires
+    # `TurnInfo.event="StartOfTurn"` on the first frame of detected
+    # speech) instead of waiting for the confirmed final transcript.
+    # Flip to False if the start-of-turn signal turns out to misfire
+    # on coughs or background noise on real calls — the
+    # final-transcript path in _handle_final_transcript absorbs the
+    # fallback case with no other code changes.
+    stt_instant_barge_in: bool = True
+
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_phone_number: Optional[str] = None

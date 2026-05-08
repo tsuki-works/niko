@@ -231,6 +231,9 @@ def finalize_recording(
     if not session.inbound_pcm and not session.outbound_pcm:
         return ("", 0)
 
+    if not settings.recordings_bucket:
+        return ("", 0)
+
     try:
         mixed = _mix_pcm_streams(bytes(session.inbound_pcm), bytes(session.outbound_pcm))
         if not mixed:
