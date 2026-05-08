@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     # dashboard needs seed data before the voice loop is wired up.
     niko_dev_endpoints: bool = False
 
+    # Local-dev only: when set to a directory path, the /media-stream WS
+    # handler dumps each call's inbound (caller-side) mulaw audio to
+    # ``<dir>/<call_sid>_<started_at>.ulaw``. Empty/unset in production —
+    # ``app.dev.audio_dump.open_caller_dump`` returns None and the dump
+    # path becomes a no-op. Designed to feed ``scripts/replay_stt.py``
+    # for offline STT A/B testing without touching the GCS recording path.
+    niko_local_audio_dump_dir: Optional[str] = None
+
     # Set by the deploy pipeline to the git commit SHA. Used to surface
     # the build version in the dashboard and (when testing_mode=True) as
     # a spoken announcement at call start.

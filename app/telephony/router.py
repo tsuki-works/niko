@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request, Response, WebSocket, WebSocketDisconnect
 
 import app.twilio as app_twilio
 from app.config import settings
+from app.dev.audio_dump import open_caller_dump
 from app.llm.prompts import build_system_prompt
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
 from app.orders.models import Order
@@ -406,6 +407,11 @@ async def media_stream(websocket: WebSocket) -> None:
                     state.stream_sid,
                     state.restaurant.id,
                 )
+                # Local-dev caller-audio dump. Returns None in production
+                # (env unset) and on any filesystem error — the call loop
+                # never depends on this succeeding.
+                if state.call_sid:
+                    state.caller_dump = open_caller_dump(state.call_sid)
                 if state.call_sid:
                     # init_call_session creates the parent doc; record_event
                     # (kind="start") then update()s it. Chain them in a single
@@ -494,6 +500,8 @@ async def media_stream(websocket: WebSocket) -> None:
                     outbound_chunk = b""
                     if state.stt is not None:
                         await state.stt.send(payload)
+                    if state.caller_dump is not None:
+                        state.caller_dump.append(payload)
                 elif track == "outbound":
                     inbound_chunk = b""
                     outbound_chunk = payload
@@ -567,6 +575,14 @@ async def media_stream(websocket: WebSocket) -> None:
                 await state.stt.close()
             except Exception:
                 logger.exception("stt: close failed call_sid=%s", state.call_sid)
+        if state.caller_dump is not None:
+            try:
+                state.caller_dump.close()
+            except Exception:
+                logger.exception(
+                    "audio_dump: close failed call_sid=%s",
+                    state.call_sid,
+                )
         if state.llm_task and not state.llm_task.done():
             state.llm_task.cancel()
             try:
