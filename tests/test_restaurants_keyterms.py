@@ -12,7 +12,7 @@ import json
 from math import ceil
 from pathlib import Path
 
-from app.restaurants.keyterms import compute_keyterms
+from app.restaurants.keyterms import _UNIVERSAL_MODIFIERS, compute_keyterms
 
 
 def _estimate_tokens(text: str) -> int:
@@ -22,7 +22,12 @@ def _estimate_tokens(text: str) -> int:
 
 
 def test_includes_restaurant_name_first_with_empty_menu() -> None:
-    assert compute_keyterms({}, "Twilight Family Restaurant") == ["Twilight Family Restaurant"]
+    keyterms = compute_keyterms({}, "Twilight Family Restaurant")
+    assert keyterms[0] == "Twilight Family Restaurant"
+    # Universal modifiers are emitted even with an empty menu.
+    assert "no" in keyterms
+    assert "spicy" in keyterms
+    assert "to go" in keyterms
 
 
 def test_walks_menu_in_category_order() -> None:
@@ -91,7 +96,12 @@ def test_skips_items_without_a_name() -> None:
         ],
     }
     keyterms = compute_keyterms(menu, "Twilight")
-    assert keyterms == ["Twilight", "Pepper Shrimp"]
+    assert keyterms[0] == "Twilight"
+    assert "Pepper Shrimp" in keyterms
+    # Universal modifiers appear between the restaurant name and menu items.
+    assert "no" in keyterms
+    pepper_idx = keyterms.index("Pepper Shrimp")
+    assert pepper_idx > keyterms.index("no")
 
 
 def test_skips_non_dict_menu_items_and_non_list_categories() -> None:
@@ -159,3 +169,88 @@ def test_output_preserves_original_casing() -> None:
     menu = {"appetizers": [{"name": "PePPer Shrimp"}]}
     keyterms = compute_keyterms(menu, "Twilight")
     assert "PePPer Shrimp" in keyterms
+
+
+def test_universal_modifiers_emitted_after_restaurant_name() -> None:
+    """With an empty menu the output is [restaurant_name] + modifiers in order."""
+    keyterms = compute_keyterms({}, "Twilight")
+    assert keyterms[0] == "Twilight"
+    assert keyterms[1:] == list(_UNIVERSAL_MODIFIERS)
+
+
+def test_universal_modifiers_emitted_before_menu_items() -> None:
+    """Every modifier appears before any menu item in the result list."""
+    menu = {"appetizers": [{"name": "Pepper Shrimp"}]}
+    keyterms = compute_keyterms(menu, "Test")
+    pepper_idx = keyterms.index("Pepper Shrimp")
+    for modifier in _UNIVERSAL_MODIFIERS:
+        if modifier in keyterms:
+            assert keyterms.index(modifier) < pepper_idx, (
+                f"modifier '{modifier}' appears after menu item 'Pepper Shrimp'"
+            )
+
+
+def test_modifier_dedups_against_menu_item() -> None:
+    """A menu item named like a modifier is not emitted a second time."""
+    menu = {"appetizers": [{"name": "spicy"}]}
+    keyterms = compute_keyterms(menu, "Test")
+    count = sum(1 for k in keyterms if k.lower() == "spicy")
+    assert count == 1, f"'spicy' appeared {count} times; expected exactly 1"
+    assert keyterms.index("spicy") < keyterms.index("Test") + len(keyterms)
+
+
+def test_modifier_dedups_against_restaurant_name() -> None:
+    """Restaurant name 'No' means the 'no' modifier must not appear again."""
+    keyterms = compute_keyterms({}, "No")
+    assert keyterms[0] == "No"
+    count = sum(1 for k in keyterms if k.lower() == "no")
+    assert count == 1, f"'no' appeared {count} times; expected exactly 1"
+
+
+def test_token_budget_still_includes_full_menu_for_realistic_input() -> None:
+    """A realistic ~30-item menu fits under budget alongside all modifiers."""
+    short_items = [
+        "Jerk Chicken",
+        "Oxtail Stew",
+        "Curry Goat",
+        "Brown Stew Fish",
+        "Ackee Saltfish",
+        "Callaloo",
+        "Bammy",
+        "Festival",
+        "Rice Peas",
+        "Plantain",
+        "Escovitch Fish",
+        "Steamed Cabbage",
+        "Breadfruit",
+        "Roast Yam",
+        "Peas Soup",
+        "Beef Patty",
+        "Coco Bread",
+        "Mannish Water",
+        "Tripe Beans",
+        "Cow Foot",
+        "Pelau",
+        "Roti",
+        "Doubles",
+        "Bake Shark",
+        "Sorrel Drink",
+        "Ginger Beer",
+        "Sea Moss",
+        "Rum Punch",
+        "Mango Juice",
+        "Soursop",
+    ]
+    menu = {"entrees": [{"name": name} for name in short_items]}
+    keyterms = compute_keyterms(menu, "Island Kitchen")
+
+    # All modifiers must be present.
+    for modifier in _UNIVERSAL_MODIFIERS:
+        assert modifier in keyterms, f"modifier '{modifier}' missing from keyterms"
+
+    # All menu items must be present (none dropped due to modifier-tax).
+    for item in short_items:
+        assert item in keyterms, f"menu item '{item}' was dropped from keyterms"
+
+    total_tokens = sum(_estimate_tokens(t) for t in keyterms)
+    assert total_tokens <= 450, f"keyterms exceed token budget: {total_tokens} > 450"
