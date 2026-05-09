@@ -2206,3 +2206,178 @@ async def test_stream_reply_marks_messages_last_block_with_rolling_breakpoint():
     blocks = _last_user_blocks(captured_calls[0]["messages"])
     assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
     assert blocks[-1]["text"] == "hello"
+
+
+# ---------------------------------------------------------------------------
+# #270 — skip the post-tool-use follow-up call on confirm/cancelled turns
+# when the main call already emitted text. The follow-up exists to give
+# the model a chance to react to tool_result feedback (#173); on terminal-
+# status turns there's no useful feedback and the call is ending, so the
+# follow-up is pure latency. Mid-order turns and tool-only confirm turns
+# still run the follow-up.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_reply_skips_followup_on_confirm_turn_when_main_already_spoke():
+    """Caller said 'yes' → main emits goodbye text + status=confirmed
+    tool_use. No follow-up call is needed; the caller already heard
+    everything and the call is ending."""
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [
+            FakeBlock(
+                type="text",
+                text="Thanks for your order. We'll have it ready for you soon.",
+            ),
+            FakeBlock(
+                type="tool_use",
+                id="toolu_confirm",
+                name="update_order",
+                input={"status": "confirmed"},
+            ),
+        ]
+    )
+
+    result = generate_reply(
+        transcript="yes",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    # Only one network call — the main call. No follow-up.
+    assert fake_client.messages.create.call_count == 1
+    assert result.order.status is OrderStatus.CONFIRMED
+    assert "Thanks for your order" in result.reply_text
+
+    # History must still thread cleanly: user transcript, assistant turn
+    # (text + tool_use), then the synthetic user-tool_result so subsequent
+    # turns don't 400 on dangling tool_use (#66 invariant).
+    assert result.history[-1]["role"] == "user"
+    assert isinstance(result.history[-1]["content"], list)
+    assert result.history[-1]["content"][0]["type"] == "tool_result"
+
+
+def test_generate_reply_runs_followup_on_confirm_turn_when_main_was_tool_only():
+    """Edge case: the model emitted update_order(status=confirmed) but
+    no text. The caller hasn't heard anything yet, so the follow-up must
+    still run to produce a goodbye. Preserves #173's invariant for the
+    silent-confirm path."""
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_confirm",
+                    name="update_order",
+                    input={"status": "confirmed"},
+                )
+            ]
+        ),
+        _fake_response([FakeBlock(type="text", text="Thanks. We'll have it ready soon.")]),
+    ]
+
+    result = generate_reply(
+        transcript="yes",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    assert fake_client.messages.create.call_count == 2  # follow-up still runs
+    assert "Thanks. We'll have it ready soon." in result.reply_text
+
+
+def test_generate_reply_runs_followup_on_mid_order_tool_use_with_text():
+    """Regression guard against accidentally widening the skip. Mid-order
+    item-add turns emit text + tool_use(status=in_progress); the follow-up
+    must still run so the model can react to the server-verified subtotal
+    in tool_result and produce the next prompt ('anything else?')."""
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(type="text", text="Got it."),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_add",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Pepperoni",
+                                "category": "pizza",
+                                "size": "medium",
+                                "quantity": 1,
+                                "unit_price": 17.99,
+                            }
+                        ],
+                        "order_type": "pickup",
+                        "status": "in_progress",
+                    },
+                ),
+            ]
+        ),
+        _fake_response([FakeBlock(type="text", text="Anything else?")]),
+    ]
+
+    result = generate_reply(
+        transcript="one medium pepperoni",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    # Two calls — main (got it + tool) AND follow-up (anything else?).
+    assert fake_client.messages.create.call_count == 2
+    assert "Anything else?" in result.reply_text
+
+
+async def test_stream_reply_skips_followup_on_confirm_turn_when_main_already_spoke():
+    """Streaming variant of the confirm-turn skip. No second stream is
+    started; the final event lands directly after the main stream."""
+    order = Order(call_sid="CAtest")
+    captured_calls: list[dict] = []
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory_capturing(
+        [
+            _FakeAsyncStream(
+                deltas=["Thanks for your order. We'll have it ready for you soon."],
+                blocks=[
+                    FakeBlock(
+                        type="text",
+                        text="Thanks for your order. We'll have it ready for you soon.",
+                    ),
+                    FakeBlock(
+                        type="tool_use",
+                        id="toolu_confirm",
+                        name="update_order",
+                        input={"status": "confirmed"},
+                    ),
+                ],
+            ),
+        ],
+        captured_calls,
+    )
+
+    deltas, final = await _collect(
+        stream_reply(
+            transcript="yes",
+            history=[],
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+            client=fake_client,
+        )
+    )
+
+    assert len(captured_calls) == 1  # no follow-up stream started
+    assert final is not None
+    assert final.order.status is OrderStatus.CONFIRMED
+    assert "Thanks for your order" in final.reply_text
