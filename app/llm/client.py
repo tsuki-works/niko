@@ -250,6 +250,52 @@ def _system_cache_block(system_prompt: str) -> list[dict[str, Any]]:
     ]
 
 
+def _with_rolling_cache_breakpoint(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Mark the last block of ``messages[-1]`` with ``cache_control: ephemeral``.
+
+    Together with the system-prompt breakpoint, this gives a 2-breakpoint
+    rolling cache (#176): each turn's request is cached up through the
+    new last message, and the next turn reads that as its cached prefix
+    so only the new content (previous assistant reply + new user turn)
+    is uncached prefill.
+
+    Caveat: Haiku 4.5 has a 4096-token minimum cacheable prefix. Short
+    calls won't engage the rolling breakpoint; longer calls (turn 3+ of
+    a typical order) will.
+
+    Returns a NEW messages list with a NEW last message — the input is
+    not mutated. This matters because callers thread the original
+    history forward into ``LLMResponse.history``; a stale cache_control
+    marker in threaded history would accumulate every turn and quickly
+    blow past Anthropic's 4-breakpoint cap.
+    """
+    if not messages:
+        return messages
+    last = messages[-1]
+    content = last["content"]
+    if isinstance(content, str):
+        # Plain-string user transcript. Convert to a one-block list so we
+        # can attach cache_control — strings have nowhere to attach it.
+        new_content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+    else:
+        if not content:
+            return messages  # defensive: nothing to mark
+        new_content = [dict(block) for block in content]
+        new_content[-1] = {
+            **new_content[-1],
+            "cache_control": {"type": "ephemeral"},
+        }
+    return [*messages[:-1], {**last, "content": new_content}]
+
+
 def _append_user_transcript(history: list[dict[str, Any]], transcript: str) -> list[dict[str, Any]]:
     """Append the caller's transcript to history with valid alternation.
 
@@ -362,7 +408,7 @@ def generate_reply(
         max_tokens=MAX_TOKENS,
         system=_system_cache_block(system_prompt),
         tools=[UPDATE_ORDER_TOOL],
-        messages=new_history,
+        messages=_with_rolling_cache_breakpoint(new_history),
     )
 
     reply_text_parts: list[str] = []
@@ -396,13 +442,19 @@ def generate_reply(
         ]
 
     if tool_uses:
-        # tools=[] is intentional — purely verbal continuation, see #173.
+        # Verbal continuation only — no further tool calls (#173). We keep the
+        # tool schema in ``tools`` and use ``tool_choice="none"`` to suppress
+        # tool use, rather than passing ``tools=[]``: tools sit before system
+        # in Anthropic's cached prefix order, so changing them across the two
+        # calls of one turn invalidates the entire cached prefix on the
+        # follow-up (system + menu + history). See #176.
         followup = api.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=_system_cache_block(system_prompt),
-            tools=[],
-            messages=new_history,
+            tools=[UPDATE_ORDER_TOOL],
+            tool_choice={"type": "none"},
+            messages=_with_rolling_cache_breakpoint(new_history),
         )
         for block in followup.content:
             if block.type == "text":
@@ -498,7 +550,7 @@ async def stream_reply(
         max_tokens=MAX_TOKENS,
         system=_system_cache_block(system_prompt),
         tools=[UPDATE_ORDER_TOOL],
-        messages=new_history,
+        messages=_with_rolling_cache_breakpoint(new_history),
     ) as stream:
         async for event in stream:
             if t_first_event is None:
@@ -571,7 +623,12 @@ async def stream_reply(
         )
 
     if tool_uses:
-        # tools=[] is intentional — purely verbal continuation, see #173.
+        # Verbal continuation only — no further tool calls (#173). We keep the
+        # tool schema in ``tools`` and use ``tool_choice="none"`` to suppress
+        # tool use, rather than passing ``tools=[]``: tools sit before system
+        # in Anthropic's cached prefix order, so changing them across the two
+        # calls of one turn invalidates the entire cached prefix on the
+        # follow-up (system + menu + history). See #176.
         # Each follow-up call gets its own scoped timing variables so the second
         # timing event reports that call's numbers, not the first call's (#175).
         fu_t_request_start = time.monotonic()
@@ -586,8 +643,9 @@ async def stream_reply(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=_system_cache_block(system_prompt),
-            tools=[],
-            messages=new_history,
+            tools=[UPDATE_ORDER_TOOL],
+            tool_choice={"type": "none"},
+            messages=_with_rolling_cache_breakpoint(new_history),
         ) as followup_stream:
             async for event in followup_stream:
                 if fu_t_first_event is None:

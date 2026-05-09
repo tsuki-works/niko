@@ -75,10 +75,16 @@ export function formatFirstAudioBreakdown(detail: Record<string, unknown>): stri
   if (typeof firstText === 'number')
     parts.push(`text=${Math.round(firstText * 1000)}ms`);
   if (typeof cacheRead === 'number' || typeof cacheCreation === 'number') {
-    const hit = (cacheRead ?? 0) > 0 && (cacheCreation ?? 0) === 0;
     const r = cacheRead ?? 0;
     const w = cacheCreation ?? 0;
-    parts.push(`cache=${hit ? 'hit' : 'miss'} r=${r} w=${w}`);
+    // r>0 w=0 = pure cache hit; r>0 w>0 = hit on the bulk prefix plus a
+    // small extension write on the new tail (the multi-turn rolling-cache
+    // pattern); r=0 = cold cache, full rewrite.
+    let label: 'hit' | 'hit+ext' | 'miss';
+    if (r > 0 && w === 0) label = 'hit';
+    else if (r > 0 && w > 0) label = 'hit+ext';
+    else label = 'miss';
+    parts.push(`cache=${label} r=${r} w=${w}`);
   }
 
   return parts.length ? `[${parts.join(' ')}]` : '';

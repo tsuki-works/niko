@@ -259,4 +259,18 @@ describe('formatFirstAudioBreakdown — #183 raw cache token counts', () => {
     });
     expect(result).toContain('cache=miss r=0 w=4096');
   });
+
+  it('marks cache=hit+ext when read tokens hit AND creation tokens extend the cache', () => {
+    // r>0 + w>0 means the cached prefix matched (cache hit) and a small
+    // new tail was added on top of the existing cache (incremental
+    // extension on a multi-turn call). Previously this was labelled
+    // "miss", which was misleading: most of the prompt hit the cache.
+    const result = formatFirstAudioBreakdown({
+      ttft_seconds: 0.5,
+      cache_read_tokens: 5085,
+      cache_creation_tokens: 329,
+    });
+    expect(result).toContain('cache=hit+ext r=5085 w=329');
+    expect(result).not.toContain('cache=miss');
+  });
 });
