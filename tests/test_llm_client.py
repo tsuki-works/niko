@@ -2151,9 +2151,7 @@ def test_threaded_history_does_not_carry_cache_control_marker():
     the call grows and we'd blow past Anthropic's 4-breakpoint cap."""
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
-    fake_client.messages.create.return_value = _fake_response(
-        [FakeBlock(type="text", text="Hi.")]
-    )
+    fake_client.messages.create.return_value = _fake_response([FakeBlock(type="text", text="Hi.")])
 
     result = generate_reply(
         transcript="hello",
