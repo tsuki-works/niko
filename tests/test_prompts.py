@@ -10,6 +10,8 @@ If a future edit accidentally deletes any of these the tests fail
 loudly rather than degrading the live caller experience silently.
 """
 
+import re
+
 from app.llm.prompts import build_system_prompt
 from app.restaurants.models import Restaurant
 from app.storage.restaurants import demo_restaurant_from_menu
@@ -17,6 +19,14 @@ from app.storage.restaurants import demo_restaurant_from_menu
 
 def _demo() -> Restaurant:
     return demo_restaurant_from_menu()
+
+
+def _collapse_ws(text: str) -> str:
+    """Collapse runs of whitespace (including newlines) into a single
+    space. The prompt wraps long sentences across lines for readability,
+    so substring assertions that span a wrap point need a normalized
+    view."""
+    return re.sub(r"\s+", " ", text)
 
 
 def test_prompt_includes_restaurant_name_and_menu_items():
@@ -78,7 +88,9 @@ def test_prompt_makes_confirmation_goodbyes_terminal():
     assert "closing the call" in lower
     assert "do not ask another follow-up question after confirming" in lower
     # Spot-check that the directive references the confirmed status flow.
-    assert 'set the order\'s status to "confirmed"' in lower or "status to confirmed" in lower
+    # #260 simplified the wording from "set the order's status to confirmed"
+    # to the literal tool-call form to keep the rule terse.
+    assert 'status="confirmed"' in lower
 
 
 def test_prompt_couples_goodbye_phrases_with_status_flip():
@@ -93,37 +105,80 @@ def test_prompt_couples_goodbye_phrases_with_status_flip():
 
 
 def test_prompt_closing_uses_period_terminated_openers():
-    """Regression for #186 — closing examples must use period-terminated
-    openers so TTS flushes the opener immediately instead of buffering
-    behind a comma. Also pins the variety rule listing at least three of
-    the four named openers."""
+    """Regression for #186 (period-terminated openers for TTS flushing)
+    and #260 (drop the enumerated four-ack list that was causing
+    audible parroting on real calls).
+
+    The period-terminated rule itself is load-bearing: TTS streams
+    earlier when the opener ends in a period vs a comma. #260 kept the
+    rule but removed the verbatim "Got it. / Perfect. / Alright. /
+    Of course." enumeration because the model was rotating through
+    that fixed list literally on every commit turn, leaking the
+    prompt's structure to the caller. Don't restore the verbatim list
+    without a fresh observability run showing the model still needs
+    examples to obey the rule.
+    """
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
-    # Period-terminated openers present in the closing examples.
-    # The text wraps across lines in the dedented block, so we check each
-    # part separately rather than as a single substring.
-    assert "got it." in lower
+    flat = _collapse_ws(lower)
+    # The period-vs-comma rule must remain explicit — it's the load-bearing
+    # bit for TTS. The text wraps across lines, so check against the flat
+    # form for substrings that cross a wrap point.
+    assert "ending in a period" in flat
+    assert "not a comma" in flat
+    assert "periods let" in flat or "tts start speaking sooner" in flat
+    # The wrap-up CRITICAL block is preserved — wrap-up phrases must
+    # still couple to status="confirmed" in the same turn.
     assert "your order is in" in lower
-    assert "perfect." in lower
     assert "we'll have it ready" in lower
-    # Old comma-led forms must be gone (the #186 fix replaced them)
+    # Old comma-led forms must remain absent (regression for #186).
     assert "great, your order is in" not in lower
     assert "perfect, we'll have it ready" not in lower
-    # Variety rule — at least 3 of the 4 named openers must appear quoted
-    variety_openers = ['"got it."', '"perfect."', '"alright."', '"of course."']
-    found = sum(1 for o in variety_openers if o in lower)
-    assert found >= 3, f"Expected >=3 variety openers in prompt, found {found}"
-    # Motivation sentence must be present so the model knows WHY
-    assert "periods let" in lower or "tts start speaking sooner" in lower
+    # #260 — the enumerated four-ack list must NOT appear, and the rule
+    # should explicitly tell the model not to pick from a fixed rotation.
+    assert '"got it.", "perfect.", "alright.", "of course."' not in lower
+    assert "do not pick from a fixed rotation" in flat or "do not pick from a fixed list" in flat
 
 
-def test_prompt_readback_example_uses_period_terminated_opener():
-    """Regression for #186 — the order confirmation read-back example
-    must also lead with a period-terminated opener ('Perfect.') so the
-    TTS flushing rule is modelled consistently across all examples."""
+def test_prompt_readback_uses_action_closer_not_price_validation():
+    """Regression for #260 — the order read-back closes with a brief
+    action/order-oriented turn-cue ("Is that okay?", "Ready to go?",
+    "Should I send that through?"), NOT a yes/no question pinned to
+    the price ("does that sound right?", "sound good?").
+
+    The first attempt at #260 dropped the closer entirely and forced
+    statement-form. The live call surfaced a 10-second silence-timeout
+    regression because callers had no cue it was their turn. The fix
+    keeps the price-validation prohibition but restores an explicit
+    turn-cue with varied phrasing.
+
+    Replaces the earlier #186 assertion that the read-back example led
+    with "Perfect." — that example was dropped along with the four-ack
+    enumeration (see test_prompt_closing_uses_period_terminated_openers).
+    """
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
-    assert "perfect. so that's one large margherita" in lower
+    flat = _collapse_ws(lower)
+    # The read-back example body is preserved (item + total form). Use
+    # the flat form because the example wraps across lines.
+    assert "so that's one large margherita" in flat
+    # Price-validation closers remain banned — this is the core #260
+    # protection (caller can't validate a number they don't know).
+    # Both phrases appear in the *prohibition* list now, so check the
+    # ban-rule context rather than absolute absence. The list wraps
+    # across lines, so check against the flat form.
+    assert '"does that sound right?"' in flat
+    assert '"sound good?"' in flat
+    assert "pinned to the price" in flat
+    # The example must NOT use the banned phrasings as its closer —
+    # check the example body specifically.
+    assert "twenty-one ninety-nine. is that okay?" in flat
+    # The example must end with an action-oriented closer, not a bare
+    # statement. "Is that okay?" is the canonical example phrase.
+    assert "is that okay?" in lower
+    # Rule must explicitly tell the model to vary phrasing rather than
+    # rotate a fixed list literally.
+    assert "do not pick from a fixed rotation" in flat
 
 
 def test_prompt_renders_per_tenant_name():
@@ -291,13 +346,73 @@ def test_prompt_includes_customization_guidance():
 def test_prompt_includes_readback_instruction():
     """Sprint 2.2 #3 — prompt must direct the agent to read back the full
     order using the server-verified update_order subtotal, and only
-    confirm on an explicit caller yes."""
+    confirm on an explicit caller yes.
+
+    #260 (initial) tried statement-form read-backs to dodge price-
+    validation framing; that produced a silence-timeout regression on
+    live calls because callers had no turn-cue. #260 (revised) restores
+    an explicit closer but keeps it order-oriented, never price-
+    oriented. The "explicit confirmation" requirement still holds —
+    the model must wait for a real "yes" before flipping status, not
+    infer it from silence.
+    """
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
+    flat = _collapse_ws(lower)
     assert "read back" in lower
     assert "update_order" in lower
-    assert "does that sound right" in lower
-    assert "explicitly confirms" in lower
+    # Price-validation framing remains banned (#260).
+    assert "does that sound right" not in lower
+    # An action-oriented turn-cue closer is required.
+    assert "is that okay?" in lower
+    # The explicit-confirmation requirement is still load-bearing.
+    assert (
+        "confirm explicitly" in flat
+        or "explicitly confirms" in flat
+        or "after explicit confirmation" in flat
+    )
+
+
+def test_prompt_pins_stt_uncertainty_on_bot_not_caller():
+    """Regression for #260 — when the caller's transcript is unclear
+    (typically STT noise like "Pepper Shrimp hypertension" on call
+    CA2408cf afaf3f250c0bcf7cc2da2f9e19a1), the bot must own the
+    uncertainty ("didn't catch that") rather than blame the caller
+    ("I'm not sure what you mean by that"). Real STT misfires are on
+    our pipeline, not the caller — framing them as caller error reads
+    as blame and damages the call register."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    flat = _collapse_ws(lower)
+    # The bot-owning frame must appear as the recommended phrasing.
+    # The phrase wraps across lines, so check the flat form.
+    assert "didn't catch that" in flat
+    # The blame frame must be explicitly called out as wrong.
+    assert "i'm not sure what you mean" in flat
+    # The rule must explicitly tie the framing to the bot vs caller axis.
+    assert "pin the uncertainty on yourself" in flat
+    assert "never on the caller" in flat
+
+
+def test_prompt_forbids_per_item_readback_and_running_total():
+    """Regression for #260 — the read-back happens ONCE at the end,
+    not after each item. Per-item summaries make multi-item orders
+    feel like an interrogation; running-subtotal announcements are
+    noise. The post-tool-result rule must explicitly forbid both
+    so Haiku doesn't drift into chatty per-item recapping on long
+    orders."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    flat = _collapse_ws(lower)
+    # The mid-order branch must explicitly say "anything else?" and
+    # must explicitly forbid recitation + running-total announcements.
+    assert "anything else" in lower
+    assert "do not recite" in flat
+    assert "do not announce the running subtotal" in flat
+    # Read-back rule must restate the once-at-end discipline so the
+    # constraint is visible from both the read-back section and the
+    # tool-ordering section.
+    assert "happens once, at the end" in flat or "the read-back happens once" in flat
 
 
 def test_prompt_includes_caller_corrections_block():
@@ -343,9 +458,11 @@ def test_prompt_renders_delivery_offered_branch():
     assert "pickup or delivery" in lower
     # Address is collected
     assert "if delivery, collect the caller's delivery address" in lower
-    # Address is read back at confirmation
+    # Address is read back at confirmation. #260 rephrased "read the
+    # delivery address back" to "include the delivery address in the
+    # read-back" — the rule is unchanged, just less verbose.
     assert "if order_type is delivery" in lower
-    assert "read the delivery address back" in lower
+    assert "include the delivery address" in lower
     # Pickup-only language is NOT present
     assert "pickup-only" not in lower
 
