@@ -30,7 +30,9 @@ def _set_api_key(monkeypatch):
     monkeypatch.setattr(settings, "deepgram_api_key", "test-key")
 
 
-def _make_turn_info(*, event: str, transcript: str = "", confidence: float = 0.95):
+def _make_turn_info(
+    *, event: str, transcript: str = "", confidence: float = 0.95, turn_index: int = 0
+):
     """Build a real ListenV2TurnInfo. Constructing the SDK's pydantic
     model rather than ducking it with a MagicMock makes isinstance
     checks inside the translator behave like production."""
@@ -48,7 +50,7 @@ def _make_turn_info(*, event: str, transcript: str = "", confidence: float = 0.9
         request_id="req-test",
         sequence_id=0,
         event=event,
-        turn_index=0,
+        turn_index=turn_index,
         audio_window_start=0.0,
         audio_window_end=1.0,
         transcript=transcript,
@@ -516,6 +518,106 @@ async def test_recv_exception_surfaces_as_runtime_error(fake_v2_connection):
         with pytest.raises(RuntimeError, match="deepgram error"):
             async for _ev in stt.events():
                 pass
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_open_passes_eot_knobs_to_v2_connect(fake_v2_connection, monkeypatch):
+    from app.config import settings
+    from app.deepgram.stt import DeepgramSTT
+
+    monkeypatch.setattr(settings, "stt_eot_threshold", 0.85)
+    monkeypatch.setattr(settings, "stt_eot_timeout_ms", 3500)
+    monkeypatch.setattr(settings, "stt_eager_eot_threshold", None)
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        connect_call = fake_v2_connection._connect_mock.call_args
+        assert connect_call.kwargs["eot_threshold"] == 0.85
+        assert connect_call.kwargs["eot_timeout_ms"] == 3500
+        assert "eager_eot_threshold" not in connect_call.kwargs
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_open_passes_eager_threshold_when_configured(fake_v2_connection, monkeypatch):
+    from app.config import settings
+    from app.deepgram.stt import DeepgramSTT
+
+    monkeypatch.setattr(settings, "stt_eager_eot_threshold", 0.6)
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        connect_call = fake_v2_connection._connect_mock.call_args
+        assert connect_call.kwargs["eager_eot_threshold"] == 0.6
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_final_transcript_log_includes_eot_confidence(fake_v2_connection, caplog):
+    from app.deepgram.stt import DeepgramSTT
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        fake_v2_connection._recv_queue.put_nowait(
+            _make_turn_info(event="EndOfTurn", transcript="want a burger", confidence=0.92)
+        )
+        with caplog.at_level("INFO", logger="app.deepgram.stt"):
+            await _next_event(stt)
+        matching = [
+            r
+            for r in caplog.records
+            if r.name == "app.deepgram.stt" and "want a burger" in r.message and "0.92" in r.message
+        ]
+        assert len(matching) >= 1, "expected INFO log with transcript text and eot_conf=0.92"
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_early_turn_end_event_carries_text_and_turn_index(fake_v2_connection):
+    from app.deepgram.stt import DeepgramSTT
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        fake_v2_connection._recv_queue.put_nowait(
+            _make_turn_info(event="EagerEndOfTurn", transcript="i'd like a coke", turn_index=3)
+        )
+        evt = await _next_event(stt)
+        assert isinstance(evt, EarlyTurnEndEvent)
+        assert evt.text == "i'd like a coke"
+        assert evt.turn_index == 3
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_transcript_event_carries_turn_index(fake_v2_connection):
+    from app.deepgram.stt import DeepgramSTT
+
+    stt = DeepgramSTT(call_sid="CAtest")
+    await stt.open()
+    try:
+        fake_v2_connection._recv_queue.put_nowait(
+            _make_turn_info(event="Update", transcript="hello", turn_index=7)
+        )
+        interim = await _next_event(stt)
+        assert interim.turn_index == 7
+        assert interim.is_final is False
+
+        fake_v2_connection._recv_queue.put_nowait(
+            _make_turn_info(event="EndOfTurn", transcript="hello", turn_index=7)
+        )
+        final = await _next_event(stt)
+        assert final.turn_index == 7
+        assert final.is_final is True
     finally:
         await stt.close()
 

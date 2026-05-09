@@ -35,6 +35,9 @@ background reader task that drains ``recv()`` into an internal queue.
 ``events()`` is an async generator yielding STTEvents until
 ``close()``. ``close()`` cancels the reader, sends close-stream, and
 exits the context manager.
+
+Turn-detection knobs (``stt_eot_threshold``, ``stt_eot_timeout_ms``,
+``stt_eager_eot_threshold``) are configurable via ``Settings``.
 """
 
 from __future__ import annotations
@@ -168,12 +171,17 @@ class DeepgramSTT:
         keyterms = _resolve_keyterms(self._keyterms_arg, call_sid=self._call_sid)
 
         self._client = AsyncDeepgramClient(api_key=api_key)
-        self._cm = self._client.listen.v2.connect(
-            model=settings.stt_model,
-            encoding="mulaw",
-            sample_rate=8000,
-            keyterm=keyterms,
-        )
+        connect_kwargs: dict = {
+            "model": settings.stt_model,
+            "encoding": "mulaw",
+            "sample_rate": 8000,
+            "keyterm": keyterms,
+            "eot_threshold": settings.stt_eot_threshold,
+            "eot_timeout_ms": settings.stt_eot_timeout_ms,
+        }
+        if settings.stt_eager_eot_threshold is not None:
+            connect_kwargs["eager_eot_threshold"] = settings.stt_eager_eot_threshold
+        self._cm = self._client.listen.v2.connect(**connect_kwargs)
         try:
             self._conn = await self._cm.__aenter__()
         except Exception:
@@ -288,17 +296,28 @@ class DeepgramSTT:
                     text,
                 )
                 self._queue.put_nowait(
-                    TranscriptEvent(text=text, is_final=False, confidence=confidence)
+                    TranscriptEvent(
+                        text=text,
+                        is_final=False,
+                        confidence=confidence,
+                        turn_index=int(getter("turn_index", 0) or 0),
+                    )
                 )
                 return
 
             if event == "EagerEndOfTurn":
+                eager_turn_idx = int(getter("turn_index", 0) or 0)
                 logger.info(
                     "eager_eot call_sid=%s turn=%s",
                     self._call_sid,
-                    getter("turn_index", "?"),
+                    eager_turn_idx,
                 )
-                self._queue.put_nowait(EarlyTurnEndEvent())
+                self._queue.put_nowait(
+                    EarlyTurnEndEvent(
+                        text=(getter("transcript", "") or "").strip(),
+                        turn_index=eager_turn_idx,
+                    )
+                )
                 return
 
             if event == "TurnResumed":
@@ -317,13 +336,20 @@ class DeepgramSTT:
                     # has nothing to act on.
                     return
                 confidence = _confidence_from_words_payload(getter("words", []))
+                eot_conf = getter("end_of_turn_confidence", None)
                 logger.info(
-                    "transcript [final] call_sid=%s text=%r",
+                    "transcript [final] call_sid=%s text=%r eot_conf=%s",
                     self._call_sid,
                     text,
+                    eot_conf,
                 )
                 self._queue.put_nowait(
-                    TranscriptEvent(text=text, is_final=True, confidence=confidence)
+                    TranscriptEvent(
+                        text=text,
+                        is_final=True,
+                        confidence=confidence,
+                        turn_index=int(getter("turn_index", 0) or 0),
+                    )
                 )
                 return
 

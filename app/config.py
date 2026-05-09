@@ -47,10 +47,17 @@ class Settings(BaseSettings):
 
     # Deepgram live STT options. Migrated to Flux English mono in #257.
     # Flux owns turn detection natively (prosody-aware, ~260ms confirmed
-    # end-of-turn) so the Nova-2 endpointing knobs were removed; if Flux
-    # turn-detection ever needs tuning, expose `eager_eot_threshold` /
-    # `eot_threshold` / `eot_timeout_ms` here, all per the v2 connect API.
+    # end-of-turn); the knobs below override Flux's own defaults.
     stt_model: str = "flux-general-en"
+    # Confidence threshold to confirm end-of-turn. Flux default is 0.7;
+    # 0.8 reduces false cut-offs on mid-sentence pauses.
+    stt_eot_threshold: float = 0.8
+    # Max silence (ms) before Flux forces end-of-turn. Flux default is 5000;
+    # 4000 keeps latency tighter without clipping normal speech.
+    stt_eot_timeout_ms: int = 4000
+    # Optional early end-of-turn confidence gate. None = let Flux decide;
+    # set e.g. 0.95 to cut off turn aggressively on high-confidence pauses.
+    stt_eager_eot_threshold: Optional[float] = None
     # Comma-separated debug-override keyterms. When non-empty, REPLACES
     # the per-tenant heuristic output entirely (used to A/B test what
     # Flux does with a specific term list). Empty in production —

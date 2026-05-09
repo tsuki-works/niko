@@ -43,20 +43,24 @@ def test_stt_event_union_includes_all_four_types() -> None:
     }
 
 
-def test_early_and_resumed_events_have_no_payload_fields() -> None:
-    """These events are pure signals — they carry no payload. Pinning
-    that here so a future-PR field addition is a deliberate, reviewed
-    change rather than an accidental drift."""
-    assert dataclasses.fields(EarlyTurnEndEvent) == ()
+def test_turn_resumed_event_has_no_payload_fields() -> None:
+    """``TurnResumedEvent`` is a pure signal — pinned so a future
+    field addition is deliberate, not accidental drift."""
     assert dataclasses.fields(TurnResumedEvent) == ()
 
 
-def test_existing_event_shapes_unchanged() -> None:
-    """Regression guard. The migration must not silently change the
-    field set on the two pre-existing event types."""
+def test_event_shapes() -> None:
+    """Regression guard for the field set on each event dataclass.
+    Field additions are fine; this test forces them to be a deliberate
+    line edit here rather than silent drift."""
     assert {f.name for f in dataclasses.fields(SpeechStartedEvent)} == {"at"}
     assert {f.name for f in dataclasses.fields(TranscriptEvent)} == {
         "text",
         "is_final",
         "confidence",
+        "turn_index",
+    }
+    assert {f.name for f in dataclasses.fields(EarlyTurnEndEvent)} == {
+        "text",
+        "turn_index",
     }
