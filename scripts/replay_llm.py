@@ -192,7 +192,7 @@ def _run_variant(
         # added to history. There can be 1 or 2 assistant messages depending
         # on whether the model called update_order.
         tool_calls: list[dict[str, Any]] = []
-        for msg in resp.history[len(history):]:
+        for msg in resp.history[len(history) :]:
             if msg.get("role") != "assistant":
                 continue
             content = msg.get("content", [])
@@ -200,9 +200,7 @@ def _run_variant(
                 continue
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
-                    tool_calls.append(
-                        {"name": block.get("name"), "input": block.get("input")}
-                    )
+                    tool_calls.append({"name": block.get("name"), "input": block.get("input")})
 
         items_summary = (
             ", ".join(
@@ -402,9 +400,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         rid = transcript.get("restaurant")
         if not rid:
-            sys.exit(
-                "Transcript missing 'restaurant' and --restaurant not provided"
-            )
+            sys.exit("Transcript missing 'restaurant' and --restaurant not provided")
         menu_path = Path("restaurants") / f"{rid}.json"
 
     if not menu_path.is_file():
@@ -426,17 +422,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.only_revised is not None:
         if not args.only_revised.is_file():
             sys.exit(f"Revised preamble not found: {args.only_revised}")
-        variants_to_run.append(
-            ("revised", args.only_revised.read_text(encoding="utf-8"))
-        )
+        variants_to_run.append(("revised", args.only_revised.read_text(encoding="utf-8")))
     else:
         variants_to_run.append(("current", _PREAMBLE))
         if args.revised is not None:
             if not args.revised.is_file():
                 sys.exit(f"Revised preamble not found: {args.revised}")
-            variants_to_run.append(
-                ("revised", args.revised.read_text(encoding="utf-8"))
-            )
+            variants_to_run.append(("revised", args.revised.read_text(encoding="utf-8")))
 
     if args.dry_run:
         for label, template in variants_to_run:
