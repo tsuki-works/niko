@@ -13,13 +13,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.llm import client as client_module
-from app.llm.client import (
+from app.llm import anthropic as anthropic_module
+from app.llm.anthropic import (
     UPDATE_ORDER_TOOL,
-    _apply_update,
-    _summarize_order,
-    generate_reply,
-    stream_reply,
+    AnthropicLLM,
+)
+from app.llm.orchestration import (
+    apply_order_patch as _apply_update,
+)
+from app.llm.orchestration import (
+    summarize_order_for_tool_result as _summarize_order,
 )
 from app.orders.models import Order, OrderStatus, OrderType
 
@@ -32,7 +35,7 @@ def _reset_async_client_singleton():
     one test's instance never leaks into the next. The real process doesn't
     need this — the singleton is intentionally long-lived there."""
     yield
-    client_module._reset_async_client()
+    anthropic_module._reset_async_client()
 
 
 @dataclass
@@ -65,12 +68,11 @@ def test_plain_text_response_leaves_order_unchanged():
         [FakeBlock(type="text", text="Hi, what would you like to order?")]
     )
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="hello",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert result.reply_text == "Hi, what would you like to order?"
@@ -112,12 +114,11 @@ def test_tool_use_updates_order_in_single_turn():
         _fake_response([FakeBlock(type="text", text="Anything else for you?")]),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="one medium pepperoni for pickup",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert "One medium pepperoni for pickup. Anything else?" in result.reply_text
@@ -158,12 +159,11 @@ def test_tool_only_response_triggers_followup_call():
         ),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="never mind cancel",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert result.reply_text == "Okay, order cancelled. Have a good day."
@@ -183,12 +183,11 @@ def test_history_threads_user_and_assistant_turns():
         [FakeBlock(type="text", text="Sure, what size?")]
     )
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="one pepperoni please",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert result.history[0] == {"role": "user", "content": "one pepperoni please"}
@@ -247,12 +246,11 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
         ),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="i'll take a large margarita for pickup",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     # Follow-up now always runs after tool_use (#173).
@@ -348,12 +346,11 @@ def test_tool_result_carries_post_apply_subtotal():
         _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="add wings and fries",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     # Find the tool_result user message (comes right after the first assistant turn).
@@ -417,12 +414,11 @@ def test_next_transcript_merges_into_pending_tool_result():
         [FakeBlock(type="text", text="Sure thing.")]
     )
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="extra olives please",
         history=history_with_pending_tool_result,
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     # Find the last user message; assert the new transcript was merged
@@ -453,12 +449,11 @@ def test_history_strips_sdk_only_fields_from_assistant_blocks():
     fake_client = MagicMock()
     fake_client.messages.create.return_value = MagicMock(content=[SdkLikeBlock()])
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="one pepperoni please",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assistant_block = result.history[1]["content"][0]
@@ -494,9 +489,9 @@ def test_apply_update_preserves_call_sid_and_created_at():
 
 
 def test_missing_api_key_raises(monkeypatch):
-    monkeypatch.setattr(client_module.settings, "anthropic_api_key", None)
+    monkeypatch.setattr(anthropic_module.settings, "anthropic_api_key", None)
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-        client_module._client()
+        anthropic_module._client()
 
 
 def test_off_menu_request_leaves_order_empty():
@@ -517,12 +512,11 @@ def test_off_menu_request_leaves_order_empty():
         ]
     )
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="can I get some sushi",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert "sushi" in result.reply_text.lower()
@@ -546,12 +540,11 @@ def test_unclear_utterance_asks_for_clarification():
         ]
     )
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="mmrgh pfftbl",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert "again" in result.reply_text.lower() or "didn't catch" in result.reply_text.lower()
@@ -615,12 +608,11 @@ def test_caller_changes_mind_replaces_items():
         _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="actually scratch that, make it a veggie supreme",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert len(result.order.items) == 1
@@ -774,12 +766,11 @@ async def test_stream_reply_emits_text_deltas_then_final():
     )
 
     deltas, final = await _collect(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="hello",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
@@ -829,12 +820,11 @@ async def test_stream_reply_applies_tool_use_to_order_state():
     )
 
     _, final = await _collect(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="one medium pepperoni for pickup",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
@@ -869,12 +859,11 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
     )
 
     deltas, final = await _collect(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="never mind cancel",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
@@ -904,12 +893,11 @@ async def test_stream_reply_text_deltas_arrive_before_final():
     )
 
     seen: list[str] = []
-    async for event in stream_reply(
+    async for event in AnthropicLLM(async_client=fake_client).stream_reply(
         transcript="x",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     ):
         if event.text_delta is not None:
             seen.append(f"delta:{event.text_delta}")
@@ -940,12 +928,11 @@ async def test_stream_reply_emits_timing_event_before_first_delta():
 
     seen_kinds: list[str] = []
     timing_payload: dict[str, Any] | None = None
-    async for event in stream_reply(
+    async for event in AnthropicLLM(async_client=fake_client).stream_reply(
         transcript="hello",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     ):
         if event.timing is not None:
             seen_kinds.append("timing")
@@ -999,12 +986,11 @@ async def test_stream_reply_timing_reflects_tool_use_before_text():
             )
         fake_client.messages.stream = _stream_manager_factory(streams)
         timing = None
-        async for event in stream_reply(
+        async for event in AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="x",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         ):
             if event.timing is not None:
                 timing = event.timing
@@ -1069,12 +1055,11 @@ def test_modifications_round_trip_into_line_item():
         _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="large margherita extra cheese no basil",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert result.order.items[0].modifications == ["extra cheese", "no basil"]
@@ -1435,12 +1420,11 @@ def test_correction_invalid_delivery_address_is_rejected_and_signaled():
         _fake_response([FakeBlock(type="text", text="Could you give me the full street address?")]),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="my address is uhh",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     # Bad address was REJECTED — previous good value stays.
@@ -1475,12 +1459,11 @@ def test_generate_reply_sends_system_as_cache_block():
                 captured["kwargs"] = kwargs
                 return FakeMessage()
 
-    generate_reply(
+    AnthropicLLM(sync_client=FakeClient()).generate_reply(
         transcript="hi",
         history=[],
         order=Order(call_sid="CA123", restaurant_id="r1"),
         system_prompt="You are niko.",
-        client=FakeClient(),
     )
 
     system = captured["kwargs"]["system"]
@@ -1506,12 +1489,11 @@ async def test_stream_reply_sends_system_as_cache_block():
     fake_client = MagicMock()
     fake_client.messages.stream = _capture_stream
 
-    async for _ in stream_reply(
+    async for _ in AnthropicLLM(async_client=fake_client).stream_reply(
         transcript="hi",
         history=[],
         order=Order(call_sid="CA123", restaurant_id="r1"),
         system_prompt="You are niko.",
-        client=fake_client,
     ):
         pass
 
@@ -1527,7 +1509,8 @@ def test_apply_validation_passes_through_explicit_address_clears():
     (e.g. swapping from delivery to pickup), that's a legitimate clear,
     not a rejection. The patch must pass through unchanged with no
     rejection note. Regression guard for the PD-D4 -> PD-D5 fix."""
-    from app.llm.client import _INVALID_ADDRESS_NOTE, _apply_validation
+    from app.llm.orchestration import INVALID_ADDRESS_NOTE
+    from app.llm.orchestration import validate_order_patch as _apply_validation
 
     # Explicit None passes through, no rejection note.
     cleaned, notes = _apply_validation(
@@ -1573,7 +1556,7 @@ def test_apply_validation_passes_through_explicit_address_clears():
         }
     )
     assert "delivery_address" not in cleaned
-    assert notes == [_INVALID_ADDRESS_NOTE]
+    assert notes == [INVALID_ADDRESS_NOTE]
 
 
 def test_followup_after_text_plus_tool_produces_readback_in_same_turn():
@@ -1619,12 +1602,11 @@ def test_followup_after_text_plus_tool_produces_readback_in_same_turn():
         ),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="that's it",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     # reply_text is the concat of ack + read-back.
@@ -1690,12 +1672,11 @@ async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
     )
 
     deltas, final = await _collect(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="that's it",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
@@ -1743,12 +1724,11 @@ async def test_stream_reply_timing_includes_network_prefill_and_decode():
     )
 
     timing_payload = None
-    async for event in stream_reply(
+    async for event in AnthropicLLM(async_client=fake_client).stream_reply(
         transcript="hello",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     ):
         if event.timing is not None:
             timing_payload = event.timing
@@ -1794,7 +1774,7 @@ async def test_stream_reply_tool_use_turn_emits_two_timing_events(monkeypatch):
     import types as _types
 
     fake_time = _types.SimpleNamespace(monotonic=_fake_monotonic)
-    monkeypatch.setattr(client_module, "time", fake_time)
+    monkeypatch.setattr(anthropic_module, "time", fake_time)
 
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
@@ -1831,12 +1811,11 @@ async def test_stream_reply_tool_use_turn_emits_two_timing_events(monkeypatch):
     )
 
     events = await _collect_all_events(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="one medium pepperoni",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
@@ -1889,7 +1868,7 @@ async def test_stream_reply_tool_only_turn_emits_two_timing_events(monkeypatch):
     import types as _types
 
     fake_time = _types.SimpleNamespace(monotonic=_fake_monotonic)
-    monkeypatch.setattr(client_module, "time", fake_time)
+    monkeypatch.setattr(anthropic_module, "time", fake_time)
 
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
@@ -1914,12 +1893,11 @@ async def test_stream_reply_tool_only_turn_emits_two_timing_events(monkeypatch):
     )
 
     events = await _collect_all_events(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="never mind",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
@@ -1958,23 +1936,24 @@ async def test_stream_reply_persistent_client_used_when_no_injection(monkeypatch
             ),
         ]
     )
-    monkeypatch.setattr(client_module, "_default_async_client", fake_api)
+    monkeypatch.setattr(anthropic_module, "_default_async_client", fake_api)
 
     # Wrap _get_async_client to count how many times stream_reply invokes it.
     get_call_count = 0
-    real_get = client_module._get_async_client
+    real_get = anthropic_module._get_async_client
 
     def _counting_get():
         nonlocal get_call_count
         get_call_count += 1
         return real_get()
 
-    monkeypatch.setattr(client_module, "_get_async_client", _counting_get)
+    monkeypatch.setattr(anthropic_module, "_get_async_client", _counting_get)
 
     order = Order(call_sid="CAtest")
-    # Two calls without client= — both must route through _get_async_client.
+    # Two calls without async_client= — both must route through _get_async_client.
+    provider = AnthropicLLM()
     await _collect_all_events(
-        stream_reply(
+        provider.stream_reply(
             transcript="hello",
             history=[],
             order=order,
@@ -1982,7 +1961,7 @@ async def test_stream_reply_persistent_client_used_when_no_injection(monkeypatch
         )
     )
     await _collect_all_events(
-        stream_reply(
+        provider.stream_reply(
             transcript="and again",
             history=[],
             order=order,
@@ -1994,7 +1973,7 @@ async def test_stream_reply_persistent_client_used_when_no_injection(monkeypatch
         f"_get_async_client should be called once per stream_reply turn; got {get_call_count}"
     )
     # The singleton was never replaced — both turns shared the same instance.
-    assert client_module._default_async_client is fake_api, (
+    assert anthropic_module._default_async_client is fake_api, (
         "stream_reply must reuse the singleton, not replace it"
     )
 
@@ -2025,12 +2004,11 @@ def test_main_call_marks_plain_user_transcript_with_rolling_cache_breakpoint():
         [FakeBlock(type="text", text="Sure, what size?")]
     )
 
-    generate_reply(
+    AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="one pepperoni please",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     main_kwargs = fake_client.messages.create.call_args_list[0][1]
@@ -2077,12 +2055,11 @@ def test_main_call_marks_only_last_block_when_tool_result_merged_with_user():
         },
     ]
 
-    generate_reply(
+    AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="and one coke",
         history=history_with_pending_tool_result,
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     main_kwargs = fake_client.messages.create.call_args_list[0][1]
@@ -2128,12 +2105,11 @@ def test_followup_call_marks_tool_result_with_rolling_cache_breakpoint():
         _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
-    generate_reply(
+    AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="one medium pepperoni",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     followup_kwargs = fake_client.messages.create.call_args_list[1][1]
@@ -2153,12 +2129,11 @@ def test_threaded_history_does_not_carry_cache_control_marker():
     fake_client = MagicMock()
     fake_client.messages.create.return_value = _fake_response([FakeBlock(type="text", text="Hi.")])
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="hello",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     def _walk(obj):
@@ -2193,12 +2168,11 @@ async def test_stream_reply_marks_messages_last_block_with_rolling_breakpoint():
     )
 
     await _collect(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="hello",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
@@ -2239,12 +2213,11 @@ def test_generate_reply_skips_followup_on_confirm_turn_when_main_already_spoke()
         ]
     )
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="yes",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     # Only one network call — the main call. No follow-up.
@@ -2281,12 +2254,11 @@ def test_generate_reply_runs_followup_on_confirm_turn_when_main_was_tool_only():
         _fake_response([FakeBlock(type="text", text="Thanks. We'll have it ready soon.")]),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="yes",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     assert fake_client.messages.create.call_count == 2  # follow-up still runs
@@ -2327,12 +2299,11 @@ def test_generate_reply_runs_followup_on_mid_order_tool_use_with_text():
         _fake_response([FakeBlock(type="text", text="Anything else?")]),
     ]
 
-    result = generate_reply(
+    result = AnthropicLLM(sync_client=fake_client).generate_reply(
         transcript="one medium pepperoni",
         history=[],
         order=order,
         system_prompt=_TEST_SYSTEM_PROMPT,
-        client=fake_client,
     )
 
     # Two calls — main (got it + tool) AND follow-up (anything else?).
@@ -2368,12 +2339,11 @@ async def test_stream_reply_skips_followup_on_confirm_turn_when_main_already_spo
     )
 
     deltas, final = await _collect(
-        stream_reply(
+        AnthropicLLM(async_client=fake_client).stream_reply(
             transcript="yes",
             history=[],
             order=order,
             system_prompt=_TEST_SYSTEM_PROMPT,
-            client=fake_client,
         )
     )
 
