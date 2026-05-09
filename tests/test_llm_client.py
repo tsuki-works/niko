@@ -14,7 +14,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.llm import client as client_module
-from app.llm.client import _apply_update, _summarize_order, generate_reply, stream_reply
+from app.llm.client import (
+    UPDATE_ORDER_TOOL,
+    _apply_update,
+    _summarize_order,
+    generate_reply,
+    stream_reply,
+)
 from app.orders.models import Order, OrderStatus, OrderType
 
 _TEST_SYSTEM_PROMPT = "you are a test agent"
@@ -121,9 +127,11 @@ def test_tool_use_updates_order_in_single_turn():
     assert result.order.order_type is OrderType.PICKUP
     assert result.order.call_sid == "CAtest"
     assert fake_client.messages.create.call_count == 2
-    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    # Follow-up keeps the tool schema in tools so the cache prefix matches
+    # the main call (#176); tool_choice="none" suppresses further tool use.
     followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
-    assert followup_call_kwargs["tools"] == []
+    assert followup_call_kwargs["tools"] == [UPDATE_ORDER_TOOL]
+    assert followup_call_kwargs["tool_choice"] == {"type": "none"}
 
 
 def test_tool_only_response_triggers_followup_call():
@@ -161,9 +169,11 @@ def test_tool_only_response_triggers_followup_call():
     assert result.reply_text == "Okay, order cancelled. Have a good day."
     assert result.order.status is OrderStatus.CANCELLED
     assert fake_client.messages.create.call_count == 2
-    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    # Follow-up keeps the tool schema in tools so the cache prefix matches
+    # the main call (#176); tool_choice="none" suppresses further tool use.
     followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
-    assert followup_call_kwargs["tools"] == []
+    assert followup_call_kwargs["tools"] == [UPDATE_ORDER_TOOL]
+    assert followup_call_kwargs["tool_choice"] == {"type": "none"}
 
 
 def test_history_threads_user_and_assistant_turns():
@@ -871,9 +881,11 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
     assert deltas == ["Okay, ", "order cancelled."]
     assert final.reply_text == "Okay, order cancelled."
     assert final.order.status is OrderStatus.CANCELLED
-    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    # Follow-up keeps the tool schema in tools so the cache prefix matches
+    # the main call (#176); tool_choice="none" suppresses further tool use.
     assert len(captured_calls) == 2
-    assert captured_calls[1]["tools"] == []
+    assert captured_calls[1]["tools"] == [UPDATE_ORDER_TOOL]
+    assert captured_calls[1]["tool_choice"] == {"type": "none"}
 
 
 async def test_stream_reply_text_deltas_arrive_before_final():
@@ -1619,9 +1631,11 @@ def test_followup_after_text_plus_tool_produces_readback_in_same_turn():
     assert "Got it, one Chicken Fried Rice coming up." in result.reply_text
     assert "So that's one Chicken Fried Rice" in result.reply_text
     assert fake_client.messages.create.call_count == 2
-    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    # Follow-up keeps the tool schema in tools so the cache prefix matches
+    # the main call (#176); tool_choice="none" suppresses further tool use.
     followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
-    assert followup_call_kwargs["tools"] == []
+    assert followup_call_kwargs["tools"] == [UPDATE_ORDER_TOOL]
+    assert followup_call_kwargs["tool_choice"] == {"type": "none"}
 
 
 async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
@@ -1699,9 +1713,11 @@ async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
     assert "So that's" in final.reply_text
     # final.reply_text concatenates ack + read-back in that order.
     assert final.reply_text.index("Got it") < final.reply_text.index("So that's")
-    # Follow-up must pass tools=[] — purely verbal continuation, see #173.
+    # Follow-up keeps the tool schema in tools so the cache prefix matches
+    # the main call (#176); tool_choice="none" suppresses further tool use.
     assert len(captured_calls) == 2
-    assert captured_calls[1]["tools"] == []
+    assert captured_calls[1]["tools"] == [UPDATE_ORDER_TOOL]
+    assert captured_calls[1]["tool_choice"] == {"type": "none"}
 
 
 async def _collect_all_events(stream_iter) -> list:

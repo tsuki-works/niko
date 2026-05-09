@@ -396,12 +396,18 @@ def generate_reply(
         ]
 
     if tool_uses:
-        # tools=[] is intentional — purely verbal continuation, see #173.
+        # Verbal continuation only — no further tool calls (#173). We keep the
+        # tool schema in ``tools`` and use ``tool_choice="none"`` to suppress
+        # tool use, rather than passing ``tools=[]``: tools sit before system
+        # in Anthropic's cached prefix order, so changing them across the two
+        # calls of one turn invalidates the entire cached prefix on the
+        # follow-up (system + menu + history). See #176.
         followup = api.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=_system_cache_block(system_prompt),
-            tools=[],
+            tools=[UPDATE_ORDER_TOOL],
+            tool_choice={"type": "none"},
             messages=new_history,
         )
         for block in followup.content:
@@ -571,7 +577,12 @@ async def stream_reply(
         )
 
     if tool_uses:
-        # tools=[] is intentional — purely verbal continuation, see #173.
+        # Verbal continuation only — no further tool calls (#173). We keep the
+        # tool schema in ``tools`` and use ``tool_choice="none"`` to suppress
+        # tool use, rather than passing ``tools=[]``: tools sit before system
+        # in Anthropic's cached prefix order, so changing them across the two
+        # calls of one turn invalidates the entire cached prefix on the
+        # follow-up (system + menu + history). See #176.
         # Each follow-up call gets its own scoped timing variables so the second
         # timing event reports that call's numbers, not the first call's (#175).
         fu_t_request_start = time.monotonic()
@@ -586,7 +597,8 @@ async def stream_reply(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             system=_system_cache_block(system_prompt),
-            tools=[],
+            tools=[UPDATE_ORDER_TOOL],
+            tool_choice={"type": "none"},
             messages=new_history,
         ) as followup_stream:
             async for event in followup_stream:
