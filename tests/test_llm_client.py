@@ -1997,3 +1997,214 @@ async def test_stream_reply_persistent_client_used_when_no_injection(monkeypatch
     assert client_module._default_async_client is fake_api, (
         "stream_reply must reuse the singleton, not replace it"
     )
+
+
+# ---------------------------------------------------------------------------
+# #176 — rolling cache_control breakpoint on messages[-1]
+# ---------------------------------------------------------------------------
+
+
+def _last_user_blocks(messages: list[dict]) -> list[dict]:
+    """Return the content blocks of the last message, normalising the
+    plain-string case into a single-block list so tests can index uniformly."""
+    last = messages[-1]
+    content = last["content"]
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    return content
+
+
+def test_main_call_marks_plain_user_transcript_with_rolling_cache_breakpoint():
+    """When messages[-1] is a plain-string user transcript, the wrapper
+    converts it into a list with one text block carrying
+    ``cache_control: ephemeral``. Together with the system breakpoint,
+    this gives a 2-breakpoint rolling cache (#176)."""
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [FakeBlock(type="text", text="Sure, what size?")]
+    )
+
+    generate_reply(
+        transcript="one pepperoni please",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    main_kwargs = fake_client.messages.create.call_args_list[0][1]
+    blocks = _last_user_blocks(main_kwargs["messages"])
+    assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
+    assert blocks[-1]["text"] == "one pepperoni please"
+
+
+def test_main_call_marks_only_last_block_when_tool_result_merged_with_user():
+    """When _append_user_transcript merges the new transcript with a
+    pending tool_result list, only the LAST block (the new text) carries
+    cache_control. Earlier tool_result blocks are not marked — Anthropic
+    only allows up to 4 cache breakpoints per request and we want them
+    on the rolling tail, not in the middle."""
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [FakeBlock(type="text", text="Got it.")]
+    )
+
+    history_with_pending_tool_result = [
+        {"role": "user", "content": "i'd like a pepperoni"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "got it"},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "update_order",
+                    "input": {},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_1",
+                    "content": "Order updated.",
+                }
+            ],
+        },
+    ]
+
+    generate_reply(
+        transcript="and one coke",
+        history=history_with_pending_tool_result,
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    main_kwargs = fake_client.messages.create.call_args_list[0][1]
+    last_msg = main_kwargs["messages"][-1]
+    assert last_msg["role"] == "user"
+    blocks = last_msg["content"]
+    assert blocks[0]["type"] == "tool_result"
+    assert "cache_control" not in blocks[0]
+    assert blocks[-1]["type"] == "text"
+    assert blocks[-1]["text"] == "and one coke"
+    assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_followup_call_marks_tool_result_with_rolling_cache_breakpoint():
+    """The follow-up call sends history ending in a user message of
+    pure tool_result blocks. The last tool_result carries cache_control."""
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.side_effect = [
+        _fake_response(
+            [
+                FakeBlock(type="text", text="Got it."),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_x",
+                    name="update_order",
+                    input={
+                        "items": [
+                            {
+                                "name": "Pepperoni",
+                                "category": "pizza",
+                                "size": "medium",
+                                "quantity": 1,
+                                "unit_price": 17.99,
+                            }
+                        ],
+                        "order_type": "pickup",
+                        "status": "in_progress",
+                    },
+                ),
+            ]
+        ),
+        _fake_response([FakeBlock(type="text", text="Anything else?")]),
+    ]
+
+    generate_reply(
+        transcript="one medium pepperoni",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    followup_kwargs = fake_client.messages.create.call_args_list[1][1]
+    last_msg = followup_kwargs["messages"][-1]
+    assert last_msg["role"] == "user"
+    blocks = last_msg["content"]
+    assert blocks[-1]["type"] == "tool_result"
+    assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_threaded_history_does_not_carry_cache_control_marker():
+    """The cache_control marker is applied at the API call boundary only.
+    ``result.history`` (which the orchestrator threads into the next
+    turn) must stay clean — otherwise stale breakpoints accumulate as
+    the call grows and we'd blow past Anthropic's 4-breakpoint cap."""
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.create.return_value = _fake_response(
+        [FakeBlock(type="text", text="Hi.")]
+    )
+
+    result = generate_reply(
+        transcript="hello",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+        client=fake_client,
+    )
+
+    def _walk(obj):
+        if isinstance(obj, dict):
+            assert "cache_control" not in obj, (
+                f"threaded history must not carry cache_control: {obj}"
+            )
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _walk(v)
+
+    _walk(result.history)
+
+
+async def test_stream_reply_marks_messages_last_block_with_rolling_breakpoint():
+    """Streaming path mirrors the sync path — the messages array sent to
+    ``messages.stream`` carries cache_control on the last block of the
+    last message."""
+    order = Order(call_sid="CAtest")
+    captured_calls: list[dict] = []
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory_capturing(
+        [
+            _FakeAsyncStream(
+                deltas=["Hi!"],
+                blocks=[FakeBlock(type="text", text="Hi!")],
+            ),
+        ],
+        captured_calls,
+    )
+
+    await _collect(
+        stream_reply(
+            transcript="hello",
+            history=[],
+            order=order,
+            system_prompt=_TEST_SYSTEM_PROMPT,
+            client=fake_client,
+        )
+    )
+
+    assert len(captured_calls) == 1
+    blocks = _last_user_blocks(captured_calls[0]["messages"])
+    assert blocks[-1]["cache_control"] == {"type": "ephemeral"}
+    assert blocks[-1]["text"] == "hello"
