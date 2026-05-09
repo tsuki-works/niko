@@ -30,6 +30,7 @@ class TranscriptEvent:
     text: str
     is_final: bool
     confidence: float
+    turn_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,15 @@ class EarlyTurnEndEvent:
     speculatively; a ``TurnResumedEvent`` will follow if the caller
     keeps talking. Providers without prosody-aware turn detection (e.g.
     Whisper) never emit this event — consumers must treat it as
-    advisory and tolerate its absence."""
+    advisory and tolerate its absence.
+
+    ``text`` carries the speculated transcript (Deepgram guarantees it
+    matches the eventual ``EndOfTurn.transcript``). ``turn_index``
+    matches the corresponding ``StartOfTurn`` for correlation.
+    """
+
+    text: str = ""
+    turn_index: int = 0
 
 
 @dataclass(frozen=True)
