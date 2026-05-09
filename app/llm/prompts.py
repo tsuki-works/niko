@@ -32,7 +32,6 @@ from typing import Any
 
 from app.restaurants.models import Restaurant
 
-
 # ---------------------------------------------------------------------------
 # Prompt sections — composed into ``_PREAMBLE`` below.
 # ---------------------------------------------------------------------------
