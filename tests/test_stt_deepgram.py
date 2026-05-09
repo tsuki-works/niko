@@ -573,9 +573,7 @@ async def test_final_transcript_log_includes_eot_confidence(fake_v2_connection, 
         matching = [
             r
             for r in caplog.records
-            if r.name == "app.deepgram.stt"
-            and "want a burger" in r.message
-            and "0.92" in r.message
+            if r.name == "app.deepgram.stt" and "want a burger" in r.message and "0.92" in r.message
         ]
         assert len(matching) >= 1, "expected INFO log with transcript text and eot_conf=0.92"
     finally:
