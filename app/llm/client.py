@@ -359,6 +359,29 @@ def _apply_validation(patch: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     return cleaned, notes
 
 
+_TERMINAL_STATUSES = frozenset({"confirmed", "cancelled"})
+
+
+def _should_skip_followup(tool_uses: list[dict[str, Any]], main_emitted_text: bool) -> bool:
+    """Decide whether to skip the post-tool-use follow-up LLM call (#270).
+
+    The follow-up exists to give the model a chance to speak after seeing
+    ``tool_result`` feedback (#173). On terminal-status turns (confirmed
+    or cancelled) the call is ending — there is no next caller turn for
+    the model to react to — and if the main call already emitted text the
+    caller has already heard the goodbye. In that case the follow-up is
+    pure latency.
+
+    The follow-up still runs when the main call was tool-only on a
+    terminal turn (caller hasn't heard anything yet), or on any
+    non-terminal turn (mid-order item adds need the server-verified
+    subtotal in tool_result before the next "anything else?").
+    """
+    if not main_emitted_text:
+        return False
+    return any(tu["input"].get("status") in _TERMINAL_STATUSES for tu in tool_uses)
+
+
 def _apply_update(order: Order, patch: dict[str, Any]) -> Order:
     """Merge a tool-call payload into the current Order.
 
@@ -441,7 +464,7 @@ def generate_reply(
             {"role": "user", "content": tool_results},
         ]
 
-    if tool_uses:
+    if tool_uses and not _should_skip_followup(tool_uses, bool(reply_text_parts)):
         # Verbal continuation only — no further tool calls (#173). We keep the
         # tool schema in ``tools`` and use ``tool_choice="none"`` to suppress
         # tool use, rather than passing ``tools=[]``: tools sit before system
@@ -622,7 +645,7 @@ async def stream_reply(
             cache_creation_tokens,
         )
 
-    if tool_uses:
+    if tool_uses and not _should_skip_followup(tool_uses, bool(text_parts)):
         # Verbal continuation only — no further tool calls (#173). We keep the
         # tool schema in ``tools`` and use ``tool_choice="none"`` to suppress
         # tool use, rather than passing ``tools=[]``: tools sit before system
