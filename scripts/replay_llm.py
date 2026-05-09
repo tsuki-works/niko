@@ -67,7 +67,7 @@ try:
 except ImportError:
     pass
 
-from app.llm.client import generate_reply  # noqa: E402
+from app.llm import get_llm  # noqa: E402
 from app.llm.prompts import _PREAMBLE, _format_menu  # noqa: E402, PLC2701
 from app.orders.models import Order  # noqa: E402
 from app.restaurants.models import Restaurant  # noqa: E402
@@ -181,7 +181,7 @@ def _run_variant(
         if progress:
             print(f"# [{label}] turn {i + 1}/{total}", file=sys.stderr, flush=True)
 
-        resp = generate_reply(
+        resp = get_llm().generate_reply(
             transcript=caller_text,
             history=history,
             order=order,

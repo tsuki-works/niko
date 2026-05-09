@@ -18,6 +18,17 @@ class Settings(BaseSettings):
 
     anthropic_api_key: Optional[str] = None
 
+    # LLM provider selector. Today only "anthropic" is implemented; the
+    # selector seam exists so a second provider becomes a one-line add
+    # to app/llm/__init__.py.
+    llm_provider: str = "anthropic"
+
+    # Anthropic model + reply cap. Was hardcoded as module constants in
+    # app/llm/client.py; pulled into config so a model swap (Haiku →
+    # Sonnet → Opus) is an env change, not a code edit.
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+    anthropic_max_tokens: int = 512
+
     deepgram_api_key: Optional[str] = None
 
     # Deepgram Aura TTS voice/model. The model name encodes both the model

@@ -23,7 +23,7 @@ from fastapi import WebSocket
 
 from app.config import settings
 from app.dev.audio_dump import CallerAudioDump  # noqa: F401  (typing only)
-from app.llm.client import stream_reply
+from app.llm import get_llm
 from app.orders.models import Order, OrderStatus
 from app.restaurants.models import Restaurant
 from app.storage import call_sessions, recordings
@@ -484,7 +484,7 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
         )
 
     try:
-        async for event in stream_reply(
+        async for event in get_llm().stream_reply(
             transcript=transcript,
             history=state.history,
             order=state.order,

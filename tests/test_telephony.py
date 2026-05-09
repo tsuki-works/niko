@@ -6,18 +6,19 @@ in-process via TestClient — no Twilio, Deepgram, ElevenLabs, or
 Anthropic credentials required.
 
 The mock_pipeline fixture patches all four network-bound callables
-(get_stt, speak, stream_reply, call_sessions) so every test is
-offline and deterministic.
+(get_stt, speak, get_llm, call_sessions) so every test is offline
+and deterministic.
 """
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.llm.client import LLMResponse, StreamEvent
+from app.llm import LLMResponse, StreamEvent
 from app.main import app
 from app.orders.models import Order
 from app.storage import restaurants as restaurants_storage
@@ -74,6 +75,12 @@ def _make_fake_stream_reply(reply="Hi, welcome to Niko's Pizza Kitchen!"):
     return fake_stream_reply
 
 
+def _fake_llm_factory(stream_reply_func):
+    """Return a get_llm() replacement that yields a provider whose
+    ``stream_reply`` is the given async-generator function."""
+    return lambda: SimpleNamespace(stream_reply=stream_reply_func)
+
+
 @pytest.fixture()
 def mock_pipeline(monkeypatch):
     """Patch all four network-bound callables for offline testing."""
@@ -94,7 +101,10 @@ def mock_pipeline(monkeypatch):
     )
     monkeypatch.setattr("app.telephony.router.speak", fake_speak)
     monkeypatch.setattr("app.telephony.session.speak", fake_speak)
-    monkeypatch.setattr("app.telephony.session.stream_reply", _make_fake_stream_reply())
+    monkeypatch.setattr(
+        "app.telephony.session.get_llm",
+        _fake_llm_factory(_make_fake_stream_reply()),
+    )
     monkeypatch.setattr(call_sessions, "init_call_session", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
     monkeypatch.setattr(call_sessions, "mark_call_ended", lambda *a, **kw: None)
@@ -429,7 +439,10 @@ def test_ai_greeting_spawned_on_start(mock_pipeline, monkeypatch):
         yield StreamEvent(text_delta="Hello!")
         yield StreamEvent(final=LLMResponse(reply_text="Hello!", order=order, history=history))
 
-    monkeypatch.setattr("app.telephony.session.stream_reply", recording_stream_reply)
+    monkeypatch.setattr(
+        "app.telephony.session.get_llm",
+        _fake_llm_factory(recording_stream_reply),
+    )
 
     with client.websocket_connect("/media-stream") as ws:
         ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
@@ -474,7 +487,10 @@ def test_stop_event_persists_ready_order(mock_pipeline, monkeypatch):
         persisted.append(order)
         return order
 
-    monkeypatch.setattr("app.telephony.session.stream_reply", fake_stream_reply)
+    monkeypatch.setattr(
+        "app.telephony.session.get_llm",
+        _fake_llm_factory(fake_stream_reply),
+    )
     monkeypatch.setattr("app.telephony.router.persist_on_confirm", fake_persist)
 
     with client.websocket_connect("/media-stream") as ws:
@@ -568,7 +584,9 @@ async def test_tool_use_turn_two_timing_events_handled_by_router(monkeypatch):
     def fake_bg_call_event(call_sid, rid, **kwargs):
         recorded_events.append({"call_sid": call_sid, "rid": rid, **kwargs})
 
-    monkeypatch.setattr(session_mod, "stream_reply", fake_stream_reply_tool_only_then_text)
+    monkeypatch.setattr(
+        session_mod, "get_llm", _fake_llm_factory(fake_stream_reply_tool_only_then_text)
+    )
     monkeypatch.setattr(session_mod, "speak", fake_speak)
     monkeypatch.setattr(session_mod, "_bg_call_event", fake_bg_call_event)
     monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
@@ -973,10 +991,12 @@ def test_run_llm_tts_turn_flushes_at_long_comma_clause(monkeypatch, mock_pipelin
 
     monkeypatch.setattr("app.telephony.session.speak", capture_speak)
     monkeypatch.setattr(
-        "app.telephony.session.stream_reply",
-        _make_fake_stream_reply_deltas(
-            "One Chicken Fried Rice coming up,",
-            " what size would you like?",
+        "app.telephony.session.get_llm",
+        _fake_llm_factory(
+            _make_fake_stream_reply_deltas(
+                "One Chicken Fried Rice coming up,",
+                " what size would you like?",
+            )
         ),
     )
 
@@ -1001,8 +1021,8 @@ def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch, mock_pipeli
 
     monkeypatch.setattr("app.telephony.session.speak", capture_speak)
     monkeypatch.setattr(
-        "app.telephony.session.stream_reply",
-        _make_fake_stream_reply_deltas("Got it,", " moving on."),
+        "app.telephony.session.get_llm",
+        _fake_llm_factory(_make_fake_stream_reply_deltas("Got it,", " moving on.")),
     )
 
     with client.websocket_connect("/media-stream") as ws:
@@ -1866,7 +1886,7 @@ async def test_run_llm_tts_turn_clears_in_flight_transcript_on_final(monkeypatch
     async def fake_speak(*a, **kw):
         pass
 
-    monkeypatch.setattr(session_mod, "stream_reply", fake_stream_reply)
+    monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(fake_stream_reply))
     monkeypatch.setattr(session_mod, "speak", fake_speak)
     monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
 

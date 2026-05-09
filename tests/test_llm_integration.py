@@ -17,7 +17,7 @@ reply transcript and the structured Order state.
 import pytest
 
 from app.config import settings
-from app.llm.client import generate_reply, stream_reply
+from app.llm.anthropic import AnthropicLLM
 from app.llm.prompts import build_system_prompt
 from app.orders.models import Order
 from app.restaurants.models import Restaurant
@@ -33,6 +33,9 @@ pytestmark = pytest.mark.skipif(
     not settings.anthropic_api_key,
     reason="ANTHROPIC_API_KEY not set; skipping live integration tests",
 )
+
+# Shared provider instance for the whole module — production code path.
+_LLM = AnthropicLLM()
 
 # Large Margherita is $18.99 to satisfy _assert_size_change (>= $16.00).
 _DEMO_RESTAURANT = Restaurant(
@@ -90,7 +93,7 @@ def test_pickup_order_round_trip():
     order = Order(call_sid="CAintegration-pickup")
     transcript = "Hi, I'd like a large pepperoni pizza for pickup please."
 
-    result = generate_reply(
+    result = _LLM.generate_reply(
         transcript=transcript,
         history=[],
         order=order,
@@ -112,7 +115,7 @@ def test_greeting_does_not_mutate_order():
     order = Order(call_sid="CAintegration-greeting")
     transcript = "Hello?"
 
-    result = generate_reply(
+    result = _LLM.generate_reply(
         transcript=transcript,
         history=[],
         order=order,
@@ -133,7 +136,7 @@ def test_off_menu_item_is_declined_without_adding():
     order = Order(call_sid="CAintegration-offmenu")
     transcript = "Hi, can I get some sushi please?"
 
-    result = generate_reply(
+    result = _LLM.generate_reply(
         transcript=transcript,
         history=[],
         order=order,
@@ -155,7 +158,7 @@ def test_caller_changes_mind_replaces_pizza():
 
     order = Order(call_sid="CAintegration-changemind")
 
-    first = generate_reply(
+    first = _LLM.generate_reply(
         transcript="I'd like a medium pepperoni for pickup.",
         history=[],
         order=order,
@@ -167,7 +170,7 @@ def test_caller_changes_mind_replaces_pizza():
         "Turn 1 should record the pepperoni"
     )
 
-    second = generate_reply(
+    second = _LLM.generate_reply(
         transcript="Actually, scratch that — make it a large veggie supreme instead.",
         history=first.history,
         order=first.order,
@@ -194,7 +197,7 @@ async def test_stream_reply_yields_deltas_before_final():
     seen_final_after_deltas = False
     final = None
 
-    async for event in stream_reply(
+    async for event in _LLM.stream_reply(
         transcript=transcript,
         history=[],
         order=order,
@@ -240,7 +243,7 @@ def test_caller_correction_lands_in_final_order(scenario: CorrectionScenario):
     history: list[dict] = []
 
     for turn in scenario.initial_turns:
-        result = generate_reply(
+        result = _LLM.generate_reply(
             transcript=turn,
             history=history,
             order=order,
@@ -255,7 +258,7 @@ def test_caller_correction_lands_in_final_order(scenario: CorrectionScenario):
         )
 
     correction = scenario.correction_transcript
-    result = generate_reply(
+    result = _LLM.generate_reply(
         transcript=correction,
         history=history,
         order=order,
@@ -302,7 +305,7 @@ def test_pickup_delivery_flow(scenario: CorrectionScenario):
     system_prompt = _system_prompt_for(scenario.id)
 
     for turn in scenario.initial_turns:
-        result = generate_reply(
+        result = _LLM.generate_reply(
             transcript=turn,
             history=history,
             order=order,
@@ -317,7 +320,7 @@ def test_pickup_delivery_flow(scenario: CorrectionScenario):
         )
 
     trigger = scenario.correction_transcript
-    result = generate_reply(
+    result = _LLM.generate_reply(
         transcript=trigger,
         history=history,
         order=order,
