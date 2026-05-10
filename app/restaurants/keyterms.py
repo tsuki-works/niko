@@ -11,6 +11,12 @@ it with ``ceil(word_count * 1.3)`` because the tokenizer is not
 public. The 50-token safety margin under the 500 cap absorbs the
 heuristic's slop.
 
+The keyterm list emitted by this module includes three layers: the
+restaurant name (always first), universal order-modifiers that every
+restaurant needs but no menu enumerates (e.g. "spicy", "no", "extra"),
+and per-tenant menu item names. All three share the same token budget
+and dedup set.
+
 This module is intentionally a pure function over a menu dict. No
 Firestore reads, no settings reads, no logging — the caller owns
 all of that. Keeps the heuristic deterministic and trivially testable.
@@ -38,6 +44,39 @@ _COMMON_SAFE_TERMS = frozenset(
         "vegetable spring roll",
         "fried rice",
     }
+)
+
+# Modifier vocabulary every restaurant uses but no menu lists. Without
+# bias these single-word words lose to acoustically-similar menu items
+# ("spicy" → "Iced [Tea]" was the live failure that prompted #271).
+# Order roughly mirrors call frequency; the budget gate further down
+# stops emission if a pathological menu has already eaten the budget.
+_UNIVERSAL_MODIFIERS = (
+    # Negation / removal
+    "no",
+    "without",
+    "hold the",
+    # Addition / intensification
+    "extra",
+    "add",
+    "with",
+    # Reduction
+    "less",
+    "light",
+    # Spice / heat
+    "spicy",
+    "mild",
+    "hot",
+    # Sides / placement
+    "side of",
+    "on the side",
+    # Substitution
+    "instead of",
+    # Order context
+    "pickup",
+    "takeout",
+    "delivery",
+    "to go",
 )
 
 # Conservative token estimate. Deepgram's tokenizer isn't public; a
@@ -71,11 +110,12 @@ def compute_keyterms(menu: dict[str, Any], restaurant_name: str) -> list[str]:
     """Build a Flux keyterm list for one restaurant.
 
     Returns ``restaurant_name`` first (always — the caller may say it
-    when greeting), then menu item names in menu order, skipping items
-    in the common-safe set and items that duplicate something already
-    included (case-insensitive). Stops at the first item whose addition
-    would push the running token estimate over the budget — remaining
-    items get no bias on this call.
+    when greeting), then the universal restaurant modifiers in
+    ``_UNIVERSAL_MODIFIERS`` (every tenant gets these), then menu item
+    names in menu order, skipping items in the common-safe set and
+    items that duplicate something already included (case-insensitive).
+    Stops at the first item whose addition would push the running token
+    estimate over the budget — remaining items get no bias on this call.
 
     Pathological input where ``restaurant_name`` alone exceeds budget:
     return only ``[restaurant_name]`` — the caller is responsible for
@@ -92,6 +132,17 @@ def compute_keyterms(menu: dict[str, Any], restaurant_name: str) -> list[str]:
     terms: list[str] = [restaurant_name]
     used_tokens = name_tokens
     seen: set[str] = {restaurant_name.lower()}
+
+    for modifier in _UNIVERSAL_MODIFIERS:
+        modifier_lower = modifier.lower()
+        if modifier_lower in seen:
+            continue
+        cost = _estimate_tokens(modifier)
+        if used_tokens + cost > _TOKEN_BUDGET:
+            break
+        terms.append(modifier)
+        used_tokens += cost
+        seen.add(modifier_lower)
 
     for category_key, items in menu.items():
         if isinstance(category_key, str) and category_key.startswith("_"):
