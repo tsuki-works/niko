@@ -15,7 +15,7 @@ jobs:
     name: Backend (ruff + pytest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
@@ -51,7 +51,7 @@ jobs:
       run:
         working-directory: dashboard
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v6
         with:
@@ -79,7 +79,7 @@ jobs:
     name: Terraform fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: hashicorp/setup-terraform@v3
         with:
