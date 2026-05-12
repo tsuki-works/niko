@@ -38,6 +38,9 @@ uvicorn.log
 # default location; the env var owns the actual path.
 dev_recordings/
 
+# Exploratory / one-off STT replay scripts not part of the main harness
+scripts/replay_stt_google.py
+
 # Terraform — local state, plan files, provider plugins, lockfile-overrides
 # (.terraform.lock.hcl is intentionally NOT ignored — it pins provider versions
 # for reproducibility and should be committed.)
