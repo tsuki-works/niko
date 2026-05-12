@@ -196,9 +196,7 @@ class _PumpState:
         self.audio_position_s: float = 0.0
 
 
-async def _pump_frames_realtime(
-    conn: Any, frames: Sequence[bytes], state: _PumpState
-) -> None:
+async def _pump_frames_realtime(conn: Any, frames: Sequence[bytes], state: _PumpState) -> None:
     """Send all frames at realtime pace (20 ms per frame), update
     ``state.audio_position_s`` after each send, then close-stream."""
     start = time.monotonic()
@@ -250,9 +248,7 @@ async def _run_v2_timed(
                     )
                     if msg_type == "TurnInfo":
                         event = (
-                            msg.get("event")
-                            if isinstance(msg, dict)
-                            else getattr(msg, "event", "")
+                            msg.get("event") if isinstance(msg, dict) else getattr(msg, "event", "")
                         )
                         text = (
                             msg.get("transcript")
@@ -294,9 +290,7 @@ async def _run_v2_timed(
                     except (asyncio.CancelledError, Exception):
                         pass
                 result.total_wall_s = (
-                    last_final_wall
-                    if last_final_wall > 0
-                    else time.monotonic() - start_wall
+                    last_final_wall if last_final_wall > 0 else time.monotonic() - start_wall
                 )
     except Exception as exc:
         result.error = _sanitize_error(f"{type(exc).__name__}: {exc}")
@@ -416,9 +410,7 @@ async def _run_v1_timed(
                     except (asyncio.CancelledError, Exception):
                         pass
                 result.total_wall_s = (
-                    last_final_wall
-                    if last_final_wall > 0
-                    else time.monotonic() - start_wall
+                    last_final_wall if last_final_wall > 0 else time.monotonic() - start_wall
                 )
     except Exception as exc:
         result.error = _sanitize_error(f"{type(exc).__name__}: {exc}")
@@ -460,9 +452,7 @@ async def _run_one_config_safe(
             config_name=config_name,
             model=model,
             audio_duration_s=audio_duration_s,
-            error=_sanitize_error(
-                f"{type(exc).__name__}: {exc}\n{traceback.format_exc(limit=3)}"
-            ),
+            error=_sanitize_error(f"{type(exc).__name__}: {exc}\n{traceback.format_exc(limit=3)}"),
         )
 
 
@@ -475,9 +465,7 @@ async def run_one_file(
     """Run all 3 configs concurrently against one audio file."""
     frames = _read_frames(audio_path)
     audio_duration_s = len(frames) * FRAME_DURATION_S
-    print(
-        f"\n=== {audio_path.name}  ({audio_duration_s:.1f}s, {len(frames)} frames) ==="
-    )
+    print(f"\n=== {audio_path.name}  ({audio_duration_s:.1f}s, {len(frames)} frames) ===")
 
     tasks = [
         _run_one_config_safe(
@@ -501,9 +489,7 @@ async def run_one_file(
             print(f"  [{name:>6}] ERROR: {r.error.splitlines()[0]}")
         else:
             mean_lat = (
-                statistics.mean(
-                    f.wall_s_from_open - f.audio_position_s for f in r.finals
-                )
+                statistics.mean(f.wall_s_from_open - f.audio_position_s for f in r.finals)
                 if r.finals
                 else 0.0
             )
@@ -550,9 +536,7 @@ def _pivot_per_call_table(per_config: dict[str, RunResult]) -> str:
         flux_cell = cell if cfg_name == "flux" else ""
         n2_cell = cell if cfg_name == "nova-2" else ""
         n3_cell = cell if cfg_name == "nova-3" else ""
-        lines.append(
-            f"| {i} | {fr.wall_s_from_open:.2f} | {flux_cell} | {n2_cell} | {n3_cell} |"
-        )
+        lines.append(f"| {i} | {fr.wall_s_from_open:.2f} | {flux_cell} | {n2_cell} | {n3_cell} |")
     return "\n".join(lines) + "\n"
 
 
@@ -676,7 +660,7 @@ def _notable_divergences(per_call: dict[str, RunResult]) -> list[str]:
                 notes.append(
                     f"- @ {f.wall_s_from_open:.1f}s — only "
                     f"{', '.join(group.keys())} produced a final "
-                    f'(missing: {", ".join(missing)}). '
+                    f"(missing: {', '.join(missing)}). "
                     f'Text: "{snippet}"'
                 )
                 continue
@@ -686,7 +670,11 @@ def _notable_divergences(per_call: dict[str, RunResult]) -> list[str]:
             if len(set(normalized.values())) > 1:
                 lines = [
                     f"- @ {f.wall_s_from_open:.1f}s — divergence:",
-                    *[f'  - **{c}**: "{group[c]}"' for c in ("flux", "nova-2", "nova-3") if c in group],
+                    *[
+                        f'  - **{c}**: "{group[c]}"'
+                        for c in ("flux", "nova-2", "nova-3")
+                        if c in group
+                    ],
                 ]
                 notes.append("\n".join(lines))
 
@@ -744,7 +732,7 @@ def _build_report(
     parts.append("   `compute_keyterms()` does not apply. We'd need a separate v1-aware")
     parts.append("   URL-length cap (or pursue a POST-body keyterm route if Deepgram")
     parts.append("   exposes one).")
-    parts.append("2. Any \"Nova-2 with keyterms\" production fallback path is broken —")
+    parts.append('2. Any "Nova-2 with keyterms" production fallback path is broken —')
     parts.append("   the connect itself fails. Nova-2 must run unbiased.")
     parts.append("")
     parts.append("## Summary")
@@ -779,18 +767,10 @@ def _build_report(
 
     parts.append("## Notable divergences")
     parts.append("")
-    parts.append(
-        "Heuristic flag: for each [final] from any config, we look for nearby"
-    )
-    parts.append(
-        "finals (within 2s) from the other two. If a config went silent — or"
-    )
-    parts.append(
-        "the three configs disagree on the text — it's listed below. Read the"
-    )
-    parts.append(
-        "per-call tables above for context; this section is the index, not the"
-    )
+    parts.append("Heuristic flag: for each [final] from any config, we look for nearby")
+    parts.append("finals (within 2s) from the other two. If a config went silent — or")
+    parts.append("the three configs disagree on the text — it's listed below. Read the")
+    parts.append("per-call tables above for context; this section is the index, not the")
     parts.append("primary signal.")
     parts.append("")
     any_divergences = False
@@ -817,7 +797,9 @@ def _build_report(
     parts.append("- **Failure rate**: any config that errored on >1 file is a")
     parts.append("  reliability concern, not just a quality concern.")
     parts.append("")
-    parts.append("**Verdict (TBD by reviewer):** stay on Flux / canary Nova-3 / migrate to Nova-3 / inconclusive.")
+    parts.append(
+        "**Verdict (TBD by reviewer):** stay on Flux / canary Nova-3 / migrate to Nova-3 / inconclusive."
+    )
     parts.append("")
 
     return "\n".join(parts)
@@ -862,11 +844,7 @@ async def main() -> None:
         sweep_wall_s=sweep_wall_s,
     )
     report_path = (
-        REPO_ROOT
-        / "docs"
-        / "superpowers"
-        / "specs"
-        / "2026-05-10-flux-vs-nova3-evaluation.md"
+        REPO_ROOT / "docs" / "superpowers" / "specs" / "2026-05-10-flux-vs-nova3-evaluation.md"
     )
     report_path.parent.mkdir(parents=True, exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
