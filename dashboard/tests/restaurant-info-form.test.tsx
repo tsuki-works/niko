@@ -66,4 +66,18 @@ describe('RestaurantInfoForm', () => {
     await screen.findByText(/E\.164/i);
     expect(updateRestaurantAction).not.toHaveBeenCalled();
   });
+
+  it('includes offers_delivery: false in patch when toggled off', async () => {
+    // BASE has offers_delivery: true — toggling the checkbox once → false
+    render(<RestaurantInfoForm restaurant={BASE} />);
+    const checkbox = screen.getByRole('checkbox', { name: /accept delivery orders/i });
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() =>
+      expect(updateRestaurantAction).toHaveBeenCalledWith(
+        expect.objectContaining({ offers_delivery: false }),
+      ),
+    );
+  });
 });

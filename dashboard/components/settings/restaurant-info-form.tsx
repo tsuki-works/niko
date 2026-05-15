@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { updateRestaurantAction } from '@/app/actions/update-restaurant';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { Restaurant } from '@/lib/schemas/restaurant';
@@ -17,6 +18,9 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
   const [displayPhone, setDisplayPhone] = useState(restaurant.display_phone);
   const [fallbackPhone, setFallbackPhone] = useState(
     restaurant.fallback_phone ?? '',
+  );
+  const [offersDelivery, setOffersDelivery] = useState(
+    restaurant.offers_delivery,
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -31,6 +35,9 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
     const restaurantFallback = restaurant.fallback_phone ?? '';
     if (trimmedFallback !== restaurantFallback) {
       patch.fallback_phone = trimmedFallback === '' ? null : trimmedFallback;
+    }
+    if (offersDelivery !== restaurant.offers_delivery) {
+      patch.offers_delivery = offersDelivery;
     }
     return patch;
   }
@@ -104,6 +111,17 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
           placeholder="+15551234567"
           helper="Niko transfers callers here when the AI hits a snag or the caller asks for a human. Leave blank to skip the transfer attempt and go straight to voicemail."
         />
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="offers-delivery"
+            checked={offersDelivery}
+            onCheckedChange={(checked) => setOffersDelivery(checked === true)}
+          />
+          <Label htmlFor="offers-delivery" className="text-sm text-foreground-muted cursor-pointer">
+            Accept delivery orders
+          </Label>
+        </div>
 
         {error ? (
           <p className="text-sm text-status-cancelled" role="alert">
