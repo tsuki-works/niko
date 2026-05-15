@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { updateRestaurantAction } from '@/app/actions/update-restaurant';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type {
@@ -106,13 +107,13 @@ export function HoursEditor({ restaurant }: { restaurant: Restaurant }) {
                 htmlFor={`closed-${key}`}
                 className="ml-auto inline-flex cursor-pointer items-center gap-2 text-sm text-foreground-muted"
               >
-                <input
+                <Checkbox
                   id={`closed-${key}`}
-                  type="checkbox"
                   checked={day.closed}
-                  onChange={(e) => update(key, { closed: e.target.checked })}
+                  onCheckedChange={(checked) =>
+                    update(key, { closed: checked === true })
+                  }
                   aria-label={`${label} closed`}
-                  className="size-4 accent-brand"
                 />
                 Closed
               </label>
