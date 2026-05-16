@@ -1223,9 +1223,7 @@ async def test_run_llm_tts_turn_flush_now_with_no_buffer_is_noop(monkeypatch):
         # already drained it. The trailing flush_now should be a no-op.
         yield StreamEvent(text_delta="Sure thing.")
         yield StreamEvent(flush_now=True)
-        yield StreamEvent(
-            final=LLMResponse(reply_text="Sure thing.", order=order, history=history)
-        )
+        yield StreamEvent(final=LLMResponse(reply_text="Sure thing.", order=order, history=history))
 
     monkeypatch.setattr(session_mod, "speak", capture_speak)
     monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(fake_stream_reply))
