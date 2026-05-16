@@ -81,6 +81,7 @@ async def test_startup_survives_individual_primer_failure(caplog):
         _restaurant("twilight", "+15551111111"),
         _restaurant("niko", "+15552222222"),
     ]
+
     async def _flaky(restaurant):
         if restaurant.id == "twilight":
             raise RuntimeError("anthropic down")

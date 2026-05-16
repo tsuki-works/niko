@@ -145,11 +145,7 @@ def list_active_restaurants() -> list[Restaurant]:
     entry might happen to be hot.
     """
     try:
-        query = (
-            _get_client()
-            .collection(_COLLECTION)
-            .where("twilio_phone", "!=", "")
-        )
+        query = _get_client().collection(_COLLECTION).where("twilio_phone", "!=", "")
         docs = list(query.stream())
     except Exception:
         logger.exception("restaurants: list_active_restaurants failed")

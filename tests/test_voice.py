@@ -61,9 +61,7 @@ def test_voice_schedules_cache_primer_for_resolved_tenant(monkeypatch):
     """The /voice handler exploits the ~300-500 ms TwiML → WS-connect
     window by firing a max_tokens=1 primer to warm the Anthropic prompt
     cache for this tenant before T2 needs it (#192)."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     primer_mock = AsyncMock()
     monkeypatch.setattr(telephony_router, "prime_tenant_cache", primer_mock)
 
@@ -84,9 +82,7 @@ def test_voice_schedules_cache_primer_for_resolved_tenant(monkeypatch):
 def test_voice_does_not_schedule_primer_when_tenant_unknown(monkeypatch):
     """Unknown Twilio number → 'unconfigured' hangup TwiML. No primer
     because there's no system prompt to prime against."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
     # Make demo fallback fail so the resolver returns None.
     monkeypatch.setattr(
         telephony_router,
@@ -108,9 +104,7 @@ def test_voice_does_not_schedule_primer_when_tenant_unknown(monkeypatch):
 def test_voice_primer_does_not_block_response(monkeypatch):
     """Anthropic primer call must not be awaited inline — even a slow
     primer must not delay the TwiML response that Twilio is waiting for."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
 
     started = asyncio.Event()
     block = asyncio.Event()
@@ -140,9 +134,7 @@ def test_voice_primer_exception_does_not_propagate(monkeypatch):
     """Even if the primer task raises, the /voice TwiML response is
     untouched. ``prime_tenant_cache`` swallows internally; this guard
     is defense in depth in case a future refactor leaks an exception."""
-    monkeypatch.setattr(
-        restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None
-    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant_by_twilio_phone", lambda _e164: None)
 
     async def _boom(_restaurant):
         raise RuntimeError("boom")

@@ -474,9 +474,7 @@ def test_greeting_speaks_via_tts_without_llm_on_start(mock_pipeline, monkeypatch
     assert llm_calls == []
 
 
-def test_greeting_falls_back_to_default_template_when_greetings_empty(
-    mock_pipeline, monkeypatch
-):
+def test_greeting_falls_back_to_default_template_when_greetings_empty(mock_pipeline, monkeypatch):
     """A tenant with no hand-written greetings still gets a deterministic
     spoken opener — never silence, never the LLM."""
     from app.restaurants.models import Restaurant

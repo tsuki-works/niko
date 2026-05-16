@@ -67,15 +67,11 @@ async def test_play_greeting_speaks_from_greetings_list_when_populated(
 
 
 @pytest.mark.asyncio
-async def test_play_greeting_uses_default_template_when_greetings_empty(
-    state, fake_speak
-):
+async def test_play_greeting_uses_default_template_when_greetings_empty(state, fake_speak):
     state.restaurant = _restaurant_with([])
     await _play_greeting(state, websocket=AsyncMock())
     spoken_text = fake_speak.await_args.args[0]
-    assert spoken_text == (
-        "Hi, thanks for calling Twilight Family Restaurant. How can I help you?"
-    )
+    assert spoken_text == ("Hi, thanks for calling Twilight Family Restaurant. How can I help you?")
 
 
 @pytest.mark.asyncio
