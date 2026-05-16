@@ -303,3 +303,89 @@ def test_day_hours_rejects_invalid_time_format():
         DayHours(open="11", close="22:00", closed=False)
     with pytest.raises(Exception):
         DayHours(open="25:00", close="22:00", closed=False)
+
+
+def test_restaurant_greetings_defaults_to_empty_list():
+    """#192 — Existing Firestore docs without ``greetings`` must still
+    validate; the call-flow falls back to a hardcoded template when the
+    list is empty."""
+    legacy = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+10000000000",
+        twilio_phone="+10000000001",
+        address="-",
+        hours="-",
+    )
+    assert legacy.greetings == []
+
+
+def test_restaurant_greetings_accepts_up_to_cap():
+    five = [f"greeting {i}" for i in range(5)]
+    r = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+1",
+        twilio_phone="+1",
+        address="-",
+        hours="-",
+        greetings=five,
+    )
+    assert r.greetings == five
+
+
+def test_restaurant_greetings_rejects_more_than_five():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Restaurant(
+            id="t",
+            name="T",
+            display_phone="+1",
+            twilio_phone="+1",
+            address="-",
+            hours="-",
+            greetings=[f"g{i}" for i in range(6)],
+        )
+
+
+def test_restaurant_greetings_rejects_empty_or_whitespace_entries():
+    """An empty greeting would render dead air; a whitespace-only entry
+    is the same failure mode dressed up as data. Reject both at save."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Restaurant(
+            id="t",
+            name="T",
+            display_phone="+1",
+            twilio_phone="+1",
+            address="-",
+            hours="-",
+            greetings=["valid", ""],
+        )
+    with pytest.raises(ValidationError):
+        Restaurant(
+            id="t",
+            name="T",
+            display_phone="+1",
+            twilio_phone="+1",
+            address="-",
+            hours="-",
+            greetings=["   "],
+        )
+
+
+def test_restaurant_greetings_strips_leading_trailing_whitespace():
+    """Operators paste from spreadsheets; trailing spaces shouldn't ride
+    through to Aura where they create awkward pauses."""
+    r = Restaurant(
+        id="t",
+        name="T",
+        display_phone="+1",
+        twilio_phone="+1",
+        address="-",
+        hours="-",
+        greetings=["  Hi there.  ", "Hello!"],
+    )
+    assert r.greetings == ["Hi there.", "Hello!"]

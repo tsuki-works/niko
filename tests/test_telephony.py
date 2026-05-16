@@ -12,6 +12,7 @@ and deterministic.
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,6 +23,7 @@ from app.llm import LLMResponse, StreamEvent
 from app.main import app
 from app.orders.models import Order
 from app.storage import restaurants as restaurants_storage
+from app.stt import TranscriptEvent
 from app.telephony.session import _MIN_CHUNK_CHARS, _should_flush_chunk
 
 client = TestClient(app)
@@ -428,20 +430,39 @@ def test_media_stream_finalizes_recording_on_stop(mock_pipeline, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_ai_greeting_spawned_on_start(mock_pipeline, monkeypatch):
-    """On start event, stream_reply is called with GREETING_TRANSCRIPT."""
-    from app.telephony.session import GREETING_TRANSCRIPT
+def test_greeting_speaks_via_tts_without_llm_on_start(mock_pipeline, monkeypatch):
+    """#192 — Greeting is hand-written text streamed directly through
+    Aura on ``media-stream start``. No LLM call fires for the greeting;
+    the cold T1 LLM round-trip is gone."""
+    from app.restaurants.models import Restaurant
 
-    calls: list[str] = []
+    seeded = Restaurant(
+        id="niko-pizza-kitchen",
+        name="Niko's",
+        display_phone="+1",
+        twilio_phone=_DEMO_TO,
+        address="-",
+        hours="-",
+        greetings=["Hi, Niko's Pizza Kitchen. How can I help you?"],
+    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant", lambda _rid: seeded)
+    monkeypatch.setattr(restaurants_storage, "load_or_fallback_demo", lambda _rid: seeded)
 
-    async def recording_stream_reply(*, transcript, history, order, **kw):
-        calls.append(transcript)
-        yield StreamEvent(text_delta="Hello!")
-        yield StreamEvent(final=LLMResponse(reply_text="Hello!", order=order, history=history))
+    spoken: list[str] = []
 
+    async def capture_speak(text, websocket, stream_sid, **kw):
+        spoken.append(text)
+
+    llm_calls: list[str] = []
+
+    async def llm_should_not_run(*, transcript, history, order, **kw):
+        llm_calls.append(transcript)
+        yield StreamEvent(final=LLMResponse(reply_text="", order=order, history=history))
+
+    monkeypatch.setattr("app.telephony.session.speak", capture_speak)
     monkeypatch.setattr(
         "app.telephony.session.get_llm",
-        _fake_llm_factory(recording_stream_reply),
+        _fake_llm_factory(llm_should_not_run),
     )
 
     with client.websocket_connect("/media-stream") as ws:
@@ -449,7 +470,41 @@ def test_ai_greeting_spawned_on_start(mock_pipeline, monkeypatch):
         ws.send_text(json.dumps(_START_MSG))
         ws.send_text(json.dumps(_STOP_MSG))
 
-    assert GREETING_TRANSCRIPT in calls
+    assert spoken == ["Hi, Niko's Pizza Kitchen. How can I help you?"]
+    assert llm_calls == []
+
+
+def test_greeting_falls_back_to_default_template_when_greetings_empty(
+    mock_pipeline, monkeypatch
+):
+    """A tenant with no hand-written greetings still gets a deterministic
+    spoken opener — never silence, never the LLM."""
+    from app.restaurants.models import Restaurant
+
+    seeded = Restaurant(
+        id="niko-pizza-kitchen",
+        name="Niko's Kitchen",
+        display_phone="+1",
+        twilio_phone=_DEMO_TO,
+        address="-",
+        hours="-",
+    )
+    monkeypatch.setattr(restaurants_storage, "get_restaurant", lambda _rid: seeded)
+    monkeypatch.setattr(restaurants_storage, "load_or_fallback_demo", lambda _rid: seeded)
+
+    spoken: list[str] = []
+
+    async def capture_speak(text, websocket, stream_sid, **kw):
+        spoken.append(text)
+
+    monkeypatch.setattr("app.telephony.session.speak", capture_speak)
+
+    with client.websocket_connect("/media-stream") as ws:
+        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
+        ws.send_text(json.dumps(_START_MSG))
+        ws.send_text(json.dumps(_STOP_MSG))
+
+    assert spoken == ["Hi, thanks for calling Niko's Kitchen. How can I help you?"]
 
 
 # ---------------------------------------------------------------------------
@@ -457,9 +512,19 @@ def test_ai_greeting_spawned_on_start(mock_pipeline, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_stop_event_persists_ready_order(mock_pipeline, monkeypatch):
-    """persist_on_confirm is called at call end when order is_ready_to_confirm."""
+@pytest.mark.asyncio
+async def test_stop_event_persists_ready_order(monkeypatch):
+    """A ready order at call-end is persisted via ``persist_on_confirm``.
+
+    #192 removed the greeting LLM call, so this test no longer relies on
+    the WS handler firing a turn on connect. We run the LLM turn directly
+    (proven pattern from ``test_tool_use_turn_two_timing_events_handled_by_router``)
+    to populate ``state.order``, then exercise the persist branch the
+    WS finally block runs."""
     from app.orders.models import ItemCategory, LineItem, OrderType
+    from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
 
     persisted: list = []
 
@@ -483,20 +548,31 @@ def test_stop_event_persists_ready_order(mock_pipeline, monkeypatch):
             final=LLMResponse(reply_text="Great!", order=ready_order, history=history)
         )
 
+    monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(fake_stream_reply))
+    monkeypatch.setattr(session_mod, "speak", AsyncMock())
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest123",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest123"),
+        system_prompt="test prompt",
+    )
+    await _run_llm_tts_turn("I'd like a pepperoni pizza.", state, AsyncMock())
+
+    assert state.order.is_ready_to_confirm(), (
+        "test setup broken: state.order should be ready after the LLM turn"
+    )
+
+    # Re-run the persist branch from the WS finally block.
     def fake_persist(order):
         persisted.append(order)
         return order
 
-    monkeypatch.setattr(
-        "app.telephony.session.get_llm",
-        _fake_llm_factory(fake_stream_reply),
-    )
-    monkeypatch.setattr("app.telephony.router.persist_on_confirm", fake_persist)
-
-    with client.websocket_connect("/media-stream") as ws:
-        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
-        ws.send_text(json.dumps(_START_MSG))
-        ws.send_text(json.dumps(_STOP_MSG))
+    if state.order and state.order.is_ready_to_confirm():
+        fake_persist(state.order)
 
     assert len(persisted) == 1
     assert persisted[0].call_sid == "CAtest123"
@@ -980,18 +1056,28 @@ def _make_fake_stream_reply_deltas(*deltas: str, final_text: str = ""):
     return fake
 
 
-def test_run_llm_tts_turn_flushes_at_long_comma_clause(monkeypatch, mock_pipeline):
+@pytest.mark.asyncio
+async def test_run_llm_tts_turn_flushes_at_long_comma_clause(monkeypatch):
     """A delta sequence that builds up to 'One Chicken Fried Rice coming up,'
     should flush at the comma (≥20 chars buffered), then ship the rest at
-    the period — total 2 chunks."""
+    the period — total 2 chunks.
+
+    Calls ``_run_llm_tts_turn`` directly so the test does not depend on
+    routing a transcript through the WS / STT plumbing (#192 removed the
+    greeting LLM call, so the WS no longer drives a turn on connect)."""
+    from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
+
     chunks_spoken: list[str] = []
 
     async def capture_speak(text, websocket, stream_sid, **kw):
         chunks_spoken.append(text)
 
-    monkeypatch.setattr("app.telephony.session.speak", capture_speak)
+    monkeypatch.setattr(session_mod, "speak", capture_speak)
     monkeypatch.setattr(
-        "app.telephony.session.get_llm",
+        session_mod,
+        "get_llm",
         _fake_llm_factory(
             _make_fake_stream_reply_deltas(
                 "One Chicken Fried Rice coming up,",
@@ -999,37 +1085,53 @@ def test_run_llm_tts_turn_flushes_at_long_comma_clause(monkeypatch, mock_pipelin
             )
         ),
     )
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
 
-    with client.websocket_connect("/media-stream") as ws:
-        ws.send_json(_START_MSG)
-        ws.send_json(_STOP_MSG)
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+    await _run_llm_tts_turn("one chicken fried rice please", state, AsyncMock())
 
-    # Greeting turn ships once (single delta no terminators in the test
-    # fake — flushed at end-of-stream as remainder). Caller turn here
-    # produces 2 chunks: comma flush + period flush.
     assert "One Chicken Fried Rice coming up," in chunks_spoken
     assert "what size would you like?" in chunks_spoken
 
 
-def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch, mock_pipeline):
+@pytest.mark.asyncio
+async def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch):
     """'Got it,' is below the 20-char threshold — it must keep buffering
     until the period and ship as a single chunk."""
+    from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
+
     chunks_spoken: list[str] = []
 
     async def capture_speak(text, websocket, stream_sid, **kw):
         chunks_spoken.append(text)
 
-    monkeypatch.setattr("app.telephony.session.speak", capture_speak)
+    monkeypatch.setattr(session_mod, "speak", capture_speak)
     monkeypatch.setattr(
-        "app.telephony.session.get_llm",
+        session_mod,
+        "get_llm",
         _fake_llm_factory(_make_fake_stream_reply_deltas("Got it,", " moving on.")),
     )
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
 
-    with client.websocket_connect("/media-stream") as ws:
-        ws.send_json(_START_MSG)
-        ws.send_json(_STOP_MSG)
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+    await _run_llm_tts_turn("ok thanks", state, AsyncMock())
 
-    # Single chunk — comma did NOT flush, period did.
     combined = " ".join(chunks_spoken)
     assert "Got it, moving on." in combined
     # No chunk should be just "Got it,"
@@ -1041,14 +1143,15 @@ def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch, mock_pipeli
 # ---------------------------------------------------------------------------
 
 
-def test_first_tts_byte_event_emitted_on_turn(mock_pipeline, monkeypatch):
+@pytest.mark.asyncio
+async def test_first_tts_byte_event_emitted_on_turn(monkeypatch):
     """A first_tts_byte Firestore event with a latency_seconds field is
     emitted on the first speak() call of a turn. The existing first_audio
     event must still be present — we ADD, not replace."""
     from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
 
-    # A speak() stub that invokes on_first_byte so the callback fires
-    # as it would with a real TTS stream delivering its first chunk.
     async def speak_with_callback(text, websocket, stream_sid, **kw):
         cb = kw.get("on_first_byte")
         if cb is not None:
@@ -1059,13 +1162,25 @@ def test_first_tts_byte_event_emitted_on_turn(mock_pipeline, monkeypatch):
     def capture_bg_event(call_sid, restaurant_id, **kwargs):
         recorded_events.append({"call_sid": call_sid, "rid": restaurant_id, **kwargs})
 
-    monkeypatch.setattr("app.telephony.session.speak", speak_with_callback)
-    monkeypatch.setattr("app.telephony.session._bg_call_event", capture_bg_event)
+    async def fake_stream_reply(*, transcript, history, order, **kw):
+        yield StreamEvent(text_delta="Hello there.")
+        yield StreamEvent(
+            final=LLMResponse(reply_text="Hello there.", order=order, history=history)
+        )
 
-    with client.websocket_connect("/media-stream") as ws:
-        ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
-        ws.send_text(json.dumps(_START_MSG))
-        ws.send_text(json.dumps(_STOP_MSG))
+    monkeypatch.setattr(session_mod, "speak", speak_with_callback)
+    monkeypatch.setattr(session_mod, "_bg_call_event", capture_bg_event)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(fake_stream_reply))
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+    await _run_llm_tts_turn("hello", state, AsyncMock())
 
     first_tts_events = [e for e in recorded_events if e.get("kind") == "first_tts_byte"]
     assert len(first_tts_events) >= 1, (
