@@ -131,13 +131,19 @@ class LLMResponse:
 class StreamEvent:
     """One event yielded by ``LLMProvider.stream_reply``.
 
-    Exactly one of ``text_delta``, ``timing``, or ``final`` is set on
-    any given event. Text-delta events arrive incrementally as the
-    model produces output; a ``timing`` event lands the moment the
-    first text block opens (so the router can fold the latency
-    breakdown into its ``first_audio`` Firestore event before TTS
-    starts); the terminal ``final`` event carries the assembled
-    ``LLMResponse`` so the caller can persist state for the next turn.
+    At most one of ``text_delta``, ``timing``, or ``final`` is set on
+    any given event; ``flush_now`` is a boolean signal that can be set
+    on its own event (no payload) or alongside a ``text_delta``. Text
+    deltas arrive incrementally as the model produces output; a
+    ``timing`` event lands the moment the first text block opens (so
+    the router can fold the latency breakdown into its ``first_audio``
+    Firestore event before TTS starts); ``flush_now`` fires at content
+    block boundaries (#305) so the caller can drain any buffered TTS
+    text before the next block starts — critical on text-then-tool
+    turns where the buffered text would otherwise sit idle until the
+    tool round-trip completes. The terminal ``final`` event carries
+    the assembled ``LLMResponse`` so the caller can persist state for
+    the next turn.
 
     The ``timing`` payload has the shape::
 
@@ -157,6 +163,7 @@ class StreamEvent:
     text_delta: Optional[str] = None
     final: Optional[LLMResponse] = None
     timing: Optional[dict[str, Any]] = None
+    flush_now: bool = False
 
 
 class LLMProvider(Protocol):

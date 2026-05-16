@@ -549,6 +549,32 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                 timing_snapshot = event.timing
                 continue
 
+            if event.flush_now:
+                # Block-boundary drain (#305 Part A). The provider has
+                # finished a text content block; ship whatever is buffered
+                # to TTS now instead of waiting for ``_should_flush_chunk``
+                # to fire on a future delta or for ``event.final`` to run
+                # its remainder path. On text-then-tool turns this drains
+                # the short ack ("Okay,") before the tool round-trip
+                # starts, removing dead air during the tool call.
+                remainder = "".join(text_buffer).strip()
+                text_buffer.clear()
+                if remainder and state.stream_sid:
+                    if first_speak:
+                        _record_first_audio()
+                        first_speak = False
+                        on_first_byte = _record_first_tts_byte
+                    else:
+                        on_first_byte = None
+                    await speak(
+                        remainder,
+                        websocket,
+                        state.stream_sid,
+                        on_chunk=_make_recording_chunk_handler(state),
+                        on_first_byte=on_first_byte,
+                    )
+                continue
+
             if event.text_delta is not None:
                 if first_text_at is None:
                     first_text_at = time.monotonic()
