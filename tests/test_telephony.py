@@ -1199,8 +1199,8 @@ async def test_run_llm_tts_turn_drains_buffer_on_flush_now(monkeypatch):
     # The speak() that drained the buffer must have happened BEFORE the
     # final event was yielded — proving flush_now (not final) triggered it.
     assert speak_calls_at_flush == ["Hold on please"], (
-        f"flush_now did not drain buffer before final; speak_calls_at_flush={speak_calls_at_flush}, "
-        f"chunks_spoken={chunks_spoken}"
+        f"flush_now did not drain buffer before final; "
+        f"speak_calls_at_flush={speak_calls_at_flush}, chunks_spoken={chunks_spoken}"
     )
 
 
