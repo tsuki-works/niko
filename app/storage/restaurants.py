@@ -132,6 +132,36 @@ def get_restaurant_by_twilio_phone(e164: str) -> Optional[Restaurant]:
     return restaurant
 
 
+def list_active_restaurants() -> list[Restaurant]:
+    """Return every restaurant with a Twilio number assigned (#192).
+
+    Used by the FastAPI lifespan startup hook to prime the Anthropic
+    prompt cache for every tenant that can actually receive a call.
+    Empty ``twilio_phone`` is the explicit "awaiting Twilio number"
+    state and is filtered out — priming such a tenant is wasted spend.
+
+    Bypasses the read-through cache: this runs once per container boot,
+    and we want a fresh view from Firestore rather than whatever stale
+    entry might happen to be hot.
+    """
+    try:
+        query = _get_client().collection(_COLLECTION).where("twilio_phone", "!=", "")
+        docs = list(query.stream())
+    except Exception:
+        logger.exception("restaurants: list_active_restaurants failed")
+        return []
+    out: list[Restaurant] = []
+    for snap in docs:
+        try:
+            out.append(Restaurant.model_validate(snap.to_dict()))
+        except Exception:
+            logger.exception(
+                "restaurants: list_active_restaurants skipped invalid doc id=%s",
+                snap.id,
+            )
+    return out
+
+
 def save_restaurant(restaurant: Restaurant) -> str:
     """Upsert a restaurant doc keyed by ``restaurant.id``. Used by
     ``scripts/seed_demo_restaurant.py`` and ``scripts/provision_restaurant.py``."""

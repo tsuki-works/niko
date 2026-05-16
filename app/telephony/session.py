@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -239,6 +240,57 @@ def _arm_silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
         return  # barge-in — caller spoke again, no watchdog needed
     _cancel_silence_task(state)
     state.silence_task = asyncio.create_task(_silence_watchdog(state, websocket))
+
+
+async def _play_greeting(state: _CallState, websocket: WebSocket) -> None:
+    """Speak the call's opening greeting via Aura — no LLM round-trip (#192).
+
+    Picks a random entry from ``restaurant.greetings`` when populated,
+    else falls back to a deterministic template against ``name``. Seeds
+    ``state.history`` with a synthetic prior turn so the caller's first
+    real reply (T2) lands with conversational context Claude expects.
+
+    Exceptions from ``speak`` are caught and logged — dead air on the
+    greeting is handled the same way as today's LLM-greet path, via the
+    silence watchdog armed at the end of this function.
+    """
+    restaurant = state.restaurant
+    if restaurant is None:
+        return
+
+    if restaurant.greetings:
+        text = random.choice(restaurant.greetings)
+        source = "greetings_list"
+    else:
+        text = f"Hi, thanks for calling {restaurant.name}. How can I help you?"
+        source = "default_template"
+    logger.info(
+        "greeting_played rid=%s source=%s call_sid=%s",
+        restaurant.id,
+        source,
+        state.call_sid,
+    )
+
+    if state.stream_sid:
+        try:
+            await speak(
+                text,
+                websocket,
+                state.stream_sid,
+                on_chunk=_make_recording_chunk_handler(state),
+            )
+        except Exception:
+            logger.warning(
+                "greeting: speak failed call_sid=%s rid=%s — silence watchdog will handle",
+                state.call_sid,
+                restaurant.id,
+            )
+
+    state.history = [
+        {"role": "user", "content": GREETING_TRANSCRIPT},
+        {"role": "assistant", "content": [{"type": "text", "text": text}]},
+    ]
+    _arm_silence_watchdog(state, websocket)
 
 
 async def _hang_up_after_grace(state: _CallState) -> None:

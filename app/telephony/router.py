@@ -23,6 +23,7 @@ import app.twilio as app_twilio
 from app.config import settings
 from app.dev.audio_dump import open_caller_dump
 from app.llm.prompts import build_system_prompt
+from app.llm.warmup import prime_tenant_cache
 from app.orders.lifecycle import OrderNotReadyError, persist_on_confirm
 from app.orders.models import Order
 from app.restaurants.keyterms import compute_keyterms
@@ -32,17 +33,15 @@ from app.storage import restaurants as restaurants_storage
 from app.stt import get_stt
 from app.telephony.session import (
     END_OF_CALL_MARK,
-    GREETING_TRANSCRIPT,
     _abort_pending_hangup,
-    _arm_silence_watchdog,
     _bg_call_event,
     _CallState,
     _cancel_silence_task,
     _consume_transcripts,
     _hang_up_after_grace,
     _make_recording_chunk_handler,
+    _play_greeting,
     _resolve_restaurant_for_voice,
-    _run_llm_tts_turn,
     _state_rid,
 )
 from app.telephony.voicemail_twiml import voicemail_response
@@ -94,6 +93,14 @@ async def voice(request: Request) -> Response:
             content=str(unconfigured_hangup_twiml()),
             media_type="application/xml",
         )
+
+    # Anthropic cache primer (#192). Fire-and-forget — exploits the
+    # ~300-500 ms TwiML → WS-connect window so T2's real LLM call reads
+    # the system prompt from cache instead of paying cache_creation.
+    # prime_tenant_cache swallows its own exceptions; the bare task is
+    # never awaited and never observed for failure.
+    logger.info("primer scheduled rid=%s call_sid=%s", restaurant.id, call_sid)
+    asyncio.create_task(prime_tenant_cache(restaurant))
 
     if not is_open_now(restaurant):
         # After-hours: skip the AI flow, drop straight to voicemail.
@@ -487,10 +494,10 @@ async def media_stream(websocket: WebSocket) -> None:
                         state.stream_sid,
                         on_chunk=_make_recording_chunk_handler(state),
                     )
-                state.llm_task = asyncio.create_task(
-                    _run_llm_tts_turn(GREETING_TRANSCRIPT, state, websocket)
-                )
-                state.llm_task.add_done_callback(lambda _t: _arm_silence_watchdog(state, websocket))
+                # #192 — Greeting is hand-written text streamed straight
+                # through Aura; no LLM round-trip on T1. ``_play_greeting``
+                # also arms the silence watchdog before returning.
+                await _play_greeting(state, websocket)
 
             elif event == "media":
                 payload = base64.b64decode(msg["media"]["payload"])

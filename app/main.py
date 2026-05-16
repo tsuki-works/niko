@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from urllib.parse import unquote
 
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -39,6 +40,7 @@ from app.restaurants.models import (
     MenuItemCreate,
     MenuItemUpdate,
 )
+from app.startup import run_startup_warmups
 from app.storage import (
     analytics,
     call_sessions,
@@ -55,7 +57,17 @@ from app.telephony.router import router as telephony_router
 
 _E164 = re.compile(r"^\+\d{8,15}$")
 
-app = FastAPI(title="niko")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Per-container boot warmups (#192) — Anthropic primers + Aura
+    connection. Failures are logged inside ``run_startup_warmups``; the
+    app boots regardless."""
+    await run_startup_warmups()
+    yield
+
+
+app = FastAPI(title="niko", lifespan=lifespan)
 app.include_router(telephony_router)
 
 

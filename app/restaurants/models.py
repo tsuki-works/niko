@@ -127,8 +127,23 @@ class Restaurant(BaseModel):
     # Used by Sprint 2.4 Track 2 (call transfer). E.164. None means
     # the call falls through to voicemail without an attempted dial.
     fallback_phone: Optional[str] = None
+    # #192 — Hand-written greeting variants spoken on call connect. The
+    # call flow picks one at random and streams it through Aura without
+    # an LLM round-trip. Empty list falls back to a hardcoded template
+    # against ``name``. Cap of 5 keeps an over-eager operator from
+    # bloating the Firestore doc.
+    greetings: list[str] = Field(default_factory=list, max_length=5)
     created_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)
+
+    @field_validator("greetings")
+    @classmethod
+    def _strip_and_validate_greetings(cls, value: list[str]) -> list[str]:
+        cleaned = [g.strip() for g in value]
+        for g in cleaned:
+            if not g:
+                raise ValueError("greeting entries must be non-empty")
+        return cleaned
 
 
 class MenuItemCreate(BaseModel):
