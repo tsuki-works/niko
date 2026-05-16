@@ -782,6 +782,92 @@ async def test_stream_reply_emits_text_deltas_then_final():
     assert final.history[1]["role"] == "assistant"
 
 
+async def test_stream_reply_emits_flush_now_after_text_block(monkeypatch):
+    """Pure-text turn: a flush_now event lands after the deltas and before
+    the terminal final event, so the session can drain its TTS buffer at
+    the block boundary instead of waiting for ``event.final``.
+
+    Reproduces case A from #305 — a single text block whose deltas don't
+    happen to end on a hard/soft break, so _should_flush_chunk never
+    fires mid-stream and the buffer otherwise sits idle until final.
+    """
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(
+                deltas=["Okay", " one", " moment"],  # no trailing punctuation
+                blocks=[FakeBlock(type="text", text="Okay one moment")],
+            )
+        ]
+    )
+
+    event_kinds: list[str] = []
+    async for event in AnthropicLLM(async_client=fake_client).stream_reply(
+        transcript="hi",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+    ):
+        if event.text_delta is not None:
+            event_kinds.append("delta")
+        if event.flush_now:
+            event_kinds.append("flush")
+        if event.final is not None:
+            event_kinds.append("final")
+
+    # Three deltas, one flush at block-stop, then final — in that order.
+    assert event_kinds == ["delta", "delta", "delta", "flush", "final"]
+
+
+async def test_stream_reply_emits_flush_now_before_tool_use_block():
+    """Text-then-tool turn: the text block's flush_now must fire before
+    the tool round-trip starts, so any buffered TTS text drains while
+    the tool call is in flight rather than waiting for the follow-up.
+
+    Reproduces case B from #305 — model emits a short ack ("Okay,") then
+    calls update_order. Without block-boundary flush, "Okay," is too
+    short for _MIN_CHUNK_CHARS and gets held until event.final.
+    """
+    order = Order(call_sid="CAtest")
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_manager_factory(
+        [
+            _FakeAsyncStream(
+                deltas=["Okay,"],
+                blocks=[
+                    FakeBlock(type="text", text="Okay,"),
+                    FakeBlock(
+                        type="tool_use",
+                        id="toolu_1",
+                        name="update_order",
+                        input={"items": [], "status": "in_progress"},
+                    ),
+                ],
+            ),
+            _FakeAsyncStream(
+                deltas=["What else?"],
+                blocks=[FakeBlock(type="text", text="What else?")],
+            ),
+        ]
+    )
+
+    seen_flush_before_final = False
+    seen_final = False
+    async for event in AnthropicLLM(async_client=fake_client).stream_reply(
+        transcript="add nothing",
+        history=[],
+        order=order,
+        system_prompt=_TEST_SYSTEM_PROMPT,
+    ):
+        if event.flush_now and not seen_final:
+            seen_flush_before_final = True
+        if event.final is not None:
+            seen_final = True
+
+    assert seen_flush_before_final, "flush_now must be emitted before event.final"
+
+
 async def test_stream_reply_applies_tool_use_to_order_state():
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()

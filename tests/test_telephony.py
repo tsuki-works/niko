@@ -1137,6 +1137,113 @@ async def test_run_llm_tts_turn_does_not_flush_at_short_comma(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _run_llm_tts_turn — flush_now block-boundary drain (#305 Part A)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_llm_tts_turn_drains_buffer_on_flush_now(monkeypatch):
+    """When the LLM provider yields a flush_now signal, the session must
+    drain whatever is in the text buffer to TTS immediately — even if the
+    buffered text doesn't end in a hard/soft break that would normally
+    trigger ``_should_flush_chunk``.
+
+    Reproduces case A from #305: a text block ends mid-phrase with no
+    trailing punctuation (e.g. before the model invokes a tool). Without
+    flush_now, the partial buffer sits until ``event.final``, adding
+    tool-round-trip dead air. With flush_now, the buffer ships now.
+
+    Asserts ORDERING — the speak() must fire between flush_now and
+    final, NOT inside the final-event remainder path (which would also
+    drain the buffer but defeats the whole purpose).
+    """
+    from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
+
+    speak_calls_at_flush: list[str] = []
+    chunks_spoken: list[str] = []
+
+    async def capture_speak(text, websocket, stream_sid, **kw):
+        chunks_spoken.append(text)
+
+    async def fake_stream_reply(*, transcript, history, order, **kw):
+        # Two short deltas with no terminator; _should_flush_chunk would
+        # keep them buffered. flush_now must drain them anyway.
+        yield StreamEvent(text_delta="Hold on")
+        yield StreamEvent(text_delta=" please")
+        yield StreamEvent(flush_now=True)
+        # Snapshot chunks_spoken immediately after the session processed
+        # flush_now but BEFORE it sees the final event. If the session is
+        # wired correctly the buffer has already drained here; if not,
+        # this list will be empty (the drain doesn't happen until final).
+        speak_calls_at_flush.extend(chunks_spoken)
+        yield StreamEvent(
+            final=LLMResponse(reply_text="Hold on please", order=order, history=history)
+        )
+
+    monkeypatch.setattr(session_mod, "speak", capture_speak)
+    monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(fake_stream_reply))
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+    await _run_llm_tts_turn("hi", state, AsyncMock())
+
+    # The speak() that drained the buffer must have happened BEFORE the
+    # final event was yielded — proving flush_now (not final) triggered it.
+    assert speak_calls_at_flush == ["Hold on please"], (
+        f"flush_now did not drain buffer before final; "
+        f"speak_calls_at_flush={speak_calls_at_flush}, chunks_spoken={chunks_spoken}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_llm_tts_turn_flush_now_with_no_buffer_is_noop(monkeypatch):
+    """flush_now arriving with an empty buffer must not call speak() with
+    an empty string — that would emit a noise mark to Twilio for no audio.
+    """
+    from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
+
+    chunks_spoken: list[str] = []
+
+    async def capture_speak(text, websocket, stream_sid, **kw):
+        chunks_spoken.append(text)
+
+    async def fake_stream_reply(*, transcript, history, order, **kw):
+        # Text already ended with a hard break — _should_flush_chunk
+        # already drained it. The trailing flush_now should be a no-op.
+        yield StreamEvent(text_delta="Sure thing.")
+        yield StreamEvent(flush_now=True)
+        yield StreamEvent(final=LLMResponse(reply_text="Sure thing.", order=order, history=history))
+
+    monkeypatch.setattr(session_mod, "speak", capture_speak)
+    monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(fake_stream_reply))
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+    await _run_llm_tts_turn("hi", state, AsyncMock())
+
+    assert chunks_spoken == ["Sure thing."]
+    assert "" not in chunks_spoken
+
+
+# ---------------------------------------------------------------------------
 # first_tts_byte event (#152)
 # ---------------------------------------------------------------------------
 

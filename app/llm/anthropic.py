@@ -398,6 +398,11 @@ class AnthropicLLM:
         cache_read_tokens = 0
         cache_creation_tokens = 0
         timing_emitted = False
+        # Tracks the block type observed at the most recent
+        # ``content_block_start`` so the matching ``content_block_stop``
+        # can decide whether to emit ``flush_now`` (#305). Only text
+        # blocks trigger a flush — tool_use blocks carry no spoken text.
+        current_block_type: Optional[str] = None
 
         async with api.messages.stream(
             model=self._model,
@@ -421,7 +426,8 @@ class AnthropicLLM:
                         )
                 elif etype == "content_block_start":
                     block = getattr(event, "content_block", None)
-                    if getattr(block, "type", None) == "text" and t_first_text_block is None:
+                    current_block_type = getattr(block, "type", None)
+                    if current_block_type == "text" and t_first_text_block is None:
                         t_first_text_block = time.monotonic()
                         yield _make_timing_event(
                             t_request_start,
@@ -437,6 +443,10 @@ class AnthropicLLM:
                     if getattr(delta, "type", None) == "text_delta":
                         text_parts.append(delta.text)
                         yield StreamEvent(text_delta=delta.text)
+                elif etype == "content_block_stop":
+                    if current_block_type == "text":
+                        yield StreamEvent(flush_now=True)
+                    current_block_type = None
             first_message = await stream.get_final_message()
 
         for block in first_message.content:
@@ -494,6 +504,7 @@ class AnthropicLLM:
             fu_cache_read_tokens = 0
             fu_cache_creation_tokens = 0
             fu_timing_emitted = False
+            fu_current_block_type: Optional[str] = None
 
             async with api.messages.stream(
                 model=self._model,
@@ -518,7 +529,8 @@ class AnthropicLLM:
                             )
                     elif etype == "content_block_start":
                         block = getattr(event, "content_block", None)
-                        if getattr(block, "type", None) == "text" and fu_t_first_text_block is None:
+                        fu_current_block_type = getattr(block, "type", None)
+                        if fu_current_block_type == "text" and fu_t_first_text_block is None:
                             fu_t_first_text_block = time.monotonic()
                             yield _make_timing_event(
                                 fu_t_request_start,
@@ -534,6 +546,10 @@ class AnthropicLLM:
                         if getattr(delta, "type", None) == "text_delta":
                             text_parts.append(delta.text)
                             yield StreamEvent(text_delta=delta.text)
+                    elif etype == "content_block_stop":
+                        if fu_current_block_type == "text":
+                            yield StreamEvent(flush_now=True)
+                        fu_current_block_type = None
                 followup_message = await followup_stream.get_final_message()
 
             if not fu_timing_emitted:
