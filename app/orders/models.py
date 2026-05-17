@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -60,7 +61,16 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _new_item_id() -> str:
+    """Server-assigned short ID for a LineItem. The LLM references items
+    in ``remove_item`` / ``update_item`` calls by this ID, which it reads
+    out of prior ``tool_result`` summaries (#305 Part B). Stable for the
+    lifetime of one call; the 6-hex space (~16M) is more than enough."""
+    return f"i_{uuid4().hex[:6]}"
+
+
 class LineItem(BaseModel):
+    item_id: str = Field(default_factory=_new_item_id)
     name: str
     # Free-form per-tenant category (matches the menu key, e.g.
     # ``appetizers``, ``mains``, ``soups``). Was a fixed ItemCategory

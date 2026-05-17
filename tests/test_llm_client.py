@@ -15,11 +15,11 @@ import pytest
 
 from app.llm import anthropic as anthropic_module
 from app.llm.anthropic import (
-    UPDATE_ORDER_TOOL,
+    ATOMIC_TOOLS,
     AnthropicLLM,
 )
 from app.llm.orchestration import (
-    apply_order_patch as _apply_update,
+    apply_tool_call as _apply_tool,
 )
 from app.llm.orchestration import (
     summarize_order_for_tool_result as _summarize_order,
@@ -81,6 +81,10 @@ def test_plain_text_response_leaves_order_unchanged():
 
 
 def test_tool_use_updates_order_in_single_turn():
+    """Multi-tool turn: add_item + set_order_type emitted together. The
+    snapshot tool would have done both in one update_order call; with
+    atomic tools the model issues separate tool_use blocks that the
+    provider dispatches in order."""
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
     fake_client.messages.create.side_effect = [
@@ -88,22 +92,21 @@ def test_tool_use_updates_order_in_single_turn():
             [
                 FakeBlock(
                     type="tool_use",
-                    id="toolu_1",
-                    name="update_order",
+                    id="toolu_add",
+                    name="add_item",
                     input={
-                        "items": [
-                            {
-                                "name": "Pepperoni",
-                                "category": "pizza",
-                                "size": "medium",
-                                "quantity": 1,
-                                "unit_price": 17.99,
-                                "modifications": [],
-                            }
-                        ],
-                        "order_type": "pickup",
-                        "status": "in_progress",
+                        "name": "Pepperoni",
+                        "category": "pizza",
+                        "size": "medium",
+                        "quantity": 1,
+                        "unit_price": 17.99,
                     },
+                ),
+                FakeBlock(
+                    type="tool_use",
+                    id="toolu_type",
+                    name="set_order_type",
+                    input={"order_type": "pickup"},
                 ),
                 FakeBlock(
                     type="text",
@@ -131,7 +134,7 @@ def test_tool_use_updates_order_in_single_turn():
     # Follow-up keeps the tool schema in tools so the cache prefix matches
     # the main call (#176); tool_choice="none" suppresses further tool use.
     followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
-    assert followup_call_kwargs["tools"] == [UPDATE_ORDER_TOOL]
+    assert followup_call_kwargs["tools"] == ATOMIC_TOOLS
     assert followup_call_kwargs["tool_choice"] == {"type": "none"}
 
 
@@ -144,8 +147,8 @@ def test_tool_only_response_triggers_followup_call():
                 FakeBlock(
                     type="tool_use",
                     id="toolu_1",
-                    name="update_order",
-                    input={"items": [], "status": "cancelled"},
+                    name="set_status",
+                    input={"status": "cancelled"},
                 ),
             ]
         ),
@@ -172,7 +175,7 @@ def test_tool_only_response_triggers_followup_call():
     # Follow-up keeps the tool schema in tools so the cache prefix matches
     # the main call (#176); tool_choice="none" suppresses further tool use.
     followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
-    assert followup_call_kwargs["tools"] == [UPDATE_ORDER_TOOL]
+    assert followup_call_kwargs["tools"] == ATOMIC_TOOLS
     assert followup_call_kwargs["tool_choice"] == {"type": "none"}
 
 
@@ -219,19 +222,13 @@ def test_text_plus_tool_use_appends_tool_result_to_history():
                 FakeBlock(
                     type="tool_use",
                     id="toolu_committed",
-                    name="update_order",
+                    name="add_item",
                     input={
-                        "items": [
-                            {
-                                "name": "Margarita",
-                                "category": "pizza",
-                                "size": "large",
-                                "quantity": 1,
-                                "unit_price": 19.99,
-                            }
-                        ],
-                        "order_type": "pickup",
-                        "status": "in_progress",
+                        "name": "Margarita",
+                        "category": "pizza",
+                        "size": "large",
+                        "quantity": 1,
+                        "unit_price": 19.99,
                     },
                 ),
             ]
@@ -303,42 +300,23 @@ def test_tool_result_carries_post_apply_subtotal():
                 FakeBlock(
                     type="tool_use",
                     id="toolu_one",
-                    name="update_order",
+                    name="add_item",
                     input={
-                        "items": [
-                            {
-                                "name": "Wings",
-                                "category": "appetizers",
-                                "size": None,
-                                "quantity": 1,
-                                "unit_price": 14.50,
-                            }
-                        ],
-                        "status": "in_progress",
+                        "name": "Wings",
+                        "category": "appetizers",
+                        "quantity": 1,
+                        "unit_price": 14.50,
                     },
                 ),
                 FakeBlock(
                     type="tool_use",
                     id="toolu_two",
-                    name="update_order",
+                    name="add_item",
                     input={
-                        "items": [
-                            {
-                                "name": "Wings",
-                                "category": "appetizers",
-                                "size": None,
-                                "quantity": 1,
-                                "unit_price": 14.50,
-                            },
-                            {
-                                "name": "Fries",
-                                "category": "appetizers",
-                                "size": None,
-                                "quantity": 1,
-                                "unit_price": 7.50,
-                            },
-                        ],
-                        "status": "in_progress",
+                        "name": "Fries",
+                        "category": "appetizers",
+                        "quantity": 1,
+                        "unit_price": 7.50,
                     },
                 ),
             ]
@@ -464,25 +442,19 @@ def test_history_strips_sdk_only_fields_from_assistant_blocks():
 
 
 def test_apply_update_preserves_call_sid_and_created_at():
+    """Atomic operations mutate one slice of the Order via model_copy;
+    every other field stays put. Regression for the snapshot-era hazard
+    where a patch could rewrite call_sid or created_at."""
     original = Order(call_sid="CAoriginal")
     original_created_at = original.created_at
 
-    updated = _apply_update(
+    updated, notes = _apply_tool(
         original,
-        {
-            "call_sid": "CAhacked",
-            "created_at": "1999-01-01T00:00:00Z",
-            "items": [
-                {
-                    "name": "Coke",
-                    "category": "drink",
-                    "quantity": 1,
-                    "unit_price": 2.99,
-                }
-            ],
-        },
+        "add_item",
+        {"name": "Coke", "category": "drink", "quantity": 1, "unit_price": 2.99},
     )
 
+    assert notes == []
     assert updated.call_sid == "CAoriginal"
     assert updated.created_at == original_created_at
     assert len(updated.items) == 1
@@ -550,75 +522,6 @@ def test_unclear_utterance_asks_for_clarification():
     assert "again" in result.reply_text.lower() or "didn't catch" in result.reply_text.lower()
     assert result.order.items == []
     assert fake_client.messages.create.call_count == 1
-
-
-def test_caller_changes_mind_replaces_items():
-    """When the caller switches their order mid-conversation, the model
-    emits the FULL new state via update_order — the previous item is
-    replaced, not appended to."""
-
-    order = Order(call_sid="CAtest")
-    order = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Pepperoni",
-                    "category": "pizza",
-                    "size": "medium",
-                    "quantity": 1,
-                    "unit_price": 17.99,
-                }
-            ],
-            "order_type": "pickup",
-            "status": "in_progress",
-        },
-    )
-    assert order.items[0].name == "Pepperoni"
-
-    fake_client = MagicMock()
-    fake_client.messages.create.side_effect = [
-        _fake_response(
-            [
-                FakeBlock(
-                    type="tool_use",
-                    id="toolu_change",
-                    name="update_order",
-                    input={
-                        "items": [
-                            {
-                                "name": "Veggie Supreme",
-                                "category": "pizza",
-                                "size": "medium",
-                                "quantity": 1,
-                                "unit_price": 18.99,
-                                "modifications": [],
-                            }
-                        ],
-                        "order_type": "pickup",
-                        "status": "in_progress",
-                    },
-                ),
-                FakeBlock(
-                    type="text",
-                    text="Got it — one medium veggie supreme for pickup instead.",
-                ),
-            ]
-        ),
-        _fake_response([FakeBlock(type="text", text="Anything else?")]),
-    ]
-
-    result = AnthropicLLM(sync_client=fake_client).generate_reply(
-        transcript="actually scratch that, make it a veggie supreme",
-        history=[],
-        order=order,
-        system_prompt=_TEST_SYSTEM_PROMPT,
-    )
-
-    assert len(result.order.items) == 1
-    assert result.order.items[0].name == "Veggie Supreme"
-    assert result.order.items[0].unit_price == 18.99
-    assert result.order.order_type is OrderType.PICKUP
 
 
 class _FakeAsyncStream:
@@ -878,22 +781,21 @@ async def test_stream_reply_applies_tool_use_to_order_state():
                 blocks=[
                     FakeBlock(
                         type="tool_use",
-                        id="toolu_1",
-                        name="update_order",
+                        id="toolu_add",
+                        name="add_item",
                         input={
-                            "items": [
-                                {
-                                    "name": "Pepperoni",
-                                    "category": "pizza",
-                                    "size": "medium",
-                                    "quantity": 1,
-                                    "unit_price": 17.99,
-                                    "modifications": [],
-                                }
-                            ],
-                            "order_type": "pickup",
-                            "status": "in_progress",
+                            "name": "Pepperoni",
+                            "category": "pizza",
+                            "size": "medium",
+                            "quantity": 1,
+                            "unit_price": 17.99,
                         },
+                    ),
+                    FakeBlock(
+                        type="tool_use",
+                        id="toolu_type",
+                        name="set_order_type",
+                        input={"order_type": "pickup"},
                     ),
                     FakeBlock(type="text", text="One medium pepperoni for pickup."),
                 ],
@@ -931,8 +833,8 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
                     FakeBlock(
                         type="tool_use",
                         id="toolu_1",
-                        name="update_order",
-                        input={"items": [], "status": "cancelled"},
+                        name="set_status",
+                        input={"status": "cancelled"},
                     )
                 ],
             ),
@@ -959,7 +861,7 @@ async def test_stream_reply_runs_followup_when_first_turn_is_tool_only():
     # Follow-up keeps the tool schema in tools so the cache prefix matches
     # the main call (#176); tool_choice="none" suppresses further tool use.
     assert len(captured_calls) == 2
-    assert captured_calls[1]["tools"] == [UPDATE_ORDER_TOOL]
+    assert captured_calls[1]["tools"] == ATOMIC_TOOLS
     assert captured_calls[1]["tool_choice"] == {"type": "none"}
 
 
@@ -1089,8 +991,8 @@ async def test_stream_reply_timing_reflects_tool_use_before_text():
             FakeBlock(
                 type="tool_use",
                 id="toolu_x",
-                name="update_order",
-                input={"items": [], "status": "confirmed"},
+                name="set_status",
+                input={"status": "confirmed"},
             ),
             FakeBlock(type="text", text="Done."),
         ]
@@ -1116,20 +1018,14 @@ def test_modifications_round_trip_into_line_item():
                 FakeBlock(
                     type="tool_use",
                     id="toolu_mods",
-                    name="update_order",
+                    name="add_item",
                     input={
-                        "items": [
-                            {
-                                "name": "Margherita",
-                                "category": "pizza",
-                                "size": "large",
-                                "quantity": 1,
-                                "unit_price": 20.99,
-                                "modifications": ["extra cheese", "no basil"],
-                            }
-                        ],
-                        "order_type": "pickup",
-                        "status": "in_progress",
+                        "name": "Margherita",
+                        "category": "pizza",
+                        "size": "large",
+                        "quantity": 1,
+                        "unit_price": 20.99,
+                        "modifications": ["extra cheese", "no basil"],
                     },
                 ),
                 FakeBlock(
@@ -1155,20 +1051,16 @@ def test_summarize_order_includes_modifications():
     """Sprint 2.2 #2 — _summarize_order must include modification strings in
     the tool_result so the agent can read them back to the caller verbatim."""
     order = Order(call_sid="CAtest")
-    order = _apply_update(
+    order, _ = _apply_tool(
         order,
+        "add_item",
         {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 20.99,
-                    "modifications": ["extra cheese", "no basil"],
-                }
-            ],
-            "status": "in_progress",
+            "name": "Margherita",
+            "category": "pizza",
+            "size": "large",
+            "quantity": 1,
+            "unit_price": 20.99,
+            "modifications": ["extra cheese", "no basil"],
         },
     )
     result = _summarize_order(order)
@@ -1181,353 +1073,31 @@ def test_summarize_order_omits_parentheses_when_no_modifications():
     emit a parenthesized clause; the agent should omit the modifier phrase
     entirely per the read-back instruction."""
     order = Order(call_sid="CAtest")
-    order = _apply_update(
+    order, _ = _apply_tool(
         order,
+        "add_item",
         {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 20.99,
-                    "modifications": [],
-                }
-            ],
-            "status": "in_progress",
+            "name": "Margherita",
+            "category": "pizza",
+            "size": "large",
+            "quantity": 1,
+            "unit_price": 20.99,
         },
     )
     result = _summarize_order(order)
+    # No modifications -> no "(...)" clause in the items list. The line
+    # is still bracketed by "[item_id]" though, so check parens specifically.
     assert "(" not in result
 
 
-# ---------------------------------------------------------------------------
-# Caller-correction characterization tests (Sprint 2.2 #103)
-# ---------------------------------------------------------------------------
-# These assert that _apply_update — which already does full-state overwrite —
-# correctly handles every correction shape the new prompt block instructs
-# Haiku to emit. They lock in current behavior; if a future refactor
-# introduces a remove_item / change_item tool, these MUST still pass against
-# the equivalent payload shape.
+# Caller-correction tests for the snapshot tool moved to
+# tests/test_atomic_order_tools.py (#305 Part B). Each atomic operation
+# is now exercised against the dispatch via apply_tool_call directly,
+# replacing the full-state-overwrite assertions that lived here.
 
 
-def _seed_order_with(items: list[dict[str, Any]], **extra: Any) -> Order:
-    """Helper: build an Order with the given items and apply once."""
-    base = Order(call_sid="CAtest")
-    return _apply_update(base, {"items": items, "status": "in_progress", **extra})
-
-
-def test_correction_remove_item_drops_it_from_order():
-    """Caller: 'take off the Coke.' Payload omits the Coke entirely;
-    only the Margherita remains."""
-    order = _seed_order_with(
-        [
-            {
-                "name": "Margherita",
-                "category": "pizza",
-                "size": "large",
-                "quantity": 1,
-                "unit_price": 19.99,
-            },
-            {"name": "Coke", "category": "drinks", "size": None, "quantity": 1, "unit_price": 2.99},
-        ],
-        order_type="pickup",
-    )
-
-    corrected = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 19.99,
-                },
-            ],
-            "order_type": "pickup",
-            "status": "in_progress",
-        },
-    )
-
-    assert [i.name for i in corrected.items] == ["Margherita"]
-    assert corrected.subtotal == 19.99
-
-
-def test_correction_substitute_item_replaces_not_appends():
-    """Caller: 'change the Margherita to a calzone.' Payload swaps the
-    item; quantity carries through. Crucially the resulting order has
-    ONE item, not two."""
-    order = _seed_order_with(
-        [
-            {
-                "name": "Margherita",
-                "category": "pizza",
-                "size": "large",
-                "quantity": 1,
-                "unit_price": 19.99,
-            },
-        ],
-        order_type="pickup",
-    )
-
-    corrected = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Calzone",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 16.99,
-                },
-            ],
-            "order_type": "pickup",
-            "status": "in_progress",
-        },
-    )
-
-    assert len(corrected.items) == 1
-    assert corrected.items[0].name == "Calzone"
-    assert corrected.items[0].unit_price == 16.99
-
-
-def test_correction_quantity_change_does_not_duplicate_line():
-    """Caller: 'make that 2 not 1.' Same line item with quantity bumped;
-    never two lines for the same item."""
-    order = _seed_order_with(
-        [
-            {
-                "name": "Margherita",
-                "category": "pizza",
-                "size": "large",
-                "quantity": 1,
-                "unit_price": 19.99,
-            },
-        ],
-        order_type="pickup",
-    )
-
-    corrected = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 2,
-                    "unit_price": 19.99,
-                },
-            ],
-            "order_type": "pickup",
-            "status": "in_progress",
-        },
-    )
-
-    assert len(corrected.items) == 1
-    assert corrected.items[0].quantity == 2
-    assert corrected.subtotal == 39.98
-
-
-def test_correction_size_change_swaps_size_and_unit_price():
-    """Caller: 'I said large not medium.' Same item with new size +
-    new unit_price (the menu's price for the new size)."""
-    order = _seed_order_with(
-        [
-            {
-                "name": "Margherita",
-                "category": "pizza",
-                "size": "medium",
-                "quantity": 1,
-                "unit_price": 14.99,
-            },
-        ],
-        order_type="pickup",
-    )
-
-    corrected = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 19.99,
-                },
-            ],
-            "order_type": "pickup",
-            "status": "in_progress",
-        },
-    )
-
-    assert len(corrected.items) == 1
-    assert corrected.items[0].size == "large"
-    assert corrected.items[0].unit_price == 19.99
-
-
-def test_correction_order_type_swap_to_pickup_clears_delivery_address():
-    """Caller: 'switch back to pickup.' order_type flips and
-    delivery_address goes back to None — otherwise the dashboard
-    would show a stale address on a pickup order."""
-    order = _seed_order_with(
-        [
-            {
-                "name": "Margherita",
-                "category": "pizza",
-                "size": "large",
-                "quantity": 1,
-                "unit_price": 19.99,
-            },
-        ],
-        order_type="delivery",
-        delivery_address="14 Spadina Ave",
-    )
-    assert order.order_type is OrderType.DELIVERY
-    assert order.delivery_address == "14 Spadina Ave"
-
-    corrected = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 19.99,
-                },
-            ],
-            "order_type": "pickup",
-            "delivery_address": None,
-            "status": "in_progress",
-        },
-    )
-
-    assert corrected.order_type is OrderType.PICKUP
-    assert corrected.delivery_address is None
-
-
-def test_correction_delivery_address_fix_overwrites_full_value():
-    """Caller: 'no, my address is 14 not 40.' Payload contains the
-    fully-corrected address — not a partial / diff."""
-    order = _seed_order_with(
-        [
-            {
-                "name": "Margherita",
-                "category": "pizza",
-                "size": "large",
-                "quantity": 1,
-                "unit_price": 19.99,
-            },
-        ],
-        order_type="delivery",
-        delivery_address="40 Main St",
-    )
-
-    corrected = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 19.99,
-                },
-            ],
-            "order_type": "delivery",
-            "delivery_address": "14 Main St",
-            "status": "in_progress",
-        },
-    )
-
-    assert corrected.delivery_address == "14 Main St"
-    assert corrected.order_type is OrderType.DELIVERY
-
-
-def test_correction_invalid_delivery_address_is_rejected_and_signaled():
-    """Sprint 2.2 #105 — when Haiku ships an update_order patch whose
-    delivery_address fails validation (non-empty + has a digit), the
-    address is dropped from the patch (existing value stays) AND the
-    tool_result string carries a rejection note so Haiku re-asks on
-    the next turn."""
-    order = Order(call_sid="CAtest")
-    order = _apply_update(
-        order,
-        {
-            "items": [
-                {
-                    "name": "Margherita",
-                    "category": "pizza",
-                    "size": "large",
-                    "quantity": 1,
-                    "unit_price": 19.99,
-                },
-            ],
-            "order_type": "delivery",
-            "delivery_address": "14 Spadina Ave",
-            "status": "in_progress",
-        },
-    )
-    assert order.delivery_address == "14 Spadina Ave"
-
-    fake_client = MagicMock()
-    fake_client.messages.create.side_effect = [
-        _fake_response(
-            [
-                FakeBlock(type="text", text="Got it, what's your address?"),
-                FakeBlock(
-                    type="tool_use",
-                    id="toolu_bad_addr",
-                    name="update_order",
-                    input={
-                        "items": [
-                            {
-                                "name": "Margherita",
-                                "category": "pizza",
-                                "size": "large",
-                                "quantity": 1,
-                                "unit_price": 19.99,
-                            },
-                        ],
-                        "order_type": "delivery",
-                        "delivery_address": "uhh",
-                        "status": "in_progress",
-                    },
-                ),
-            ]
-        ),
-        _fake_response([FakeBlock(type="text", text="Could you give me the full street address?")]),
-    ]
-
-    result = AnthropicLLM(sync_client=fake_client).generate_reply(
-        transcript="my address is uhh",
-        history=[],
-        order=order,
-        system_prompt=_TEST_SYSTEM_PROMPT,
-    )
-
-    # Bad address was REJECTED — previous good value stays.
-    assert result.order.delivery_address == "14 Spadina Ave"
-    # Find the tool_result user message in history and check it carries the rejection note.
-    tool_result_msg = None
-    for msg in result.history:
-        if (
-            msg["role"] == "user"
-            and isinstance(msg["content"], list)
-            and msg["content"]
-            and msg["content"][0].get("type") == "tool_result"
-        ):
-            tool_result_msg = msg
-            break
-    assert tool_result_msg is not None
-    assert "Delivery address incomplete" in tool_result_msg["content"][0]["content"]
+def _correction_marker_unused():  # pragma: no cover
+    """Sentinel so the next deleted-block edit can target a unique string."""
 
 
 def test_generate_reply_sends_system_as_cache_block():
@@ -1590,61 +1160,6 @@ async def test_stream_reply_sends_system_as_cache_block():
     assert system[0]["cache_control"] == {"type": "ephemeral"}
 
 
-def test_apply_validation_passes_through_explicit_address_clears():
-    """Sprint 2.2 #105 — when Haiku ships delivery_address=None or ""
-    (e.g. swapping from delivery to pickup), that's a legitimate clear,
-    not a rejection. The patch must pass through unchanged with no
-    rejection note. Regression guard for the PD-D4 -> PD-D5 fix."""
-    from app.llm.orchestration import INVALID_ADDRESS_NOTE
-    from app.llm.orchestration import validate_order_patch as _apply_validation
-
-    # Explicit None passes through, no rejection note.
-    cleaned, notes = _apply_validation(
-        {
-            "items": [],
-            "order_type": "pickup",
-            "delivery_address": None,
-            "status": "in_progress",
-        }
-    )
-    assert cleaned == {
-        "items": [],
-        "order_type": "pickup",
-        "delivery_address": None,
-        "status": "in_progress",
-    }
-    assert notes == []
-
-    # Empty string passes through, no rejection note.
-    cleaned, notes = _apply_validation(
-        {
-            "delivery_address": "",
-        }
-    )
-    assert cleaned == {"delivery_address": ""}
-    assert notes == []
-
-    # Whitespace-only passes through, no rejection note.
-    cleaned, notes = _apply_validation(
-        {
-            "delivery_address": "   ",
-        }
-    )
-    assert cleaned == {"delivery_address": "   "}
-    assert notes == []
-
-    # Real garbage with content STILL gets rejected — verifies the
-    # explicit-clear pass-through didn't accidentally weaken the
-    # rejection path.
-    cleaned, notes = _apply_validation(
-        {
-            "delivery_address": "uhh",
-        }
-    )
-    assert "delivery_address" not in cleaned
-    assert notes == [INVALID_ADDRESS_NOTE]
-
-
 def test_followup_after_text_plus_tool_produces_readback_in_same_turn():
     """#173 — when the first response has BOTH text and tool_use, a follow-up
     call always runs so the model can read back the verified subtotal in the
@@ -1662,18 +1177,12 @@ def test_followup_after_text_plus_tool_produces_readback_in_same_turn():
                 FakeBlock(
                     type="tool_use",
                     id="toolu_cfr",
-                    name="update_order",
+                    name="add_item",
                     input={
-                        "items": [
-                            {
-                                "name": "Chicken Fried Rice",
-                                "category": "fried_rice",
-                                "size": None,
-                                "quantity": 1,
-                                "unit_price": 12.25,
-                            }
-                        ],
-                        "status": "in_progress",
+                        "name": "Chicken Fried Rice",
+                        "category": "fried_rice",
+                        "quantity": 1,
+                        "unit_price": 12.25,
                     },
                 ),
             ]
@@ -1702,7 +1211,7 @@ def test_followup_after_text_plus_tool_produces_readback_in_same_turn():
     # Follow-up keeps the tool schema in tools so the cache prefix matches
     # the main call (#176); tool_choice="none" suppresses further tool use.
     followup_call_kwargs = fake_client.messages.create.call_args_list[1][1]
-    assert followup_call_kwargs["tools"] == [UPDATE_ORDER_TOOL]
+    assert followup_call_kwargs["tools"] == ATOMIC_TOOLS
     assert followup_call_kwargs["tool_choice"] == {"type": "none"}
 
 
@@ -1722,18 +1231,12 @@ async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
                     FakeBlock(
                         type="tool_use",
                         id="toolu_cfr",
-                        name="update_order",
+                        name="add_item",
                         input={
-                            "items": [
-                                {
-                                    "name": "Chicken Fried Rice",
-                                    "category": "fried_rice",
-                                    "size": None,
-                                    "quantity": 1,
-                                    "unit_price": 12.25,
-                                }
-                            ],
-                            "status": "in_progress",
+                            "name": "Chicken Fried Rice",
+                            "category": "fried_rice",
+                            "quantity": 1,
+                            "unit_price": 12.25,
                         },
                     ),
                     FakeBlock(
@@ -1783,7 +1286,7 @@ async def test_stream_reply_followup_after_text_plus_tool_yields_both_deltas():
     # Follow-up keeps the tool schema in tools so the cache prefix matches
     # the main call (#176); tool_choice="none" suppresses further tool use.
     assert len(captured_calls) == 2
-    assert captured_calls[1]["tools"] == [UPDATE_ORDER_TOOL]
+    assert captured_calls[1]["tools"] == ATOMIC_TOOLS
     assert captured_calls[1]["tool_choice"] == {"type": "none"}
 
 
@@ -2293,7 +1796,7 @@ def test_generate_reply_skips_followup_on_confirm_turn_when_main_already_spoke()
             FakeBlock(
                 type="tool_use",
                 id="toolu_confirm",
-                name="update_order",
+                name="set_status",
                 input={"status": "confirmed"},
             ),
         ]
@@ -2320,9 +1823,9 @@ def test_generate_reply_skips_followup_on_confirm_turn_when_main_already_spoke()
 
 
 def test_generate_reply_runs_followup_on_confirm_turn_when_main_was_tool_only():
-    """Edge case: the model emitted update_order(status=confirmed) but
-    no text. The caller hasn't heard anything yet, so the follow-up must
-    still run to produce a goodbye. Preserves #173's invariant for the
+    """Edge case: the model emitted set_status(confirmed) but no text.
+    The caller hasn't heard anything yet, so the follow-up must still
+    run to produce a goodbye. Preserves #173's invariant for the
     silent-confirm path."""
     order = Order(call_sid="CAtest")
     fake_client = MagicMock()
@@ -2332,7 +1835,7 @@ def test_generate_reply_runs_followup_on_confirm_turn_when_main_was_tool_only():
                 FakeBlock(
                     type="tool_use",
                     id="toolu_confirm",
-                    name="update_order",
+                    name="set_status",
                     input={"status": "confirmed"},
                 )
             ]
@@ -2353,7 +1856,7 @@ def test_generate_reply_runs_followup_on_confirm_turn_when_main_was_tool_only():
 
 def test_generate_reply_runs_followup_on_mid_order_tool_use_with_text():
     """Regression guard against accidentally widening the skip. Mid-order
-    item-add turns emit text + tool_use(status=in_progress); the follow-up
+    item-add turns emit text + add_item (non-terminal); the follow-up
     must still run so the model can react to the server-verified subtotal
     in tool_result and produce the next prompt ('anything else?')."""
     order = Order(call_sid="CAtest")
@@ -2365,19 +1868,13 @@ def test_generate_reply_runs_followup_on_mid_order_tool_use_with_text():
                 FakeBlock(
                     type="tool_use",
                     id="toolu_add",
-                    name="update_order",
+                    name="add_item",
                     input={
-                        "items": [
-                            {
-                                "name": "Pepperoni",
-                                "category": "pizza",
-                                "size": "medium",
-                                "quantity": 1,
-                                "unit_price": 17.99,
-                            }
-                        ],
-                        "order_type": "pickup",
-                        "status": "in_progress",
+                        "name": "Pepperoni",
+                        "category": "pizza",
+                        "size": "medium",
+                        "quantity": 1,
+                        "unit_price": 17.99,
                     },
                 ),
             ]
@@ -2415,7 +1912,7 @@ async def test_stream_reply_skips_followup_on_confirm_turn_when_main_already_spo
                     FakeBlock(
                         type="tool_use",
                         id="toolu_confirm",
-                        name="update_order",
+                        name="set_status",
                         input={"status": "confirmed"},
                     ),
                 ],

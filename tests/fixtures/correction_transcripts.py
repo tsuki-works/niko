@@ -12,8 +12,9 @@ Each entry is a multi-turn scenario:
   fields per pattern.
 
 Add a row whenever a real correction bug is found in production. Pair
-the row with a backstop in ``tests/test_llm_client.py`` that exercises
-the same shape against ``_apply_update`` deterministically.
+the row with a unit-test backstop in
+``tests/test_atomic_order_tools.py`` that exercises the same shape
+against ``apply_tool_call`` deterministically.
 """
 
 from __future__ import annotations

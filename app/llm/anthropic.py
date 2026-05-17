@@ -29,27 +29,29 @@ from anthropic import Anthropic, AsyncAnthropic
 
 from app.config import settings
 from app.llm.base import (
-    UPDATE_ORDER_TOOL_SPEC,
+    ATOMIC_TOOL_SPECS,
     LLMResponse,
     StreamEvent,
 )
 from app.llm.orchestration import (
-    apply_order_patch,
+    apply_tool_call,
     should_skip_followup,
     summarize_order_for_tool_result,
-    validate_order_patch,
 )
 from app.orders.models import Order
 
 # Anthropic accepts the JSON Schema directly under ``input_schema``.
-# Build the wire-shape dict once at import so the cached ``tools=[...]``
-# list stays a constant across calls (matters for prompt caching: tools
-# sit before system in Anthropic's cached prefix order).
-UPDATE_ORDER_TOOL: dict[str, Any] = {
-    "name": UPDATE_ORDER_TOOL_SPEC.name,
-    "description": UPDATE_ORDER_TOOL_SPEC.description,
-    "input_schema": UPDATE_ORDER_TOOL_SPEC.parameters,
-}
+# Build the wire-shape list once at import so the cached ``tools=[...]``
+# stays a constant across calls (matters for prompt caching: tools sit
+# before system in Anthropic's cached prefix order).
+ATOMIC_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": spec.name,
+        "description": spec.description,
+        "input_schema": spec.parameters,
+    }
+    for spec in ATOMIC_TOOL_SPECS
+]
 
 
 def _missing_key_error() -> RuntimeError:
@@ -293,7 +295,7 @@ class AnthropicLLM:
             model=self._model,
             max_tokens=self._max_tokens,
             system=_system_cache_block(system_prompt),
-            tools=[UPDATE_ORDER_TOOL],
+            tools=ATOMIC_TOOLS,
             messages=_with_rolling_cache_breakpoint(new_history),
         )
 
@@ -302,14 +304,13 @@ class AnthropicLLM:
         for block in response.content:
             if block.type == "text":
                 reply_text_parts.append(block.text)
-            elif block.type == "tool_use" and block.name == "update_order":
-                tool_uses.append({"id": block.id, "input": block.input})
+            elif block.type == "tool_use":
+                tool_uses.append({"id": block.id, "name": block.name, "input": block.input})
 
         updated_order = order
         tool_results: list[dict[str, Any]] = []
         for tu in tool_uses:
-            cleaned_input, rejection_notes = validate_order_patch(tu["input"])
-            updated_order = apply_order_patch(updated_order, cleaned_input)
+            updated_order, rejection_notes = apply_tool_call(updated_order, tu["name"], tu["input"])
             summary = summarize_order_for_tool_result(updated_order)
             if rejection_notes:
                 summary = summary + " " + " ".join(rejection_notes)
@@ -338,7 +339,7 @@ class AnthropicLLM:
                 model=self._model,
                 max_tokens=self._max_tokens,
                 system=_system_cache_block(system_prompt),
-                tools=[UPDATE_ORDER_TOOL],
+                tools=ATOMIC_TOOLS,
                 tool_choice={"type": "none"},
                 messages=_with_rolling_cache_breakpoint(new_history),
             )
@@ -408,7 +409,7 @@ class AnthropicLLM:
             model=self._model,
             max_tokens=self._max_tokens,
             system=_system_cache_block(system_prompt),
-            tools=[UPDATE_ORDER_TOOL],
+            tools=ATOMIC_TOOLS,
             messages=_with_rolling_cache_breakpoint(new_history),
         ) as stream:
             async for event in stream:
@@ -450,14 +451,13 @@ class AnthropicLLM:
             first_message = await stream.get_final_message()
 
         for block in first_message.content:
-            if block.type == "tool_use" and block.name == "update_order":
-                tool_uses.append({"id": block.id, "input": block.input})
+            if block.type == "tool_use":
+                tool_uses.append({"id": block.id, "name": block.name, "input": block.input})
 
         updated_order = order
         tool_results: list[dict[str, Any]] = []
         for tu in tool_uses:
-            cleaned_input, rejection_notes = validate_order_patch(tu["input"])
-            updated_order = apply_order_patch(updated_order, cleaned_input)
+            updated_order, rejection_notes = apply_tool_call(updated_order, tu["name"], tu["input"])
             summary = summarize_order_for_tool_result(updated_order)
             if rejection_notes:
                 summary = summary + " " + " ".join(rejection_notes)
@@ -510,7 +510,7 @@ class AnthropicLLM:
                 model=self._model,
                 max_tokens=self._max_tokens,
                 system=_system_cache_block(system_prompt),
-                tools=[UPDATE_ORDER_TOOL],
+                tools=ATOMIC_TOOLS,
                 tool_choice={"type": "none"},
                 messages=_with_rolling_cache_breakpoint(new_history),
             ) as followup_stream:
@@ -591,6 +591,6 @@ class AnthropicLLM:
 
 
 __all__ = [
+    "ATOMIC_TOOLS",
     "AnthropicLLM",
-    "UPDATE_ORDER_TOOL",
 ]

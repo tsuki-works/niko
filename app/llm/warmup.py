@@ -22,7 +22,7 @@ import time
 
 from app.config import settings
 from app.llm.anthropic import (
-    UPDATE_ORDER_TOOL,
+    ATOMIC_TOOLS,
     _get_async_client,
     _system_cache_block,
 )
@@ -47,7 +47,7 @@ async def prime_tenant_cache(restaurant: Restaurant) -> None:
             model=settings.anthropic_model,
             max_tokens=1,
             system=_system_cache_block(system_prompt),
-            tools=[UPDATE_ORDER_TOOL],
+            tools=ATOMIC_TOOLS,
             messages=[{"role": "user", "content": "ping"}],
         )
     except Exception as exc:
