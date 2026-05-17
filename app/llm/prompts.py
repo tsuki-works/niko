@@ -83,19 +83,24 @@ _CUSTOMIZATIONS = dedent("""\
 
 _CORRECTIONS = dedent("""\
     Caller corrections:
-    - When the caller corrects something already in the order, emit ONE
-      update_order with the FULL corrected state. Replace the wrong item —
-      never leave it alongside the new one.
-    - Removals ("take off the Coke", "remove the second pizza"): emit
-      update_order without that item.
+    - Removals ("take off the Coke", "remove the second pizza"): call
+      remove_item with the item_id from the prior tool_result for the line
+      the caller wants gone.
     - Substitutions ("change the Margherita to a calzone", "I meant
-      pepperoni, not Margherita"): swap the item, carry the quantity through
-      unless the caller restated it.
-    - Quantity or size changes ("make that 2", "I said large"): same item
-      line with the new value — never duplicate the line. Use the menu's
-      unit_price for the new size.
+      pepperoni, not Margherita"): call remove_item for the old line, then
+      add_item for the new one. Carry the quantity through unless the
+      caller restated it.
+    - Quantity changes ("make that 2"): call update_item with the new
+      quantity. Same line — never duplicate it.
+    - Size changes ("I said large, not medium"): call update_item with the
+      new size AND new unit_price (the menu's price for the new size).
+      Different size of the SAME item is still ONE line — do not add_item.
+    - Modification edits ("add no onions", "remove extra cheese"): call
+      update_item with the full new modifications list — the list replaces
+      the existing one, it does not append.
     {order_type_swap_rule}
-    - Delivery-address fix: send the full corrected address, not a partial.
+    - Delivery-address fix: call set_delivery_address with the full
+      corrected address, not a partial.
     - After a correction, briefly acknowledge what changed in one short
       phrase — do NOT re-read the whole order; that happens at the
       read-back step.""")
@@ -130,23 +135,23 @@ _READ_BACK = dedent("""\
     - After the closer, give the caller a beat. They will either
       confirm explicitly ("yes", "yep", "go ahead", "send it",
       "sounds good"), ask to change something, or hesitate. If they
-      confirm, proceed to the goodbye. If they want a change, update
-      via update_order and read the corrected order back. If they
-      hesitate for a moment, do NOT re-prompt — wait for them.
-    - Use the subtotal returned by the update_order tool — never compute
+      confirm, proceed to the goodbye. If they want a change, call the
+      right correction tool (see the corrections section) and read the
+      corrected order back. If they hesitate for a moment, do NOT
+      re-prompt — wait for them.
+    - Use the subtotal returned by the latest tool_result — never compute
       it yourself from unit prices.
     - If an item has no modifications, omit the modifier clause entirely —
       do not say "no modifications."
-    - Only flip status="confirmed" after explicit confirmation, not on a
-      vague "uh huh" mid-conversation.""")
+    - Only call set_status(confirmed) after explicit confirmation, not on
+      a vague "uh huh" mid-conversation.""")
 
 
 _CLOSING = dedent("""\
     Closing the call:
-    - Once the caller has confirmed the order, set status="confirmed" via
-      update_order and say a brief, terminal goodbye. Keep it short and
-      natural — let the wording vary call to call rather than repeating
-      the same phrase.
+    - Once the caller has confirmed the order, call set_status(confirmed)
+      and say a brief, terminal goodbye. Keep it short and natural — let
+      the wording vary call to call rather than repeating the same phrase.
     - Lead the goodbye, the read-back, and any acknowledgement-then-tool
       turn with a short word or short phrase ending in a period — not a
       comma. Periods let TTS start speaking sooner; commas hold the audio
@@ -155,8 +160,8 @@ _CLOSING = dedent("""\
       terminates in a period.
     - CRITICAL: any time you say a wrap-up phrase like "your order is in",
       "we'll have it ready", "see you soon", or "thanks for calling", you
-      MUST call update_order in the same turn with status="confirmed".
-      Saying the goodbye without flipping status leaves the call hanging.
+      MUST call set_status(confirmed) in the same turn. Saying the goodbye
+      without flipping status leaves the call hanging.
     - Do NOT ask another follow-up question after confirming. The call
       ends shortly after your goodbye.""")
 
@@ -171,21 +176,47 @@ _ADDRESS_HANDLING = dedent("""\
 
 
 _TOOL_ORDERING = dedent("""\
-    When you call the update_order tool — ORDERING IS CRITICAL:
-    1. ALWAYS speak a short acknowledgement first, THEN call update_order.
+    Order tools — there are six:
+    - add_item: caller asks for something new, or asks for a DIFFERENT
+      size or variant of an existing item (different sizes are SEPARATE
+      lines, not in-place size changes on the same line).
+    - remove_item(item_id): caller takes something off. The item_id was
+      surfaced in a prior tool_result when the item was added — read it
+      from there. Never invent an item_id.
+    - update_item(item_id, ...): caller changes quantity, size, or
+      modifications of a line that's already in the order. Same line —
+      never duplicate it. See the corrections section for size + price
+      handling.
+    - set_order_type(pickup|delivery): caller picks pickup or delivery.
+      Switching to pickup automatically clears any captured delivery
+      address — no follow-up tool call needed.
+    - set_delivery_address: caller gives a delivery address. Pass null or
+      empty to clear.
+    - set_status(confirmed|cancelled): caller explicitly confirms after
+      the read-back, or cancels. Kitchen states (preparing/ready/...) are
+      set by the dashboard, not this tool.
+
+    Per-turn rule: call the relevant tool the moment the order changes,
+    in the SAME turn the change is acknowledged. Do not batch tool calls
+    to the end of the conversation — that defeats the dashboard live view
+    and concentrates all the call's latency on the confirm turn.
+
+    When you call any of these tools — ORDERING IS CRITICAL:
+    1. ALWAYS speak a short acknowledgement first, THEN call the tool.
        This is non-negotiable: the caller hears nothing while you stream
        the tool's JSON, so a tool-first turn produces 1-2 seconds of dead
        air that callers experience as "the bot froze".
-    2. The spoken acknowledgement must come first in your output, then the
-       tool call. Shape: "<short ack ending in a period>" → update_order(...).
-    3. Wrong (DO NOT DO THIS): update_order(...) → spoken text. The spoken
+    2. The spoken acknowledgement must come first in your output, then
+       the tool call. Shape: "<short ack ending in a period>" → <tool>.
+    3. Wrong (DO NOT DO THIS): <tool call> → spoken text. The spoken
        words must precede the tool call in your output.
     4. Brevity is fine; silence is not. A few words ending in a period is
        enough. Pick wording that fits the moment rather than repeating
        the same phrase across turns.
-    5. After your spoken ack and update_order call, the system feeds you
-       back a tool_result with the new subtotal. What you say next
-       depends on whether the caller has signaled they're done:
+    5. After your spoken ack and tool call, the system feeds you back a
+       tool_result with the new subtotal and the current item_ids. What
+       you say next depends on whether the caller has signaled they're
+       done:
        - Mid-order (caller has NOT signaled done): ask "anything else?"
          and stop. Do NOT recite what they just ordered, do NOT announce
          the running subtotal, do NOT re-read previous items. The full
@@ -218,8 +249,8 @@ _OFF_MENU_AND_HESITATION = dedent("""\
 
 _SUBTOTAL_TRUST = dedent("""\
     When you tell the caller their total, use the subtotal returned by the
-    most recent update_order tool_result — never compute totals yourself from
-    unit prices. The tool_result's "Subtotal: $X.XX" is the server-verified
+    most recent tool_result — never compute totals yourself from unit
+    prices. The tool_result's "Subtotal: $X.XX" is the server-verified
     number; your math from memory will drift.""")
 
 
@@ -372,8 +403,10 @@ def build_system_prompt(restaurant: Restaurant) -> str:
         intro_line = "Place a pickup or delivery order from the menu below."
         delivery_handling = "- If delivery, collect the caller's delivery address."
         order_type_swap_rule = (
-            "- Order-type swap to delivery: ask for the address before the next\n"
-            "  read-back. Swap to pickup: clear delivery_address."
+            "- Order-type swap to delivery: call set_order_type(delivery), then\n"
+            "  ask for the address before the next read-back. Swap to pickup:\n"
+            "  call set_order_type(pickup) — it clears the delivery address\n"
+            "  automatically, no follow-up tool call needed."
         )
     else:
         intro_line = "Place a pickup order from the menu below."
@@ -381,7 +414,7 @@ def build_system_prompt(restaurant: Restaurant) -> str:
             "- If the caller asks for delivery, say something like\n"
             '  "We\'re actually pickup-only — would pickup work for you?"\n'
             "  and continue from there. Do not capture a delivery address;\n"
-            "  do not set order_type to delivery."
+            "  do not call set_order_type(delivery)."
         )
         order_type_swap_rule = (
             "- Order-type stays pickup. If the caller tries to switch to delivery,\n"

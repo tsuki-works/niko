@@ -11,7 +11,7 @@ matching the ``LLMProvider`` Protocol from ``app/llm/base.py``.
 from __future__ import annotations
 
 from app.llm.base import (
-    UPDATE_ORDER_TOOL_SPEC,
+    ATOMIC_TOOL_SPECS,
     LLMProvider,
     LLMResponse,
     StreamEvent,
@@ -19,11 +19,11 @@ from app.llm.base import (
 )
 
 __all__ = [
+    "ATOMIC_TOOL_SPECS",
     "LLMProvider",
     "LLMResponse",
     "StreamEvent",
     "ToolSpec",
-    "UPDATE_ORDER_TOOL_SPEC",
     "get_llm",
 ]
 

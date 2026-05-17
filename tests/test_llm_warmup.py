@@ -19,7 +19,7 @@ import pytest
 from app.config import settings
 from app.llm import anthropic as anthropic_module
 from app.llm import warmup
-from app.llm.anthropic import UPDATE_ORDER_TOOL
+from app.llm.anthropic import ATOMIC_TOOLS
 from app.restaurants.models import Restaurant
 
 
@@ -79,14 +79,14 @@ async def test_prime_tenant_cache_wraps_system_in_ephemeral_cache_block():
 
 
 @pytest.mark.asyncio
-async def test_prime_tenant_cache_includes_update_order_tool():
+async def test_prime_tenant_cache_includes_atomic_tools():
     """Tools sit before system in Anthropic's cached prefix order
-    (per #176). A primer missing the tool would write a *different*
+    (per #176). A primer missing the tools would write a *different*
     cache key than T2's real call."""
     client = _install_fake_async_client()
     await warmup.prime_tenant_cache(_restaurant())
     kwargs = client.messages.create.await_args.kwargs
-    assert kwargs["tools"] == [UPDATE_ORDER_TOOL]
+    assert kwargs["tools"] == ATOMIC_TOOLS
 
 
 @pytest.mark.asyncio

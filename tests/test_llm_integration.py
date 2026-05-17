@@ -14,6 +14,10 @@ The ``-s`` flag keeps ``print()`` output visible so you can read the
 reply transcript and the structured Order state.
 """
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from app.config import settings
@@ -287,6 +291,157 @@ def _system_prompt_for(scenario_id: str) -> str:
     if scenario_id == "pickup_only_soft_pivot":
         return _DEMO_PICKUP_ONLY_SYSTEM_PROMPT
     return _DEMO_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Atomic-tool live regression suite (#305 Part B)
+# ---------------------------------------------------------------------------
+# Replays the saved transcript at dev_recordings/transcripts/ through the
+# atomic-tool flow against real Haiku, then asserts: (a) the right atomic
+# tools were called by name, and (b) the final order matches what the
+# transcript implies. Catches anything the unit-test mocks can't — schema
+# rejections, model picking the wrong tool, batching to confirm, etc.
+
+
+_ATOMIC_REPLAY_TRANSCRIPT_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "dev_recordings"
+    / "transcripts"
+    / "CAe52763d5aabb7b126cfdee1db32eace8.json"
+)
+
+
+def _load_replay_transcript(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _restaurant_for_replay(scenario: dict[str, Any]) -> Restaurant:
+    """Build a Restaurant from the menu JSON referenced in the saved
+    transcript. The harness mirrors what scripts/replay_llm.py does —
+    real menu JSON + dummy non-menu fields, since the integration test
+    only exercises the prompt builder + LLM."""
+    menu_path = (
+        Path(__file__).resolve().parent.parent
+        / "restaurants"
+        / f"{scenario['restaurant']}.json"
+    )
+    menu_doc = json.loads(menu_path.read_text(encoding="utf-8"))
+    menu_dict = menu_doc.get("menu", menu_doc)
+    return Restaurant(
+        id=scenario["restaurant"],
+        name=scenario["restaurant_name"],
+        display_phone="+1-000-000-0000",
+        twilio_phone="+10000000000",
+        address="Replay fixture (not a real address)",
+        hours="Replay fixture (not real hours)",
+        offers_delivery=scenario.get("offers_delivery", True),
+        menu=menu_dict,
+    )
+
+
+def _collect_tool_calls(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Walk the threaded history and pull out every tool_use block the
+    assistant emitted, in order. Returns ``[{"name": ..., "input": ...}, ...]``."""
+    out: list[dict[str, Any]] = []
+    for msg in history:
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                out.append({"name": block.get("name"), "input": block.get("input")})
+    return out
+
+
+@pytest.mark.live_llm
+def test_replay_atomic_tool_flow_against_saved_transcript():
+    """Replay the saved Twilight call (CAe52763d5...) end-to-end against
+    real Haiku and assert the model uses the atomic tools correctly.
+
+    The transcript was captured pre-Part-B against the snapshot tool;
+    re-running it now must succeed against the atomic surface without
+    rewriting the caller turns. If Haiku starts hallucinating
+    `update_order` (or any non-atomic name) the test fails on the
+    unknown-tool dispatch path.
+    """
+    scenario = _load_replay_transcript(_ATOMIC_REPLAY_TRANSCRIPT_PATH)
+    restaurant = _restaurant_for_replay(scenario)
+    system_prompt = build_system_prompt(restaurant)
+
+    order = Order(call_sid=f"CAreplay-{_ATOMIC_REPLAY_TRANSCRIPT_PATH.stem}")
+    history: list[dict[str, Any]] = []
+
+    for i, turn in enumerate(scenario["turns"]):
+        caller = turn["caller"]
+        result = _LLM.generate_reply(
+            transcript=caller,
+            history=history,
+            order=order,
+            system_prompt=system_prompt,
+        )
+        order = result.order
+        history = result.history
+        print(
+            f"\n--- Turn {i + 1}/{len(scenario['turns'])} ---\n"
+            f"Caller: {caller}\n"
+            f"Haiku: {result.reply_text}\n"
+            f"Items so far: {[(it.item_id, it.name) for it in order.items]}\n"
+            f"Status: {order.status.value}"
+        )
+
+    tool_calls = _collect_tool_calls(history)
+    tool_names = [tc["name"] for tc in tool_calls]
+    print(f"\n--- Tool calls (in order) ---\n{tool_names}")
+
+    # The atomic tool surface must be exercised. The transcript adds at
+    # least one item ("Chicken Fried Rice"), so at minimum we expect one
+    # add_item call. If we see zero add_item calls, either the model
+    # batched everything to a snapshot tool (regression to update_order)
+    # or it failed to record the order at all.
+    assert any(name == "add_item" for name in tool_names), (
+        f"Expected at least one add_item call; got tool names {tool_names!r}"
+    )
+
+    # Snapshot-tool regression guard. If Haiku reverts to calling the old
+    # update_order name (e.g., someone re-registers UPDATE_ORDER_TOOL_SPEC
+    # in the provider by accident), apply_tool_call returns an
+    # unknown-tool note and the order stays empty. Fail loudly.
+    assert "update_order" not in tool_names, (
+        f"Model called the legacy update_order tool — atomic surface is no "
+        f"longer registered. Tool calls were: {tool_names!r}"
+    )
+
+    # The caller said "I'm all set" / "Sounds right" near the end —
+    # Haiku should have called set_status(confirmed) at some point.
+    assert any(
+        tc["name"] == "set_status" and tc["input"].get("status") == "confirmed"
+        for tc in tool_calls
+    ), (
+        f"Expected set_status(confirmed) somewhere in the call; got tool calls "
+        f"{tool_calls!r}"
+    )
+    assert order.status.value == "confirmed", (
+        f"Expected final order.status == 'confirmed'; got {order.status.value!r}"
+    )
+
+    # Order populates MID-CALL with atomic tools — the #305 Part B win
+    # that unlocks dashboard live view and #314 partial-order recovery.
+    # The transcript adds at least 3 items across separate turns, so the
+    # final order should contain multiple items. We don't pin specific
+    # names: real Haiku is non-deterministic on a transcript with
+    # STT-fuzzy follow-ups ("Do you have steamed fried rice" then
+    # "I want one shrimp fried rice" can plausibly be interpreted as a
+    # substitution rather than an addition), and "Coke" isn't on the
+    # Twilight menu so the model substitutes a close drink. The
+    # invariant that matters is: atomic tools landed structured items
+    # mid-call rather than batching to confirm.
+    final_names = [it.name.lower() for it in order.items]
+    assert len(order.items) >= 2, (
+        f"Expected at least 2 items in final order (caller added >= 3); "
+        f"got {len(order.items)}: {final_names!r}"
+    )
 
 
 @pytest.mark.live_llm

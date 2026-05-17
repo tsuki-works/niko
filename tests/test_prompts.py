@@ -37,6 +37,41 @@ def test_prompt_includes_restaurant_name_and_menu_items():
         assert pizza["name"] in prompt
 
 
+def test_prompt_describes_all_six_atomic_tools():
+    """#305 Part B — the prompt must list each of the six atomic order
+    tools so the model knows the full surface it has to work with.
+    Missing a tool from the prompt would silently push the model to
+    pick the wrong one (e.g., add_item for a quantity change because
+    update_item was never introduced)."""
+    prompt = build_system_prompt(_demo())
+    lower = prompt.lower()
+    for tool_name in (
+        "add_item",
+        "remove_item",
+        "update_item",
+        "set_order_type",
+        "set_delivery_address",
+        "set_status",
+    ):
+        assert tool_name in lower, f"prompt is missing the {tool_name} tool description"
+
+
+def test_prompt_enforces_per_turn_tool_calls_against_batching():
+    """#305 Part B core invariant — the model must call the relevant
+    tool the moment the order changes, in the SAME turn. Pre-Part-B
+    diagnostic showed Haiku batching all update_order calls to the
+    confirm turn (n_items=0 on adds, w=386 cache writes concentrated
+    at confirm). With atomic tools batching defeats both the dashboard
+    live view and the latency win — the prompt must explicitly forbid
+    it."""
+    prompt = build_system_prompt(_demo())
+    flat = _collapse_ws(prompt.lower())
+    # Same-turn rule must be present.
+    assert "in the same turn" in flat
+    # Explicit forbid against batching to confirm.
+    assert "do not batch tool calls to the end" in flat
+
+
 def test_prompt_warns_against_reciting_address_on_pickup_wrapup():
     """Regression for #76 — the placeholder address (or any address) must
     not be volunteered in pickup confirmations."""
@@ -48,13 +83,16 @@ def test_prompt_warns_against_reciting_address_on_pickup_wrapup():
 
 
 def test_prompt_requires_text_before_tool_use():
-    """Regression for #76 and #155 — Haiku must speak first then call update_order,
-    so audio starts streaming within the <1s budget on commit turns. In #155 the
-    rule was strengthened from a soft bullet to a numbered CRITICAL block after
-    Haiku was observed ignoring the soft form (1192ms tool_prefix on 18:33 call)."""
+    """Regression for #76, #155, and #305 Part B — Haiku must speak first
+    then call the tool, so audio starts streaming within the <1s budget on
+    commit turns. In #155 the rule was strengthened from a soft bullet to a
+    numbered CRITICAL block after Haiku was observed ignoring the soft form
+    (1192ms tool_prefix on 18:33 call). #305 Part B replaced the single
+    update_order tool with six atomic tools — the speak-first rule now
+    applies to ALL of them."""
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
-    assert "when you call the update_order tool" in lower
+    assert "when you call any of these tools" in lower
     assert "first" in lower
     # Updated for #155 — the rule was strengthened to a numbered CRITICAL block.
     # The "do not do this" string is the new equivalent assertion that the
@@ -89,19 +127,21 @@ def test_prompt_makes_confirmation_goodbyes_terminal():
     assert "do not ask another follow-up question after confirming" in lower
     # Spot-check that the directive references the confirmed status flow.
     # #260 simplified the wording from "set the order's status to confirmed"
-    # to the literal tool-call form to keep the rule terse.
-    assert 'status="confirmed"' in lower
+    # to the literal tool-call form to keep the rule terse; #305 Part B
+    # swapped update_order for the atomic set_status(confirmed) call.
+    assert "set_status(confirmed)" in lower
 
 
 def test_prompt_couples_goodbye_phrases_with_status_flip():
     """Regression for #79 — Haiku was saying 'your order is in' without
-    calling update_order(status='confirmed'), which left the auto-hangup
-    inert. The prompt now insists on the status flip in the same turn."""
+    calling the confirm tool, which left the auto-hangup inert. The
+    prompt insists on the status flip in the same turn. #305 Part B
+    swapped the snapshot tool for set_status(confirmed)."""
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
     assert "critical" in lower
     assert "your order is in" in lower
-    assert 'status="confirmed"' in lower
+    assert "set_status(confirmed)" in lower
 
 
 def test_prompt_closing_uses_period_terminated_openers():
@@ -345,8 +385,8 @@ def test_prompt_includes_customization_guidance():
 
 def test_prompt_includes_readback_instruction():
     """Sprint 2.2 #3 — prompt must direct the agent to read back the full
-    order using the server-verified update_order subtotal, and only
-    confirm on an explicit caller yes.
+    order using the server-verified subtotal returned in tool_result, and
+    only confirm on an explicit caller yes.
 
     #260 (initial) tried statement-form read-backs to dodge price-
     validation framing; that produced a silence-timeout regression on
@@ -355,12 +395,19 @@ def test_prompt_includes_readback_instruction():
     oriented. The "explicit confirmation" requirement still holds —
     the model must wait for a real "yes" before flipping status, not
     infer it from silence.
+
+    #305 Part B replaced the single update_order tool with six atomic
+    tools — the read-back rule now points the model at the latest
+    tool_result for the subtotal (any of the six atomic tools surfaces it)
+    instead of naming a specific tool.
     """
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
     flat = _collapse_ws(lower)
     assert "read back" in lower
-    assert "update_order" in lower
+    # The subtotal comes from the latest tool_result regardless of which
+    # atomic tool produced it.
+    assert "tool_result" in lower
     # Price-validation framing remains banned (#260).
     assert "does that sound right" not in lower
     # An action-oriented turn-cue closer is required.
@@ -416,33 +463,44 @@ def test_prompt_forbids_per_item_readback_and_running_total():
 
 
 def test_prompt_includes_caller_corrections_block():
-    """Sprint 2.2 #103 — when a caller corrects something already in the
-    order (remove, substitute, quantity, size, order-type swap, delivery
-    address), Haiku must emit a single update_order carrying the FULL
-    corrected state. The prompt must explicitly tell it to replace the
-    wrong item, not add the new one alongside it."""
+    """Sprint 2.2 #103 + #305 Part B — when a caller corrects something
+    already in the order (remove, substitute, quantity, size, order-type
+    swap, delivery address), the prompt must direct the model to the
+    right atomic tool for each correction shape.
+
+    Pre-Part-B this section told Haiku to emit one update_order with the
+    FULL corrected state and explicitly "replace the wrong item" so the
+    snapshot didn't drift into appending. Atomic tools make that
+    impossible by construction (remove_item / update_item operate on
+    specific item_ids), so the section now teaches per-correction tool
+    selection instead."""
     prompt = build_system_prompt(_demo())
     lower = prompt.lower()
     # Section header is present
     assert "caller corrections:" in lower
-    # Core "replace, don't add" rule
-    assert "emit one" in lower
-    assert "update_order with the full corrected state" in lower
-    assert "replace the wrong item" in lower
-    # Coverage of each correction shape (one anchor per pattern)
+    # Each correction shape now maps to a specific atomic tool.
     assert "removals" in lower
+    assert "call remove_item" in lower
     assert "substitutions" in lower
-    assert "quantity or size changes" in lower
+    assert "call remove_item for the old line, then" in lower
+    assert "add_item for the new one" in lower
+    assert "quantity changes" in lower
+    assert "size changes" in lower
+    assert "call update_item" in lower
+    # Size + price coupling is the trickiest discrimination case — the
+    # prompt must explicitly keep it on the same line rather than spawning
+    # a new add_item (which would duplicate the line at the new size).
+    assert "different size of the same item is still one line" in lower
+    # Order-type and delivery-address shapes both still covered.
     assert "order-type swap to delivery" in lower
     assert "delivery-address fix" in lower
+    assert "call set_delivery_address" in lower
     # Post-correction acknowledgement is short, not a full re-read
     assert "do not re-read" in lower
     assert "whole order" in lower
-    # Caps preserve emphasis for Haiku — guard against silent downcasing
-    # (a3e8d5e had to restore these after the initial commit downcased them).
-    assert "emit ONE" in prompt
-    assert "FULL corrected state" in prompt
+    # Caps preserve emphasis for Haiku — guard against silent downcasing.
     assert "do NOT re-read" in prompt
+    assert "ONE line" in prompt
 
 
 def test_prompt_renders_delivery_offered_branch():

@@ -47,70 +47,205 @@ class ToolSpec:
     parameters: dict[str, Any]
 
 
-UPDATE_ORDER_TOOL_SPEC: ToolSpec = ToolSpec(
-    name="update_order",
+# ---------------------------------------------------------------------------
+# Atomic tool specs (#305 Part B)
+# ---------------------------------------------------------------------------
+#
+# Six narrow operations replacing the single snapshot ``update_order``
+# tool. Discrimination between tools depends on the descriptions below —
+# the model picks a tool by matching caller intent against
+# ``name`` + ``description``, so each description has to be intent-keyed
+# and non-overlapping. The provider's atomic dispatch
+# (``orchestration.apply_tool_call``) keys off ``name``.
+
+
+_ADD_ITEM_SPEC: ToolSpec = ToolSpec(
+    name="add_item",
     description=(
-        "Record the caller's current order state. Call this whenever "
-        "the order changes — items added, removed, or modified; order "
-        "type decided; delivery address given; or the caller confirms "
-        "or cancels. Emit the FULL current order state each time, not "
-        "a diff."
+        "Add a new line item to the order. Call this when the caller "
+        "asks for something not already in the order, or asks for a "
+        "different size or variant of an existing item — different "
+        "sizes are SEPARATE line items, not in-place size changes. "
+        "For changing the size or quantity of an item already in the "
+        "order, use update_item instead."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "items": {
-                "type": "array",
-                "description": "Full list of line items currently in the order.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "category": {
-                            "type": "string",
-                            "description": (
-                                "Free-form category from the menu (e.g. "
-                                "appetizer, main, soup, drink, dessert). "
-                                "Used for grouping in the dashboard — not "
-                                "validated against a fixed enum, since "
-                                "tenants pick their own category names."
-                            ),
-                        },
-                        "size": {
-                            "type": ["string", "null"],
-                            "description": (
-                                "Required when the menu item is multi-size "
-                                "(small/medium/large, half/whole, etc.) — "
-                                "use whichever size keys the menu shows. "
-                                "Null for single-priced items."
-                            ),
-                        },
-                        "quantity": {"type": "integer", "minimum": 1},
-                        "unit_price": {
-                            "type": "number",
-                            "description": "Per-unit price from the menu.",
-                        },
-                        "modifications": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": ("Customizations like 'extra cheese' or 'no onions'."),
-                        },
-                    },
-                    "required": ["name", "category", "quantity", "unit_price"],
-                },
-            },
-            "order_type": {
-                "type": ["string", "null"],
-                "enum": ["pickup", "delivery", None],
-            },
-            "delivery_address": {"type": ["string", "null"]},
-            "status": {
+            "name": {"type": "string", "description": "Menu item name."},
+            "category": {
                 "type": "string",
-                "enum": ["in_progress", "confirmed", "cancelled"],
+                "description": (
+                    "Free-form category from the menu (appetizer, main, "
+                    "soup, drink, dessert, etc.). Use whatever category "
+                    "key the menu lists — not validated against a fixed enum."
+                ),
+            },
+            "size": {
+                "type": ["string", "null"],
+                "description": (
+                    "Required when the menu item is multi-size "
+                    "(small/medium/large, half/whole, etc.) — use the "
+                    "size key the menu shows. Null for single-priced items."
+                ),
+            },
+            "quantity": {"type": "integer", "minimum": 1},
+            "unit_price": {
+                "type": "number",
+                "description": "Per-unit price from the menu.",
+            },
+            "modifications": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Customizations like 'extra cheese' or 'no onions'.",
             },
         },
+        "required": ["name", "category", "quantity", "unit_price"],
     },
 )
+
+
+_REMOVE_ITEM_SPEC: ToolSpec = ToolSpec(
+    name="remove_item",
+    description=(
+        "Remove a line item from the order, identified by item_id. The "
+        "item_id was surfaced in the tool_result when the item was "
+        "added — read it from your prior tool_result blocks rather than "
+        "inventing one. Call this when the caller takes something back "
+        "('scratch the wings', 'no actually skip the coke')."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "item_id": {
+                "type": "string",
+                "description": (
+                    "The 'i_xxxxxx' ID surfaced in a prior tool_result "
+                    "for the item you want to remove."
+                ),
+            },
+        },
+        "required": ["item_id"],
+    },
+)
+
+
+_UPDATE_ITEM_SPEC: ToolSpec = ToolSpec(
+    name="update_item",
+    description=(
+        "Modify an existing line item identified by item_id. Use for: "
+        "quantity changes ('make that two'), size changes on the same "
+        "line ('change to large' — also update unit_price to match the "
+        "menu's price for the new size), and modification edits ('add "
+        "no onions', 'remove extra cheese'). The item_id was surfaced "
+        "in a prior tool_result — read it from there rather than "
+        "inventing one. If the caller is adding a DIFFERENT size or "
+        "variant alongside the existing item, use add_item instead."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "item_id": {
+                "type": "string",
+                "description": (
+                    "The 'i_xxxxxx' ID surfaced in a prior tool_result "
+                    "for the item you want to modify."
+                ),
+            },
+            "name": {"type": "string"},
+            "category": {"type": "string"},
+            "size": {"type": ["string", "null"]},
+            "quantity": {"type": "integer", "minimum": 1},
+            "unit_price": {"type": "number"},
+            "modifications": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Full new list of modifications — replaces the "
+                    "existing list, does not append."
+                ),
+            },
+        },
+        "required": ["item_id"],
+    },
+)
+
+
+_SET_ORDER_TYPE_SPEC: ToolSpec = ToolSpec(
+    name="set_order_type",
+    description=(
+        "Set the order as pickup or delivery. Call when the caller "
+        "decides. Switching to pickup automatically clears any "
+        "previously captured delivery address — no need to call "
+        "set_delivery_address(null) afterward."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "order_type": {
+                "type": "string",
+                "enum": ["pickup", "delivery"],
+            },
+        },
+        "required": ["order_type"],
+    },
+)
+
+
+_SET_DELIVERY_ADDRESS_SPEC: ToolSpec = ToolSpec(
+    name="set_delivery_address",
+    description=(
+        "Capture the caller's delivery address. Only meaningful when "
+        "order_type is delivery. Pass null or an empty string to clear "
+        "an existing address (e.g., the caller wants to change it)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "delivery_address": {
+                "type": ["string", "null"],
+                "description": (
+                    "Full street address as the caller stated it. "
+                    "Null or empty string clears the field."
+                ),
+            },
+        },
+        "required": ["delivery_address"],
+    },
+)
+
+
+_SET_STATUS_SPEC: ToolSpec = ToolSpec(
+    name="set_status",
+    description=(
+        "Mark the order as confirmed (caller explicitly confirmed "
+        "after the read-back) or cancelled (caller cancelled the "
+        "order). Do NOT call confirmed on a vague 'uh huh' mid-call — "
+        "only on an explicit yes after you've read the full order "
+        "back. Kitchen workflow states (preparing/ready/completed) "
+        "are not available here; the dashboard owns those."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["confirmed", "cancelled"],
+            },
+        },
+        "required": ["status"],
+    },
+)
+
+
+ATOMIC_TOOL_SPECS: list[ToolSpec] = [
+    _ADD_ITEM_SPEC,
+    _REMOVE_ITEM_SPEC,
+    _UPDATE_ITEM_SPEC,
+    _SET_ORDER_TYPE_SPEC,
+    _SET_DELIVERY_ADDRESS_SPEC,
+    _SET_STATUS_SPEC,
+]
 
 
 @dataclass
@@ -202,9 +337,9 @@ class LLMProvider(Protocol):
 
 
 __all__ = [
+    "ATOMIC_TOOL_SPECS",
     "LLMProvider",
     "LLMResponse",
     "StreamEvent",
     "ToolSpec",
-    "UPDATE_ORDER_TOOL_SPEC",
 ]
