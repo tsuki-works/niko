@@ -310,9 +310,7 @@ class AnthropicLLM:
         updated_order = order
         tool_results: list[dict[str, Any]] = []
         for tu in tool_uses:
-            updated_order, rejection_notes = apply_tool_call(
-                updated_order, tu["name"], tu["input"]
-            )
+            updated_order, rejection_notes = apply_tool_call(updated_order, tu["name"], tu["input"])
             summary = summarize_order_for_tool_result(updated_order)
             if rejection_notes:
                 summary = summary + " " + " ".join(rejection_notes)
@@ -459,9 +457,7 @@ class AnthropicLLM:
         updated_order = order
         tool_results: list[dict[str, Any]] = []
         for tu in tool_uses:
-            updated_order, rejection_notes = apply_tool_call(
-                updated_order, tu["name"], tu["input"]
-            )
+            updated_order, rejection_notes = apply_tool_call(updated_order, tu["name"], tu["input"])
             summary = summarize_order_for_tool_result(updated_order)
             if rejection_notes:
                 summary = summary + " " + " ".join(rejection_notes)

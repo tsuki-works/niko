@@ -321,9 +321,7 @@ def _restaurant_for_replay(scenario: dict[str, Any]) -> Restaurant:
     real menu JSON + dummy non-menu fields, since the integration test
     only exercises the prompt builder + LLM."""
     menu_path = (
-        Path(__file__).resolve().parent.parent
-        / "restaurants"
-        / f"{scenario['restaurant']}.json"
+        Path(__file__).resolve().parent.parent / "restaurants" / f"{scenario['restaurant']}.json"
     )
     menu_doc = json.loads(menu_path.read_text(encoding="utf-8"))
     menu_dict = menu_doc.get("menu", menu_doc)
@@ -416,12 +414,8 @@ def test_replay_atomic_tool_flow_against_saved_transcript():
     # The caller said "I'm all set" / "Sounds right" near the end —
     # Haiku should have called set_status(confirmed) at some point.
     assert any(
-        tc["name"] == "set_status" and tc["input"].get("status") == "confirmed"
-        for tc in tool_calls
-    ), (
-        f"Expected set_status(confirmed) somewhere in the call; got tool calls "
-        f"{tool_calls!r}"
-    )
+        tc["name"] == "set_status" and tc["input"].get("status") == "confirmed" for tc in tool_calls
+    ), f"Expected set_status(confirmed) somewhere in the call; got tool calls {tool_calls!r}"
     assert order.status.value == "confirmed", (
         f"Expected final order.status == 'confirmed'; got {order.status.value!r}"
     )

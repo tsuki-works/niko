@@ -82,8 +82,7 @@ def should_skip_followup(tool_uses: list[dict[str, Any]], main_emitted_text: boo
     if not main_emitted_text:
         return False
     return any(
-        tu.get("name") == "set_status"
-        and tu.get("input", {}).get("status") in TERMINAL_STATUSES
+        tu.get("name") == "set_status" and tu.get("input", {}).get("status") in TERMINAL_STATUSES
         for tu in tool_uses
     )
 
@@ -137,9 +136,7 @@ def _apply_remove_item(order: Order, payload: dict[str, Any]) -> tuple[Order, li
         return order, ["remove_item rejected: missing item_id."]
     remaining = [i for i in order.items if i.item_id != item_id]
     if len(remaining) == len(order.items):
-        return order, [
-            f"remove_item rejected: no item with item_id {item_id!r} in the order."
-        ]
+        return order, [f"remove_item rejected: no item with item_id {item_id!r} in the order."]
     return order.model_copy(update={"items": remaining}), []
 
 
@@ -162,9 +159,7 @@ def _apply_update_item(order: Order, payload: dict[str, Any]) -> tuple[Order, li
         else:
             new_items.append(item)
     if not found:
-        return order, [
-            f"update_item rejected: no item with item_id {item_id!r} in the order."
-        ]
+        return order, [f"update_item rejected: no item with item_id {item_id!r} in the order."]
     # Re-validate to catch constraint violations not caught by model_copy
     # (Pydantic's model_copy(update=...) is a shallow assignment that
     # bypasses field validators — round-trip through model_validate to
@@ -188,9 +183,7 @@ def _apply_set_order_type(order: Order, payload: dict[str, Any]) -> tuple[Order,
     return order.model_copy(update=updates), []
 
 
-def _apply_set_delivery_address(
-    order: Order, payload: dict[str, Any]
-) -> tuple[Order, list[str]]:
+def _apply_set_delivery_address(order: Order, payload: dict[str, Any]) -> tuple[Order, list[str]]:
     value = payload.get("delivery_address")
     if value is None or (isinstance(value, str) and not value.strip()):
         return order.model_copy(update={"delivery_address": None}), []

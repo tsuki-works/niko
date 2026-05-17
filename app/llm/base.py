@@ -161,8 +161,7 @@ _UPDATE_ITEM_SPEC: ToolSpec = ToolSpec(
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Full new list of modifications — replaces the "
-                    "existing list, does not append."
+                    "Full new list of modifications — replaces the existing list, does not append."
                 ),
             },
         },

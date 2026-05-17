@@ -170,9 +170,7 @@ def test_update_item_changes_quantity_only():
     a = LineItem(name="Pepperoni", category="pizza", quantity=1, unit_price=10.0)
     order = _order([a])
 
-    new_order, notes = apply_tool_call(
-        order, "update_item", {"item_id": a.item_id, "quantity": 3}
-    )
+    new_order, notes = apply_tool_call(order, "update_item", {"item_id": a.item_id, "quantity": 3})
 
     assert notes == []
     item = new_order.items[0]
@@ -220,9 +218,7 @@ def test_update_item_replaces_modifications():
 def test_update_item_unknown_id_returns_rejection_note():
     order = _order([LineItem(name="X", category="y", quantity=1, unit_price=1.0)])
 
-    new_order, notes = apply_tool_call(
-        order, "update_item", {"item_id": "i_nope", "quantity": 5}
-    )
+    new_order, notes = apply_tool_call(order, "update_item", {"item_id": "i_nope", "quantity": 5})
 
     assert new_order == order
     assert notes and "i_nope" in notes[0]
@@ -301,9 +297,7 @@ def test_set_delivery_address_invalid_returns_rejection_note():
 def test_set_delivery_address_none_clears():
     order = Order(call_sid="CAtest", delivery_address="14 Main St")
 
-    new_order, notes = apply_tool_call(
-        order, "set_delivery_address", {"delivery_address": None}
-    )
+    new_order, notes = apply_tool_call(order, "set_delivery_address", {"delivery_address": None})
 
     assert notes == []
     assert new_order.delivery_address is None
