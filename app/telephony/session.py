@@ -99,6 +99,18 @@ _GOODBYE_PATTERNS = (
     "enjoy your",
 )
 
+# Short filler words Deepgram marks is_final on that aren't complete
+# thoughts — sending them to the LLM produces non-sequitur replies.
+_FILLER_WORDS = frozenset({
+    "uh", "um", "hmm", "hm", "ah", "er",
+    "yeah", "yep", "ok", "okay",
+})
+
+
+def _is_noise_transcript(text: str) -> bool:
+    words = text.lower().split()
+    return len(words) <= 2 and all(w.strip(".,?!") in _FILLER_WORDS for w in words)
+
 
 def _looks_like_goodbye(reply: str) -> bool:
     """True if ``reply`` reads as a terminal wrap-up rather than another
@@ -734,6 +746,11 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
         # task to cancel, no event to emit).
         _cancel_silence_task(state)
         await send_clear(websocket, state.stream_sid)
+
+    if _is_noise_transcript(text):
+        logger.debug("filler transcript filtered call_sid=%s text=%r", state.call_sid, text)
+        _arm_silence_watchdog(state, websocket)
+        return
 
     state.in_flight_transcript = text
     state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))

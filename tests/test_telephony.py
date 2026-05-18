@@ -2175,6 +2175,105 @@ async def test_errored_turn_carries_transcript_forward(monkeypatch):
     ]
 
 
+# ---------------------------------------------------------------------------
+# _is_noise_transcript — filler filter (#121)
+# ---------------------------------------------------------------------------
+
+
+def test_is_noise_transcript_filters_pure_fillers():
+    from app.telephony.session import _is_noise_transcript
+
+    assert _is_noise_transcript("uh") is True
+    assert _is_noise_transcript("um") is True
+    assert _is_noise_transcript("hmm") is True
+    assert _is_noise_transcript("yeah okay") is True
+
+
+def test_is_noise_transcript_passes_short_meaningful_strings():
+    from app.telephony.session import _is_noise_transcript
+
+    assert _is_noise_transcript("large pizza") is False
+    assert _is_noise_transcript("cancel that") is False
+    assert _is_noise_transcript("yes please") is False
+    # "no" is not in the filler set — meaningful negation
+    assert _is_noise_transcript("no") is False
+
+
+def test_is_noise_transcript_passes_longer_strings_with_filler_words():
+    from app.telephony.session import _is_noise_transcript
+
+    # Three words — exceeds the ≤2 threshold even though it starts with a filler
+    assert _is_noise_transcript("yeah I want a burger") is False
+
+
+def test_is_noise_transcript_filters_empty_string():
+    from app.telephony.session import _is_noise_transcript
+
+    # 0 words ≤ 2, vacuously all() is True
+    assert _is_noise_transcript("") is True
+
+
+@pytest.mark.asyncio
+async def test_handle_final_transcript_skips_llm_for_filler(monkeypatch):
+    """Filler transcripts must not spawn an LLM task — the silence watchdog
+    is re-armed instead so the call keeps waiting for a real utterance."""
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
+
+    spawned: list[str] = []
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        spawned.append(transcript)
+
+    watchdog_armed: list[bool] = []
+
+    def fake_arm_watchdog(state, websocket):
+        watchdog_armed.append(True)
+
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", fake_arm_watchdog)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _handle_final_transcript("uh", state, ws)
+    await asyncio.sleep(0)
+
+    assert spawned == [], "LLM task must not be spawned for a filler transcript"
+    assert watchdog_armed, "silence watchdog must be re-armed after a filler is filtered"
+
+
+@pytest.mark.asyncio
+async def test_handle_final_transcript_does_not_skip_llm_for_real_speech(monkeypatch):
+    """A non-filler transcript must still reach the LLM unchanged."""
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
+
+    spawned: list[str] = []
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        spawned.append(transcript)
+        await asyncio.sleep(10.0)
+
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _handle_final_transcript("large pizza please", state, ws)
+    await asyncio.sleep(0)
+
+    if state.llm_task and not state.llm_task.done():
+        state.llm_task.cancel()
+        try:
+            await state.llm_task
+        except (asyncio.CancelledError, BaseException):
+            pass
+
+    assert spawned == ["large pizza please"]
+
+
 @pytest.mark.asyncio
 async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch):
     """#170 regression sentinel — locks in the observable behavior that a
