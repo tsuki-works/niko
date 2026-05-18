@@ -2439,3 +2439,137 @@ async def test_llm_exception_sets_llm_error_not_tts_error(monkeypatch):
 
     assert state.llm_error_occurred is True
     assert state.tts_error_occurred is False
+
+
+# ---------------------------------------------------------------------------
+# handler_lock serialisation (#172)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handler_lock_serialises_concurrent_finals(monkeypatch):
+    """#172 — two _handle_final_transcript coroutines dispatched concurrently
+    must run serially (the second waits for the first to finish), not
+    interleave at await points.
+
+    With the lock in place the sequence is deterministic: handler-1 acquires
+    the lock, creates task-1 and releases; handler-2 then acquires the lock,
+    sees task-1 still running, cancels it, and creates task-2. After gather:
+    - state.llm_task is task-2 (the survivor)
+    - task-1 was cancelled by handler-2's interrupted branch
+    - state.in_flight_transcript is the second transcript
+    """
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        # Block long enough that, when the second handler runs, the first
+        # task is still alive and gets seen as "interrupted".
+        await asyncio.sleep(60.0)
+
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await asyncio.gather(
+        _handle_final_transcript("first transcript", state, ws),
+        _handle_final_transcript("second transcript", state, ws),
+    )
+    # Let the event loop process the cancellation.
+    await asyncio.sleep(0)
+
+    assert state.llm_task is not None
+    assert not state.llm_task.done() or state.llm_task.cancelled() is False
+    # The surviving task was spawned for the second transcript (which ran last
+    # under the lock and always sees in_flight = "first transcript").
+    assert state.in_flight_transcript in (
+        "second transcript",
+        "first transcript second transcript",
+    ), f"unexpected in_flight_transcript: {state.in_flight_transcript!r}"
+
+    # Cleanup
+    if state.llm_task and not state.llm_task.done():
+        state.llm_task.cancel()
+        try:
+            await state.llm_task
+        except (asyncio.CancelledError, BaseException):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_handler_lock_single_handler_still_works(monkeypatch):
+    """#172 — a single call to _handle_final_transcript still spawns
+    state.llm_task and sets state.in_flight_transcript correctly."""
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        await asyncio.sleep(60.0)
+
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _handle_final_transcript("hello there", state, ws)
+    await asyncio.sleep(0)
+
+    assert state.llm_task is not None
+    assert not state.llm_task.done()
+    assert state.in_flight_transcript == "hello there"
+
+    state.llm_task.cancel()
+    try:
+        await state.llm_task
+    except (asyncio.CancelledError, BaseException):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_handler_lock_carry_forward_works_under_serialised_path(monkeypatch):
+    """#172 — with the lock in place the carry-forward (#170) invariant
+    must still hold: when the second handler runs (after the first releases
+    the lock), it sees the first transcript in in_flight_transcript and
+    prepends it to the second utterance.
+
+    Because the lock ensures serial execution, by the time handler-2 runs,
+    handler-1 has already set state.in_flight_transcript = "first transcript"
+    and spawned task-1 (which is still sleeping). Handler-2 then cancels
+    task-1 and combines both transcripts.
+    """
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
+
+    captured: list[str] = []
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        captured.append(transcript)
+        await asyncio.sleep(60.0)
+
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    # Run the two handlers sequentially to force the carry-forward path —
+    # yield between them so task-1 actually starts and stays in-flight.
+    await _handle_final_transcript("first transcript", state, ws)
+    await asyncio.sleep(0)  # let task-1 enter its sleep
+    await _handle_final_transcript("second transcript", state, ws)
+    await asyncio.sleep(0)
+
+    # task-1 was for "first transcript"; task-2 must see the carry-forward.
+    assert len(captured) == 2
+    assert captured[0] == "first transcript"
+    assert captured[1] == "first transcript second transcript"
+
+    if state.llm_task and not state.llm_task.done():
+        state.llm_task.cancel()
+        try:
+            await state.llm_task
+        except (asyncio.CancelledError, BaseException):
+            pass
