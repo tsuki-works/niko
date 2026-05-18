@@ -1894,6 +1894,83 @@ def test_generate_reply_runs_followup_on_mid_order_tool_use_with_text():
     assert "Anything else?" in result.reply_text
 
 
+# ---------------------------------------------------------------------------
+# #115 — conversation history trimming
+# ---------------------------------------------------------------------------
+
+
+def test_trim_history_noop_under_limit():
+    """History shorter than _MAX_HISTORY_MESSAGES is returned unchanged."""
+    from app.llm.anthropic import _MAX_HISTORY_MESSAGES, _trim_history
+
+    history = [{"role": "user", "content": f"turn {i}"} for i in range(_MAX_HISTORY_MESSAGES - 1)]
+    assert _trim_history(history) is history  # same object, untouched
+
+
+def test_trim_history_drops_oldest_turns_when_over_limit():
+    """When history exceeds _MAX_HISTORY_MESSAGES, oldest turns are dropped
+    and the result starts at the first safe user message."""
+    from app.llm.anthropic import _MAX_HISTORY_MESSAGES, _trim_history
+
+    # Build a history that is 10 turns over the limit, all plain user/assistant pairs
+    history = []
+    for i in range(_MAX_HISTORY_MESSAGES + 10):
+        history.append({"role": "user", "content": f"user turn {i}"})
+        history.append({"role": "assistant", "content": [{"type": "text", "text": f"reply {i}"}]})
+
+    trimmed = _trim_history(history)
+    assert len(trimmed) <= _MAX_HISTORY_MESSAGES + 1  # may be slightly over due to cut alignment
+    # Must start with a user message (safe cut point)
+    assert trimmed[0]["role"] == "user"
+    # The earliest turns should be gone
+    assert trimmed[0]["content"] != "user turn 0"
+
+
+def test_trim_history_never_cuts_at_pure_tool_result():
+    """The trimmer must not cut at a pure tool_result user message — that would
+    leave a dangling tool_use in the preceding assistant message with no matching
+    tool_result, causing Anthropic API 400s."""
+    from app.llm.anthropic import _MAX_HISTORY_MESSAGES, _trim_history
+
+    # Build history over the limit where the oldest user messages are all pure tool_results
+    # followed eventually by a plain text user message
+    history = []
+    # First few turns: user with plain text (these will be the oldest)
+    for i in range(5):
+        history.append({"role": "user", "content": f"early turn {i}"})
+        history.append({"role": "assistant", "content": [{"type": "text", "text": f"reply {i}"}]})
+
+    # Middle section: tool_use + tool_result pairs only (no plain text user turns here)
+    for i in range(20):
+        history.append(
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": f"tu_{i}", "name": "add_item", "input": {}}],
+            }
+        )
+        history.append(
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": f"tu_{i}", "content": "ok"}],
+            }
+        )
+
+    # Pad to go well over limit with normal turns
+    for i in range(_MAX_HISTORY_MESSAGES):
+        history.append({"role": "user", "content": f"later turn {i}"})
+        history.append({"role": "assistant", "content": [{"type": "text", "text": f"resp {i}"}]})
+
+    trimmed = _trim_history(history)
+
+    # The trimmed history must not start with a pure tool_result user message
+    assert trimmed[0]["role"] == "user"
+    content = trimmed[0]["content"]
+    if isinstance(content, list):
+        assert content[0].get("type") != "tool_result", (
+            "trim must not cut at a pure tool_result message"
+        )
+
+
 async def test_stream_reply_skips_followup_on_confirm_turn_when_main_already_spoke():
     """Streaming variant of the confirm-turn skip. No second stream is
     started; the final event lands directly after the main stream."""

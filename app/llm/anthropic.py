@@ -40,6 +40,8 @@ from app.llm.orchestration import (
 )
 from app.orders.models import Order
 
+_MAX_HISTORY_MESSAGES = 40
+
 # Anthropic accepts the JSON Schema directly under ``input_schema``.
 # Build the wire-shape list once at import so the cached ``tools=[...]``
 # stays a constant across calls (matters for prompt caching: tools sit
@@ -190,6 +192,43 @@ def _with_rolling_cache_breakpoint(
     return [*messages[:-1], {**last, "content": new_content}]
 
 
+def _trim_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop oldest turns when history exceeds _MAX_HISTORY_MESSAGES.
+
+    The cut point must always be a user message that starts with text
+    content (not a pure tool_result), because a tool_result requires
+    the preceding tool_use to stay in context. Scanning forward from
+    the oldest end, we find the first user message whose content is
+    either a plain string or starts with a text block, and drop
+    everything before it.
+
+    If no safe cut point exists (entire history is tool pairs), return
+    as-is — better to let the call exceed the limit than corrupt context.
+    """
+    if len(history) <= _MAX_HISTORY_MESSAGES:
+        return history
+
+    # Find the oldest safe cut index: scan forward until the tail fits within
+    # the limit, then pick the first user message with text (not pure tool_result)
+    # at or after that point so the cut lands on a safe boundary.
+    min_drop = len(history) - _MAX_HISTORY_MESSAGES
+    for i, msg in enumerate(history):
+        if i < min_drop:
+            continue
+        if msg["role"] != "user":
+            continue
+        content = msg["content"]
+        # Plain string transcript — always safe to cut here
+        if isinstance(content, str):
+            return history[i:]
+        # List content: safe only if the first block is NOT a tool_result
+        if isinstance(content, list) and content and content[0].get("type") != "tool_result":
+            return history[i:]
+
+    # No safe cut found — return unchanged
+    return history
+
+
 def _append_user_transcript(history: list[dict[str, Any]], transcript: str) -> list[dict[str, Any]]:
     """Append the caller's transcript to history with valid alternation.
 
@@ -290,6 +329,7 @@ class AnthropicLLM:
         api = self._sync_client or _client()
 
         new_history = _append_user_transcript(history, transcript)
+        new_history = _trim_history(new_history)
 
         response = api.messages.create(
             model=self._model,
@@ -383,6 +423,7 @@ class AnthropicLLM:
         api = self._async_client or _get_async_client()
 
         new_history = _append_user_transcript(history, transcript)
+        new_history = _trim_history(new_history)
 
         text_parts: list[str] = []
         tool_uses: list[dict[str, Any]] = []
