@@ -2209,3 +2209,80 @@ async def test_whitespace_only_in_flight_transcript_is_not_prepended(monkeypatch
             pass
 
     assert captured == ["and a coke"]
+
+
+# ---------------------------------------------------------------------------
+# #265 — TTS vs LLM error attribution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tts_exception_sets_tts_error_not_llm_error(monkeypatch):
+    """A speak() failure inside _run_llm_tts_turn must set
+    state.tts_error_occurred and leave state.llm_error_occurred False.
+    Previously the single outer except set llm_error_occurred regardless
+    of which vendor raised."""
+    from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
+
+    async def fake_stream_reply(*, transcript, history, order, **kw):
+        yield StreamEvent(text_delta="Hello.")
+        yield StreamEvent(final=LLMResponse(reply_text="Hello.", order=order, history=history))
+
+    async def exploding_speak(text, websocket, stream_sid, **kw):
+        raise ConnectionError("Deepgram TTS connect timeout")
+
+    monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(fake_stream_reply))
+    monkeypatch.setattr(session_mod, "speak", exploding_speak)
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+
+    with pytest.raises(ConnectionError):
+        await _run_llm_tts_turn("hi", state, AsyncMock())
+
+    assert state.tts_error_occurred is True
+    assert state.llm_error_occurred is False
+
+
+@pytest.mark.asyncio
+async def test_llm_exception_sets_llm_error_not_tts_error(monkeypatch):
+    """An Anthropic stream_reply failure must set state.llm_error_occurred
+    and leave state.tts_error_occurred False."""
+    from app.storage import call_sessions
+    from app.telephony import session as session_mod
+    from app.telephony.session import _CallState, _run_llm_tts_turn
+
+    async def exploding_stream_reply(*, transcript, history, order, **kw):
+        raise RuntimeError("Anthropic 529 overloaded")
+        yield  # make it a generator
+
+    async def fake_speak(text, websocket, stream_sid, **kw):
+        pass
+
+    monkeypatch.setattr(session_mod, "get_llm", _fake_llm_factory(exploding_stream_reply))
+    monkeypatch.setattr(session_mod, "speak", fake_speak)
+    monkeypatch.setattr(session_mod, "_bg_call_event", lambda *a, **kw: None)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+    monkeypatch.setattr(call_sessions, "record_event", lambda *a, **kw: None)
+
+    state = _CallState(
+        call_sid="CAtest",
+        stream_sid="MZtest",
+        order=Order(call_sid="CAtest"),
+        system_prompt="test prompt",
+    )
+
+    with pytest.raises(RuntimeError):
+        await _run_llm_tts_turn("hi", state, AsyncMock())
+
+    assert state.llm_error_occurred is True
+    assert state.tts_error_occurred is False

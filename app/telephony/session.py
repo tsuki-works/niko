@@ -159,6 +159,7 @@ class _CallState:
     consecutive_low_confidence_turns: int = 0
     last_caller_transcript: str = ""
     llm_error_occurred: bool = False
+    tts_error_occurred: bool = False
     # Carry-forward of the most recent transcript fed to an LLM turn
     # that has not yet been persisted to ``history``. When a new final
     # transcript arrives mid-turn, ``_handle_final_transcript`` cancels
@@ -498,6 +499,9 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
     # GCP log access.
     timing_snapshot: dict[str, Any] | None = None
     first_text_at: float | None = None
+    # Set to True inside any speak() call that raises so the outer
+    # except can attribute the failure to TTS rather than the LLM.
+    _tts_failed = False
 
     def _record_first_audio() -> None:
         latency = time.monotonic() - turn_start
@@ -566,13 +570,17 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                         on_first_byte = _record_first_tts_byte
                     else:
                         on_first_byte = None
-                    await speak(
-                        remainder,
-                        websocket,
-                        state.stream_sid,
-                        on_chunk=_make_recording_chunk_handler(state),
-                        on_first_byte=on_first_byte,
-                    )
+                    try:
+                        await speak(
+                            remainder,
+                            websocket,
+                            state.stream_sid,
+                            on_chunk=_make_recording_chunk_handler(state),
+                            on_first_byte=on_first_byte,
+                        )
+                    except Exception:
+                        _tts_failed = True
+                        raise
                 continue
 
             if event.text_delta is not None:
@@ -591,13 +599,17 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                             on_first_byte = _record_first_tts_byte
                         else:
                             on_first_byte = None
-                        await speak(
-                            chunk,
-                            websocket,
-                            state.stream_sid,
-                            on_chunk=_make_recording_chunk_handler(state),
-                            on_first_byte=on_first_byte,
-                        )
+                        try:
+                            await speak(
+                                chunk,
+                                websocket,
+                                state.stream_sid,
+                                on_chunk=_make_recording_chunk_handler(state),
+                                on_first_byte=on_first_byte,
+                            )
+                        except Exception:
+                            _tts_failed = True
+                            raise
 
             elif event.final is not None:
                 remainder = "".join(text_buffer).strip()
@@ -609,13 +621,17 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
                         on_first_byte = _record_first_tts_byte
                     else:
                         on_first_byte = None
-                    await speak(
-                        remainder,
-                        websocket,
-                        state.stream_sid,
-                        on_chunk=_make_recording_chunk_handler(state),
-                        on_first_byte=on_first_byte,
-                    )
+                    try:
+                        await speak(
+                            remainder,
+                            websocket,
+                            state.stream_sid,
+                            on_chunk=_make_recording_chunk_handler(state),
+                            on_first_byte=on_first_byte,
+                        )
+                    except Exception:
+                        _tts_failed = True
+                        raise
                 state.history = event.final.history
                 state.order = event.final.order
                 # Transcript is now durably in history — no need to carry
@@ -695,8 +711,14 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
         raise
     except Exception as exc:
         logger.exception("llm_turn errored call_sid=%s", state.call_sid)
-        # #7: signal the trigger detector at end-of-stream
-        state.llm_error_occurred = True
+        # #265: attribute the failure to the right vendor so the dashboard
+        # shows the correct transfer reason. _tts_failed is set by the
+        # inner try/except around every speak() call; anything else is
+        # an LLM (Anthropic) failure.
+        if _tts_failed:
+            state.tts_error_occurred = True
+        else:
+            state.llm_error_occurred = True
         _bg_call_event(
             state.call_sid,
             _state_rid(state),
