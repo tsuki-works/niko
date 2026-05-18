@@ -20,7 +20,7 @@ The backend is the source of truth. This dashboard is a reader of Firestore docs
 - **`lib/schemas/order.ts`** is the single source of truth on the dashboard side. Every Firestore read goes through the Zod converter exported from there — no ad-hoc parsing of `doc.data()` anywhere.
 - **Field names stay snake_case** on the dashboard (`call_sid`, `caller_phone`, `unit_price`, `line_total`, `order_type`, `delivery_address`, `created_at`, `confirmed_at`). That's what's in Firestore. Don't rename to camelCase on read.
 - **FastAPI owns order creation and status transitions during a call.** The dashboard writes for staff workflow transitions (Start preparing, Mark ready, Mark completed) and for cancellation.
-- **The voice pipeline (Twilio → Deepgram → Claude Haiku → ElevenLabs → Firestore) is not this codebase's concern.** New capabilities touching the pipeline go in FastAPI.
+- **The voice pipeline (Twilio → Deepgram → Claude Haiku → Deepgram Aura → Firestore) is not this codebase's concern.** New capabilities touching the pipeline go in FastAPI.
 
 ## Domain glossary
 
@@ -40,7 +40,7 @@ Always "order," never "ticket." Always "call," never "session."
 - **Telephony:** Twilio → FastAPI `/voice` on GCP Cloud Run
 - **STT:** Deepgram Nova-2 streaming
 - **LLM:** Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) via Anthropic API
-- **TTS:** ElevenLabs streaming
+- **TTS:** Deepgram Aura streaming
 - **Latency contract:** <1s end-to-end on the voice pipeline
 
 ### This codebase

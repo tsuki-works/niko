@@ -737,7 +737,15 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
 
     state.in_flight_transcript = text
     state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
-    state.llm_task.add_done_callback(lambda _t: _arm_silence_watchdog(state, websocket))
+
+    def _llm_task_done(task: asyncio.Task) -> None:
+        _arm_silence_watchdog(state, websocket)
+        # Swallow the exception so asyncio doesn't log it a second time
+        # (it was already logged inside _run_llm_tts_turn).
+        if not task.cancelled():
+            task.exception()  # consume without re-raising
+
+    state.llm_task.add_done_callback(_llm_task_done)
 
 
 def _resolve_restaurant_for_voice(
