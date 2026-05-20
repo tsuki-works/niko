@@ -101,10 +101,20 @@ _GOODBYE_PATTERNS = (
 
 # Short filler words Deepgram marks is_final on that aren't complete
 # thoughts — sending them to the LLM produces non-sequitur replies.
-_FILLER_WORDS = frozenset({
-    "uh", "um", "hmm", "hm", "ah", "er",
-    "yeah", "yep", "ok", "okay",
-})
+_FILLER_WORDS = frozenset(
+    {
+        "uh",
+        "um",
+        "hmm",
+        "hm",
+        "ah",
+        "er",
+        "yeah",
+        "yep",
+        "ok",
+        "okay",
+    }
+)
 
 
 def _is_noise_transcript(text: str) -> bool:
