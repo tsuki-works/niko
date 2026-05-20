@@ -69,3 +69,34 @@ def test_should_trigger_transfer_returns_none_below_threshold():
         llm_error_occurred=False,
     )
     assert reason is None
+
+
+def test_should_trigger_transfer_on_tts_error():
+    reason = should_trigger_transfer(
+        consecutive_low_confidence_turns=0,
+        last_transcript="any",
+        llm_error_occurred=False,
+        tts_error_occurred=True,
+    )
+    assert reason is TransferReason.TTS_ERROR
+
+
+def test_should_trigger_transfer_llm_error_wins_over_tts_error():
+    """When both LLM and TTS failures are flagged, LLM error takes priority."""
+    reason = should_trigger_transfer(
+        consecutive_low_confidence_turns=0,
+        last_transcript="any",
+        llm_error_occurred=True,
+        tts_error_occurred=True,
+    )
+    assert reason is TransferReason.LLM_ERROR
+
+
+def test_should_trigger_transfer_tts_error_default_false():
+    """Existing callers that omit tts_error_occurred still work — default is False."""
+    reason = should_trigger_transfer(
+        consecutive_low_confidence_turns=0,
+        last_transcript="any",
+        llm_error_occurred=False,
+    )
+    assert reason is None

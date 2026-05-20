@@ -629,6 +629,7 @@ async def media_stream(websocket: WebSocket) -> None:
                 consecutive_low_confidence_turns=state.consecutive_low_confidence_turns,
                 last_transcript=state.last_caller_transcript,
                 llm_error_occurred=state.llm_error_occurred,
+                tts_error_occurred=state.tts_error_occurred,
             )
             if transfer_reason is not None:
                 logger.info(

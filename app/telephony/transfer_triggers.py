@@ -35,6 +35,7 @@ _HUMAN_INTENT = re.compile(
 class TransferReason(str, Enum):
     MISHEARD_TURNS = "misheard_turns"
     LLM_ERROR = "llm_error"
+    TTS_ERROR = "tts_error"
     HUMAN_INTENT = "human_intent"
 
 
@@ -52,17 +53,20 @@ def should_trigger_transfer(
     consecutive_low_confidence_turns: int,
     last_transcript: str,
     llm_error_occurred: bool,
+    tts_error_occurred: bool = False,
 ) -> Optional[TransferReason]:
     """Return the first matching transfer reason, or None.
 
-    The order matters — LLM error and human intent dominate the
-    misheard threshold (a hard error or an explicit ask for a human is
-    more important than a noisy mic count).
+    The order matters — LLM error takes highest priority (Anthropic
+    failure is a harder signal than Deepgram TTS), then human intent,
+    then TTS error, then the misheard threshold.
     """
     if llm_error_occurred:
         return TransferReason.LLM_ERROR
     if detect_human_intent_in_text(last_transcript):
         return TransferReason.HUMAN_INTENT
+    if tts_error_occurred:
+        return TransferReason.TTS_ERROR
     if consecutive_low_confidence_turns >= MISHEARD_THRESHOLD:
         return TransferReason.MISHEARD_TURNS
     return None
