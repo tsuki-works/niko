@@ -101,6 +101,9 @@ _GOODBYE_PATTERNS = (
 
 # Short filler words Deepgram marks is_final on that aren't complete
 # thoughts — sending them to the LLM produces non-sequitur replies.
+# Confirmation tokens (yeah/yep/ok/okay) are intentionally NOT in this set —
+# they're real caller intent ("That'll be $14, sound good?" → "yeah") and
+# must reach the LLM.
 _FILLER_WORDS = frozenset(
     {
         "uh",
@@ -109,10 +112,6 @@ _FILLER_WORDS = frozenset(
         "hm",
         "ah",
         "er",
-        "yeah",
-        "yep",
-        "ok",
-        "okay",
     }
 )
 
@@ -730,6 +729,19 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
 
 
 async def _handle_final_transcript(text: str, state: _CallState, websocket: WebSocket) -> None:
+    # Filler-only transcripts ("uh", "hmm") are not real intent — drop
+    # them before any side-effecting work. In particular, do NOT barge-in
+    # on a turn in progress just because the caller said "uh" while
+    # thinking; that would cancel the bot's TTS and leave them in dead
+    # air. Still abort any pending auto-hangup (caller is on the line)
+    # and re-arm the silence watchdog so prolonged silence eventually
+    # prompts again.
+    if _is_noise_transcript(text):
+        logger.debug("filler transcript filtered call_sid=%s text=%r", state.call_sid, text)
+        _abort_pending_hangup(state)
+        _arm_silence_watchdog(state, websocket)
+        return
+
     interrupted = bool(state.llm_task and not state.llm_task.done())
     # Carry forward — if any prior turn (cancelled or errored) left a
     # transcript on state without persisting it to history, prepend it
@@ -756,11 +768,6 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
         # task to cancel, no event to emit).
         _cancel_silence_task(state)
         await send_clear(websocket, state.stream_sid)
-
-    if _is_noise_transcript(text):
-        logger.debug("filler transcript filtered call_sid=%s text=%r", state.call_sid, text)
-        _arm_silence_watchdog(state, websocket)
-        return
 
     state.in_flight_transcript = text
     state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))

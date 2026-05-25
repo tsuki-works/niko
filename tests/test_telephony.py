@@ -2186,7 +2186,19 @@ def test_is_noise_transcript_filters_pure_fillers():
     assert _is_noise_transcript("uh") is True
     assert _is_noise_transcript("um") is True
     assert _is_noise_transcript("hmm") is True
-    assert _is_noise_transcript("yeah okay") is True
+    assert _is_noise_transcript("uh um") is True
+
+
+def test_is_noise_transcript_passes_confirmation_tokens():
+    """yeah/yep/ok/okay are real caller intent — confirmation of an order
+    or a prompt — and must reach the LLM, not be silently dropped."""
+    from app.telephony.session import _is_noise_transcript
+
+    assert _is_noise_transcript("yeah") is False
+    assert _is_noise_transcript("yep") is False
+    assert _is_noise_transcript("ok") is False
+    assert _is_noise_transcript("okay") is False
+    assert _is_noise_transcript("yeah okay") is False
 
 
 def test_is_noise_transcript_passes_short_meaningful_strings():
@@ -2203,7 +2215,7 @@ def test_is_noise_transcript_passes_longer_strings_with_filler_words():
     from app.telephony.session import _is_noise_transcript
 
     # Three words — exceeds the ≤2 threshold even though it starts with a filler
-    assert _is_noise_transcript("yeah I want a burger") is False
+    assert _is_noise_transcript("uh I want a burger") is False
 
 
 def test_is_noise_transcript_filters_empty_string():
@@ -2241,6 +2253,48 @@ async def test_handle_final_transcript_skips_llm_for_filler(monkeypatch):
 
     assert spawned == [], "LLM task must not be spawned for a filler transcript"
     assert watchdog_armed, "silence watchdog must be re-armed after a filler is filtered"
+
+
+@pytest.mark.asyncio
+async def test_handle_final_transcript_filler_does_not_cancel_in_progress_turn(monkeypatch):
+    """A filler arriving while a turn is in progress must NOT trigger
+    barge-in. The check sits at the top of _handle_final_transcript so
+    the bot keeps talking and the caller's "uh" is treated as a no-op."""
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _handle_final_transcript
+
+    barge_in_called: list[bool] = []
+
+    async def fake_barge_in_now(state, websocket, trigger):
+        barge_in_called.append(True)
+
+    async def fake_run_llm_tts_turn(transcript, state, websocket):
+        await asyncio.sleep(60.0)
+
+    monkeypatch.setattr(session_mod, "_barge_in_now", fake_barge_in_now)
+    monkeypatch.setattr(session_mod, "_run_llm_tts_turn", fake_run_llm_tts_turn)
+    monkeypatch.setattr(session_mod, "_arm_silence_watchdog", lambda *a, **kw: None)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    # Simulate a turn already running.
+    state.llm_task = asyncio.create_task(fake_run_llm_tts_turn("prior turn", state, ws))
+    await asyncio.sleep(0)
+
+    await _handle_final_transcript("uh", state, ws)
+    await asyncio.sleep(0)
+
+    assert not barge_in_called, "filler 'uh' arriving mid-turn must not cancel the bot's TTS"
+    assert state.llm_task is not None and not state.llm_task.done(), (
+        "the in-progress LLM task must still be alive after a filtered filler"
+    )
+
+    state.llm_task.cancel()
+    try:
+        await state.llm_task
+    except (asyncio.CancelledError, BaseException):
+        pass
 
 
 @pytest.mark.asyncio
