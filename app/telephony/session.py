@@ -206,6 +206,10 @@ class _CallState:
     # NIKO_LOCAL_AUDIO_DUMP_DIR is configured; otherwise stays None and
     # the media-event branch and finally-block close are no-ops.
     caller_dump: "CallerAudioDump | None" = None
+    # Serialises concurrent _handle_final_transcript invocations (#172).
+    # Two finals arriving ~10ms apart must not interleave at await points;
+    # the second waits for the first to fully complete before running.
+    handler_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 def _make_recording_chunk_handler(state: "_CallState") -> Callable[[bytes], None] | None:
@@ -751,57 +755,58 @@ async def _run_llm_tts_turn(transcript: str, state: _CallState, websocket: WebSo
 
 
 async def _handle_final_transcript(text: str, state: _CallState, websocket: WebSocket) -> None:
-    # Filler-only transcripts ("uh", "hmm") are not real intent — drop
-    # them before any side-effecting work. In particular, do NOT barge-in
-    # on a turn in progress just because the caller said "uh" while
-    # thinking; that would cancel the bot's TTS and leave them in dead
-    # air. Still abort any pending auto-hangup (caller is on the line)
-    # and re-arm the silence watchdog so prolonged silence eventually
-    # prompts again.
-    if _is_noise_transcript(text):
-        logger.debug("filler transcript filtered call_sid=%s text=%r", state.call_sid, text)
+    async with state.handler_lock:
+        # Filler-only transcripts ("uh", "hmm") are not real intent — drop
+        # them before any side-effecting work. In particular, do NOT barge-in
+        # on a turn in progress just because the caller said "uh" while
+        # thinking; that would cancel the bot's TTS and leave them in dead
+        # air. Still abort any pending auto-hangup (caller is on the line)
+        # and re-arm the silence watchdog so prolonged silence eventually
+        # prompts again.
+        if _is_noise_transcript(text):
+            logger.debug("filler transcript filtered call_sid=%s text=%r", state.call_sid, text)
+            _abort_pending_hangup(state)
+            _arm_silence_watchdog(state, websocket)
+            return
+
+        interrupted = bool(state.llm_task and not state.llm_task.done())
+        # Carry forward — if any prior turn (cancelled or errored) left a
+        # transcript on state without persisting it to history, prepend it
+        # so Haiku sees the full caller intent in this turn (#170). The
+        # field is cleared by ``_run_llm_tts_turn`` only on ``event.final``,
+        # so a non-empty value here always means "user words from a prior
+        # turn that never made it into history."
+        if state.in_flight_transcript.strip():
+            text = f"{state.in_flight_transcript} {text}".strip()
+        silence_was_active = bool(state.silence_task and not state.silence_task.done())
+        # Caller spoke — abort any pending auto-hangup (#78). Even if they
+        # spoke during the grace window after a confirmation, we want to
+        # keep the call alive and process this transcript.
         _abort_pending_hangup(state)
-        _arm_silence_watchdog(state, websocket)
-        return
 
-    interrupted = bool(state.llm_task and not state.llm_task.done())
-    # Carry forward — if any prior turn (cancelled or errored) left a
-    # transcript on state without persisting it to history, prepend it
-    # so Haiku sees the full caller intent in this turn (#170). The
-    # field is cleared by ``_run_llm_tts_turn`` only on ``event.final``,
-    # so a non-empty value here always means "user words from a prior
-    # turn that never made it into history."
-    if state.in_flight_transcript.strip():
-        text = f"{state.in_flight_transcript} {text}".strip()
-    silence_was_active = bool(state.silence_task and not state.silence_task.done())
-    # Caller spoke — abort any pending auto-hangup (#78). Even if they
-    # spoke during the grace window after a confirmation, we want to
-    # keep the call alive and process this transcript.
-    _abort_pending_hangup(state)
+        if interrupted:
+            # True barge-in: a turn is running and we're interrupting it.
+            # The barge_in Firestore event fires from _run_llm_tts_turn's
+            # CancelledError handler.
+            await _barge_in_now(state, websocket, trigger="final_transcript")
+        elif silence_was_active:
+            # Caller resumed after a silence prompt — flush any leftover
+            # prompt audio still buffered, but this isn't a barge-in (no
+            # task to cancel, no event to emit).
+            _cancel_silence_task(state)
+            await send_clear(websocket, state.stream_sid)
 
-    if interrupted:
-        # True barge-in: a turn is running and we're interrupting it.
-        # The barge_in Firestore event fires from _run_llm_tts_turn's
-        # CancelledError handler.
-        await _barge_in_now(state, websocket, trigger="final_transcript")
-    elif silence_was_active:
-        # Caller resumed after a silence prompt — flush any leftover
-        # prompt audio still buffered, but this isn't a barge-in (no
-        # task to cancel, no event to emit).
-        _cancel_silence_task(state)
-        await send_clear(websocket, state.stream_sid)
+        state.in_flight_transcript = text
+        state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
 
-    state.in_flight_transcript = text
-    state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
+        def _llm_task_done(task: asyncio.Task) -> None:
+            _arm_silence_watchdog(state, websocket)
+            # Swallow the exception so asyncio doesn't log it a second time
+            # (it was already logged inside _run_llm_tts_turn).
+            if not task.cancelled():
+                task.exception()  # consume without re-raising
 
-    def _llm_task_done(task: asyncio.Task) -> None:
-        _arm_silence_watchdog(state, websocket)
-        # Swallow the exception so asyncio doesn't log it a second time
-        # (it was already logged inside _run_llm_tts_turn).
-        if not task.cancelled():
-            task.exception()  # consume without re-raising
-
-    state.llm_task.add_done_callback(_llm_task_done)
+        state.llm_task.add_done_callback(_llm_task_done)
 
 
 def _resolve_restaurant_for_voice(
