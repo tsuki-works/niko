@@ -458,6 +458,18 @@ async def _consume_transcripts(
 
             if isinstance(event, TranscriptEvent):
                 if not event.is_final:
+                    # #177 — a non-empty interim proves the caller has begun
+                    # speaking, so disarm the silence watchdog now. Interim
+                    # Updates arrive on the wire before the final transcript /
+                    # StartOfTurn, so a caller still mid-utterance at the 10s
+                    # mark would otherwise be reprompted over their own words.
+                    # SpeechStartedEvent only cancels silence indirectly via
+                    # _barge_in_now, which no-ops once the agent's turn is done
+                    # (the exact moment the watchdog is armed). The final path
+                    # still cancels in _handle_final_transcript; this is the
+                    # earlier guard.
+                    if event.text and event.text.strip():
+                        _cancel_silence_task(state)
                     continue  # interim: captured in plugin logs only
 
                 state.last_caller_transcript = event.text
