@@ -58,6 +58,15 @@ HANGUP_GRACE_SECONDS = 5.0
 # instead of hanging open. Picked > typical mark round-trip (1-3s).
 MARK_ECHO_TIMEOUT_SECONDS = 8.0
 
+# Named mark sent after every non-wrap-up TTS turn (#178). Twilio echoes
+# it back once its audio buffer has drained past it — i.e. once the
+# caller has actually heard the agent's reply. We arm the silence
+# watchdog on that echo, not when the last byte was handed to Twilio, so
+# its countdown starts from audio-end instead of byte-send. Without this,
+# a long (~10s) reply whose bytes flush in <1s would let the watchdog
+# count down and fire "Are you still there?" over the caller's response.
+TURN_END_MARK = "turn_end"
+
 # Chunking thresholds for TTS handoff (#151). Sentence terminators
 # always flush; soft breaks (commas, semicolons, colons, em dashes)
 # only flush once the buffered chunk is ≥ _MIN_CHUNK_CHARS so that
@@ -167,6 +176,12 @@ class _CallState:
     hangup_task: asyncio.Task | None = None  # pending auto-hangup (#78)
     mark_timeout_task: asyncio.Task | None = None  # mark-echo fallback (#114)
     pending_hangup: bool = False  # set when goodbye mark sent (#78)
+    # Silence-watchdog arming deferred until the turn-end mark echoes back
+    # (#178). ``silence_arm_pending`` is True between sending the mark and
+    # receiving its echo; ``silence_arm_task`` is the fallback that arms
+    # anyway if the echo never arrives.
+    silence_arm_pending: bool = False
+    silence_arm_task: asyncio.Task | None = None
     recording_session: "RecordingUploadSession | None" = None
     should_hangup: asyncio.Event = field(default_factory=asyncio.Event)
     # WS reference so _hang_up_after_grace can close the connection
@@ -268,6 +283,93 @@ def _arm_silence_watchdog(state: _CallState, websocket: WebSocket) -> None:
     state.silence_task = asyncio.create_task(_silence_watchdog(state, websocket))
 
 
+def _cancel_pending_silence_arm(state: _CallState) -> None:
+    """Drop any deferred "arm the watchdog once the agent's audio plays out"
+    state (#178). Called whenever the caller speaks or barges in before the
+    turn-end mark echoes, so a stale echo or the fallback timer can't arm a
+    watchdog in the middle of the next turn."""
+    state.silence_arm_pending = False
+    if state.silence_arm_task and not state.silence_arm_task.done():
+        state.silence_arm_task.cancel()
+    state.silence_arm_task = None
+
+
+async def _arm_after_mark_timeout(state: _CallState, websocket: WebSocket) -> None:
+    """Fallback for the deferred silence-watchdog arm (#178). If Twilio never
+    echoes the turn-end mark (WS dropped, mark lost), arm the watchdog anyway
+    after ``MARK_ECHO_TIMEOUT_SECONDS`` so prolonged silence still eventually
+    reprompts. Cancelled by ``_cancel_pending_silence_arm`` once the echo
+    arrives or the caller speaks."""
+    try:
+        await asyncio.sleep(MARK_ECHO_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        return
+    if not state.silence_arm_pending:
+        return  # echo already arrived, or caller spoke — nothing to do
+    logger.info(
+        "silence-arm fallback fired (no turn-end mark echo) call_sid=%s",
+        state.call_sid,
+    )
+    state.silence_arm_pending = False
+    state.silence_arm_task = None
+    _arm_silence_watchdog(state, websocket)
+
+
+async def _schedule_silence_arm(state: _CallState, websocket: WebSocket) -> None:
+    """Arm the silence watchdog only once the agent's audio has actually
+    played out, not when the last byte was handed to Twilio (#178).
+
+    Sends a turn-end mark; Twilio echoes it back over the WebSocket once its
+    buffer drains past it (the caller has heard everything). The echo handler
+    (``_handle_mark_echo``) then arms the watchdog, so its 10s countdown
+    starts from audio-end rather than byte-send. A fallback timer arms anyway
+    if the echo never arrives.
+    """
+    # Wrap-up turns hand the call to the auto-hangup machinery (#78); no
+    # silence watchdog wanted there.
+    if state.pending_hangup:
+        return
+    # Barge-in cancelled the turn — the caller is already speaking.
+    if state.llm_task and state.llm_task.cancelled():
+        return
+    _cancel_pending_silence_arm(state)
+    sent = await send_mark(websocket, state.stream_sid, name=TURN_END_MARK)
+    if not sent:
+        # No stream / WS gone — we can't wait for an echo, so arm immediately.
+        # Degrades to the old byte-send timing rather than never arming.
+        _arm_silence_watchdog(state, websocket)
+        return
+    state.silence_arm_pending = True
+    state.silence_arm_task = asyncio.create_task(_arm_after_mark_timeout(state, websocket))
+
+
+def _handle_mark_echo(state: _CallState, websocket: WebSocket, mark_name: str) -> None:
+    """Dispatch a mark echoed back by Twilio over the media stream.
+
+    Twilio echoes our outgoing marks once the audio queued before them has
+    finished playing. Two marks are in play: ``END_OF_CALL_MARK`` drives
+    auto-hangup after order confirmation (#78), and ``TURN_END_MARK`` arms
+    the silence watchdog from audio-end (#178). Extracted from the WS loop
+    so both echoes are handled in one place and unit-testable without
+    driving the socket.
+    """
+    if mark_name == END_OF_CALL_MARK and state.pending_hangup:
+        logger.info("auto-hangup: end_of_call mark received call_sid=%s", state.call_sid)
+        if state.mark_timeout_task and not state.mark_timeout_task.done():
+            state.mark_timeout_task.cancel()
+        state.mark_timeout_task = None
+        if state.hangup_task and not state.hangup_task.done():
+            state.hangup_task.cancel()
+        state.hangup_task = asyncio.create_task(_hang_up_after_grace(state))
+    elif mark_name == TURN_END_MARK and state.silence_arm_pending:
+        logger.info(
+            "silence watchdog armed on turn-end mark echo call_sid=%s",
+            state.call_sid,
+        )
+        _cancel_pending_silence_arm(state)
+        _arm_silence_watchdog(state, websocket)
+
+
 async def _play_greeting(state: _CallState, websocket: WebSocket) -> None:
     """Speak the call's opening greeting via Aura — no LLM round-trip (#192).
 
@@ -316,7 +418,9 @@ async def _play_greeting(state: _CallState, websocket: WebSocket) -> None:
         {"role": "user", "content": GREETING_TRANSCRIPT},
         {"role": "assistant", "content": [{"type": "text", "text": text}]},
     ]
-    _arm_silence_watchdog(state, websocket)
+    # Defer arming until Twilio reports the greeting audio has played out,
+    # so the watchdog's countdown starts from audio-end, not byte-send (#178).
+    await _schedule_silence_arm(state, websocket)
 
 
 async def _hang_up_after_grace(state: _CallState) -> None:
@@ -419,6 +523,9 @@ async def _barge_in_now(
         state.barge_in_trigger = trigger
         state.llm_task.cancel()
     _cancel_silence_task(state)
+    # Caller is speaking — drop any deferred arm so a late turn-end mark
+    # echo can't re-arm the watchdog mid-utterance (#178).
+    _cancel_pending_silence_arm(state)
     await send_clear(websocket, state.stream_sid)
 
 
@@ -778,6 +885,9 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
         if _is_noise_transcript(text):
             logger.debug("filler transcript filtered call_sid=%s text=%r", state.call_sid, text)
             _abort_pending_hangup(state)
+            # No new agent audio is pending, so arm immediately rather than
+            # waiting on a turn-end mark; clear any deferred arm first (#178).
+            _cancel_pending_silence_arm(state)
             _arm_silence_watchdog(state, websocket)
             return
 
@@ -795,6 +905,10 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
         # spoke during the grace window after a confirmation, we want to
         # keep the call alive and process this transcript.
         _abort_pending_hangup(state)
+        # Caller spoke before the previous turn's audio finished playing out —
+        # drop any deferred silence arm so its mark echo / fallback can't arm
+        # a watchdog during the turn we're about to start (#178).
+        _cancel_pending_silence_arm(state)
 
         if interrupted:
             # True barge-in: a turn is running and we're interrupting it.
@@ -812,11 +926,16 @@ async def _handle_final_transcript(text: str, state: _CallState, websocket: WebS
         state.llm_task = asyncio.create_task(_run_llm_tts_turn(text, state, websocket))
 
         def _llm_task_done(task: asyncio.Task) -> None:
-            _arm_silence_watchdog(state, websocket)
             # Swallow the exception so asyncio doesn't log it a second time
             # (it was already logged inside _run_llm_tts_turn).
-            if not task.cancelled():
-                task.exception()  # consume without re-raising
+            if task.cancelled():
+                # Barge-in / teardown — caller is already speaking, so don't
+                # arm. The next turn (or cleanup) handles the watchdog.
+                return
+            task.exception()  # consume without re-raising
+            # Defer arming until the agent's audio has played out (#178):
+            # schedule the turn-end mark now that the last byte is sent.
+            asyncio.create_task(_schedule_silence_arm(state, websocket))
 
         state.llm_task.add_done_callback(_llm_task_done)
 

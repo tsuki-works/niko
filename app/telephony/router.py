@@ -32,13 +32,13 @@ from app.storage import call_sessions, recordings
 from app.storage import restaurants as restaurants_storage
 from app.stt import get_stt
 from app.telephony.session import (
-    END_OF_CALL_MARK,
     _abort_pending_hangup,
     _bg_call_event,
     _CallState,
+    _cancel_pending_silence_arm,
     _cancel_silence_task,
     _consume_transcripts,
-    _hang_up_after_grace,
+    _handle_mark_echo,
     _make_recording_chunk_handler,
     _play_greeting,
     _resolve_restaurant_for_voice,
@@ -520,20 +520,12 @@ async def media_stream(websocket: WebSocket) -> None:
 
             elif event == "mark":
                 # Twilio echoes our outgoing marks once the audio queued
-                # before them has finished playing. We use it to drive
-                # auto-hangup after order confirmation (#78).
+                # before them has finished playing. Drives auto-hangup after
+                # order confirmation (#78) and arms the silence watchdog from
+                # audio-end (#178). Dispatch handled in session._handle_mark_echo.
                 mark_name = msg.get("mark", {}).get("name")
-                if mark_name == END_OF_CALL_MARK and state.pending_hangup:
-                    logger.info(
-                        "auto-hangup: end_of_call mark received call_sid=%s",
-                        state.call_sid,
-                    )
-                    if state.mark_timeout_task and not state.mark_timeout_task.done():
-                        state.mark_timeout_task.cancel()
-                    state.mark_timeout_task = None
-                    if state.hangup_task and not state.hangup_task.done():
-                        state.hangup_task.cancel()
-                    state.hangup_task = asyncio.create_task(_hang_up_after_grace(state))
+                if mark_name:
+                    _handle_mark_echo(state, websocket, mark_name)
 
             elif event == "stop":
                 logger.info("media-stream stop call_sid=%s", state.call_sid)
@@ -562,6 +554,9 @@ async def media_stream(websocket: WebSocket) -> None:
         )
     finally:
         _cancel_silence_task(state)
+        # Drop any deferred silence-watchdog arm (#178) so its fallback timer
+        # can't fire after teardown.
+        _cancel_pending_silence_arm(state)
         # Auto-hangup: stop any pending grace-window timer; the call is
         # already ending so we don't need to fire the REST close (#78).
         _abort_pending_hangup(state)

@@ -2611,3 +2611,134 @@ async def test_consume_transcripts_interim_cancels_silence_watchdog(monkeypatch)
     await fake.close()
     await _consume_transcripts(fake, state, ws)
     assert state.silence_task is None
+
+
+# ---------------------------------------------------------------------------
+# Silence watchdog arms on turn-end mark echo, not byte-send (#178)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_schedule_silence_arm_defers_until_mark_echo(monkeypatch):
+    """After a TTS turn the watchdog must NOT arm immediately — it sends a
+    turn-end mark and waits. Arming only happens when Twilio echoes the mark
+    back (audio has played out), so the 10s countdown starts from audio-end,
+    not byte-send (#178)."""
+    from app.telephony.session import (
+        TURN_END_MARK,
+        _CallState,
+        _handle_mark_echo,
+        _schedule_silence_arm,
+    )
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _schedule_silence_arm(state, ws)
+
+    # The acceptance criterion: NOT armed before the echo arrives.
+    assert state.silence_task is None
+    assert state.silence_arm_pending is True
+    assert state.silence_arm_task is not None and not state.silence_arm_task.done()
+    # A turn-end mark was sent to Twilio.
+    sent = [c.args[0] for c in ws.send_json.call_args_list]
+    assert any(
+        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK
+        for m in sent
+    ), "a turn-end mark must be sent so Twilio can echo it back"
+
+    # Twilio echoes the mark once the audio drained → now the watchdog arms.
+    _handle_mark_echo(state, ws, TURN_END_MARK)
+    assert state.silence_task is not None and not state.silence_task.done()
+    assert state.silence_arm_pending is False
+    assert state.silence_arm_task is None
+
+    if state.silence_task and not state.silence_task.done():
+        state.silence_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_schedule_silence_arm_fallback_arms_without_echo(monkeypatch):
+    """If Twilio never echoes the turn-end mark, the fallback timer must arm
+    the watchdog anyway so prolonged silence still eventually reprompts."""
+    import app.telephony.session as session_mod
+    from app.telephony.session import _CallState, _schedule_silence_arm
+
+    # Make the fallback fire effectively immediately.
+    monkeypatch.setattr(session_mod, "MARK_ECHO_TIMEOUT_SECONDS", 0.0)
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _schedule_silence_arm(state, ws)
+    assert state.silence_task is None  # still deferred at this instant
+    assert state.silence_arm_task is not None
+
+    await state.silence_arm_task  # let the fallback run
+
+    assert state.silence_task is not None and not state.silence_task.done()
+    assert state.silence_arm_pending is False
+    if state.silence_task and not state.silence_task.done():
+        state.silence_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_schedule_silence_arm_arms_immediately_when_mark_send_fails():
+    """With no stream_sid (mark can't be sent), arming must fall back to the
+    old byte-send timing rather than never arming."""
+    from app.telephony.session import _CallState, _schedule_silence_arm
+
+    state = _CallState(call_sid="CAtest", stream_sid=None)
+    ws = AsyncMock()
+
+    await _schedule_silence_arm(state, ws)
+
+    assert state.silence_task is not None and not state.silence_task.done()
+    assert state.silence_arm_pending is False
+    if state.silence_task and not state.silence_task.done():
+        state.silence_task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_schedule_silence_arm_skips_on_pending_hangup():
+    """A wrap-up turn hands the call to the auto-hangup machinery — no silence
+    watchdog and no turn-end mark should be set up."""
+    from app.telephony.session import _CallState, _schedule_silence_arm
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest", pending_hangup=True)
+    ws = AsyncMock()
+
+    await _schedule_silence_arm(state, ws)
+
+    assert state.silence_task is None
+    assert state.silence_arm_pending is False
+    assert state.silence_arm_task is None
+    ws.send_json.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_late_mark_echo_after_caller_speaks_does_not_arm():
+    """If the caller speaks before the echo arrives, the deferred arm is
+    cancelled — a late turn-end mark echo must NOT arm a watchdog mid-turn."""
+    from app.telephony.session import (
+        TURN_END_MARK,
+        _cancel_pending_silence_arm,
+        _CallState,
+        _handle_mark_echo,
+        _schedule_silence_arm,
+    )
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    await _schedule_silence_arm(state, ws)
+    assert state.silence_arm_pending is True
+
+    # Caller spoke → deferred arm dropped (as _handle_final_transcript /
+    # _barge_in_now do).
+    _cancel_pending_silence_arm(state)
+    assert state.silence_arm_pending is False
+
+    # A late echo for the now-stale mark must be a no-op.
+    _handle_mark_echo(state, ws, TURN_END_MARK)
+    assert state.silence_task is None
