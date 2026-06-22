@@ -2573,3 +2573,41 @@ async def test_handler_lock_carry_forward_works_under_serialised_path(monkeypatc
             await state.llm_task
         except (asyncio.CancelledError, BaseException):
             pass
+
+
+@pytest.mark.asyncio
+async def test_consume_transcripts_interim_cancels_silence_watchdog(monkeypatch):
+    """A non-empty interim transcript proves the caller has begun speaking,
+    so the silence watchdog must be disarmed — otherwise a caller still
+    mid-utterance when the 10s timer expires gets reprompted over their own
+    words (#177). Interims are otherwise dropped by the consumer, and
+    SpeechStartedEvent only cancels silence via _barge_in_now, which no-ops
+    once the agent's turn is done (exactly when the watchdog is armed)."""
+    from app.stt import TranscriptEvent
+    from app.telephony.session import (
+        _arm_silence_watchdog,
+        _cancel_silence_task,
+        _CallState,
+        _consume_transcripts,
+    )
+    from tests.fakes.stt import FakeSTT
+
+    state = _CallState(call_sid="CAtest", stream_sid="MZtest")
+    ws = AsyncMock()
+
+    # An empty/blank interim is noise and must NOT disarm the watchdog.
+    _arm_silence_watchdog(state, ws)
+    assert state.silence_task is not None and not state.silence_task.done()
+    blank = FakeSTT(events=[TranscriptEvent("   ", False, 0.9)])
+    await blank.close()  # terminate the consumer loop after the queued event
+    await _consume_transcripts(blank, state, ws)
+    assert state.silence_task is not None and not state.silence_task.done()
+    _cancel_silence_task(state)  # cleanup the still-armed watchdog
+
+    # A real interim — caller is mid-utterance — must disarm it.
+    _arm_silence_watchdog(state, ws)
+    assert state.silence_task is not None and not state.silence_task.done()
+    fake = FakeSTT(events=[TranscriptEvent("i'd like a large", False, 0.9)])
+    await fake.close()
+    await _consume_transcripts(fake, state, ws)
+    assert state.silence_task is None
