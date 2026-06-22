@@ -3,7 +3,8 @@
 ``_play_greeting`` replaces the cold T1 LLM call. It picks one of the
 restaurant's hand-written greetings (or a hardcoded fallback template),
 streams it via Aura, seeds conversation history so the caller's first
-real turn (T2) has context, and arms the silence watchdog.
+real turn (T2) has context, and arms the silence watchdog once Twilio
+confirms the greeting audio has played out (#178).
 
 These tests stub ``speak`` so the suite stays offline; the audio path
 itself is exercised by ``tests/test_deepgram_tts.py``.
@@ -43,15 +44,17 @@ async def state() -> _CallState:
     s.call_sid = "CAtest"
     s.stream_sid = "MZtest"
     yield s
-    # _play_greeting arms the silence watchdog. Cancel it inside the
-    # event loop so it doesn't dangle into the "Task was destroyed"
-    # warning territory.
-    if s.silence_task is not None and not s.silence_task.done():
-        s.silence_task.cancel()
-        try:
-            await s.silence_task
-        except asyncio.CancelledError:
-            pass
+    # _play_greeting defers arming the silence watchdog behind a turn-end
+    # mark echo (#178); cancel both the deferred-arm fallback and any armed
+    # watchdog inside the event loop so neither dangles into "Task was
+    # destroyed" warning territory.
+    for task in (s.silence_arm_task, s.silence_task):
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 @pytest.mark.asyncio
@@ -99,11 +102,29 @@ async def test_play_greeting_swallows_speak_failure(state, caplog):
 
 
 @pytest.mark.asyncio
-async def test_play_greeting_arms_silence_watchdog(state, fake_speak):
-    """If the caller stays silent after the greeting, we still need the
-    'are you still there?' prompt to fire."""
+async def test_play_greeting_defers_silence_watchdog_to_mark_echo(state, fake_speak):
+    """If the caller stays silent after the greeting, the 'are you still
+    there?' prompt must still fire — but the watchdog is armed only once
+    Twilio echoes the turn-end mark (greeting audio played out), not at
+    byte-send (#178). So right after _play_greeting it is deferred, and the
+    mark echo arms it."""
+    from app.telephony.session import TURN_END_MARK, _handle_mark_echo
+
     state.restaurant = _restaurant_with(["Hi there."])
-    await _play_greeting(state, websocket=AsyncMock())
+    ws = AsyncMock()
+    await _play_greeting(state, websocket=ws)
+
+    # Deferred: not armed yet, but a turn-end mark was sent and we're waiting.
+    assert state.silence_task is None
+    assert state.silence_arm_pending is True
+    sent = [c.args[0] for c in ws.send_json.call_args_list]
+    assert any(
+        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK
+        for m in sent
+    )
+
+    # Twilio echoes the greeting's turn-end mark → watchdog arms.
+    _handle_mark_echo(state, ws, TURN_END_MARK)
     assert state.silence_task is not None
 
 
