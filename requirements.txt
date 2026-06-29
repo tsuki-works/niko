@@ -9,6 +9,6 @@ anthropic>=0.98.1,<1.0
 google-cloud-firestore>=2.0,<3.0
 google-cloud-logging>=3.0,<4.0
 firebase-admin>=7.4.0,<8.0
-deepgram-sdk>=7.1,<8.0
+deepgram-sdk>=7.4.0,<8.0
 httpx>=0.27,<1.0
 tzdata>=2026.2
