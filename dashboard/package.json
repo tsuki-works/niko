@@ -16,7 +16,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "firebase": "^12.12.1",
-    "firebase-admin": "^13.0.0",
+    "firebase-admin": "^14.1.0",
     "geist": "^1.7.0",
     "libphonenumber-js": "^1.13.1",
     "lucide-react": "^1.8.0",
