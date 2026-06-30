@@ -2586,8 +2586,8 @@ async def test_consume_transcripts_interim_cancels_silence_watchdog(monkeypatch)
     from app.stt import TranscriptEvent
     from app.telephony.session import (
         _arm_silence_watchdog,
-        _cancel_silence_task,
         _CallState,
+        _cancel_silence_task,
         _consume_transcripts,
     )
     from tests.fakes.stt import FakeSTT
@@ -2722,8 +2722,8 @@ async def test_late_mark_echo_after_caller_speaks_does_not_arm():
     cancelled — a late turn-end mark echo must NOT arm a watchdog mid-turn."""
     from app.telephony.session import (
         TURN_END_MARK,
-        _cancel_pending_silence_arm,
         _CallState,
+        _cancel_pending_silence_arm,
         _handle_mark_echo,
         _schedule_silence_arm,
     )
