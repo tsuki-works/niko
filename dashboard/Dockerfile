@@ -13,7 +13,7 @@
 #   - NIKO_API_BASE_URL — the FastAPI Cloud Run service URL
 #   - PORT — Cloud Run sets this; Next.js standalone reads it
 
-ARG NODE_VERSION=20-alpine
+ARG NODE_VERSION=22-alpine
 
 # ---------- deps ----------
 FROM node:${NODE_VERSION} AS deps
