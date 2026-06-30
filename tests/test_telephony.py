@@ -2586,8 +2586,8 @@ async def test_consume_transcripts_interim_cancels_silence_watchdog(monkeypatch)
     from app.stt import TranscriptEvent
     from app.telephony.session import (
         _arm_silence_watchdog,
-        _cancel_silence_task,
         _CallState,
+        _cancel_silence_task,
         _consume_transcripts,
     )
     from tests.fakes.stt import FakeSTT
@@ -2643,8 +2643,7 @@ async def test_schedule_silence_arm_defers_until_mark_echo(monkeypatch):
     # A turn-end mark was sent to Twilio.
     sent = [c.args[0] for c in ws.send_json.call_args_list]
     assert any(
-        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK
-        for m in sent
+        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK for m in sent
     ), "a turn-end mark must be sent so Twilio can echo it back"
 
     # Twilio echoes the mark once the audio drained → now the watchdog arms.
@@ -2722,8 +2721,8 @@ async def test_late_mark_echo_after_caller_speaks_does_not_arm():
     cancelled — a late turn-end mark echo must NOT arm a watchdog mid-turn."""
     from app.telephony.session import (
         TURN_END_MARK,
-        _cancel_pending_silence_arm,
         _CallState,
+        _cancel_pending_silence_arm,
         _handle_mark_echo,
         _schedule_silence_arm,
     )
