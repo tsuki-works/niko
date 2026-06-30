@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { updateRestaurantAction } from '@/app/actions/update-restaurant';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { Restaurant } from '@/lib/schemas/restaurant';
@@ -18,8 +19,22 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
   const [fallbackPhone, setFallbackPhone] = useState(
     restaurant.fallback_phone ?? '',
   );
+  const [offersDelivery, setOffersDelivery] = useState(
+    restaurant.offers_delivery,
+  );
+  const [fallbackError, setFallbackError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  function handleFallbackChange(val: string) {
+    setFallbackPhone(val);
+    const trimmed = val.trim();
+    setFallbackError(
+      trimmed !== '' && !E164.test(trimmed)
+        ? 'Must be E.164 format (e.g. +15551234567)'
+        : null,
+    );
+  }
 
   function buildPatch() {
     const patch: Record<string, unknown> = {};
@@ -32,6 +47,9 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
     if (trimmedFallback !== restaurantFallback) {
       patch.fallback_phone = trimmedFallback === '' ? null : trimmedFallback;
     }
+    if (offersDelivery !== restaurant.offers_delivery) {
+      patch.offers_delivery = offersDelivery;
+    }
     return patch;
   }
 
@@ -41,7 +59,7 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
 
     const trimmedFallback = fallbackPhone.trim();
     if (trimmedFallback !== '' && !E164.test(trimmedFallback)) {
-      setError('Fallback number must be in E.164 format (e.g. +15551234567).');
+      // fallbackError already shown inline via handleFallbackChange; just block submit.
       return;
     }
 
@@ -100,10 +118,22 @@ export function RestaurantInfoForm({ restaurant }: { restaurant: Restaurant }) {
           id="fallback-phone"
           label="Fallback number"
           value={fallbackPhone}
-          onChange={setFallbackPhone}
+          onChange={handleFallbackChange}
           placeholder="+15551234567"
           helper="Niko transfers callers here when the AI hits a snag or the caller asks for a human. Leave blank to skip the transfer attempt and go straight to voicemail."
+          inlineError={fallbackError}
         />
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="offers-delivery"
+            checked={offersDelivery}
+            onCheckedChange={(checked) => setOffersDelivery(checked === true)}
+          />
+          <Label htmlFor="offers-delivery" className="text-sm text-foreground-muted cursor-pointer">
+            Accept delivery orders
+          </Label>
+        </div>
 
         {error ? (
           <p className="text-sm text-status-cancelled" role="alert">
@@ -128,6 +158,7 @@ function Field({
   onChange,
   placeholder,
   helper,
+  inlineError,
   readOnly,
 }: {
   id: string;
@@ -136,6 +167,7 @@ function Field({
   onChange?: (next: string) => void;
   placeholder?: string;
   helper?: string;
+  inlineError?: string | null;
   readOnly?: boolean;
 }) {
   return (
@@ -155,7 +187,11 @@ function Field({
             : undefined
         }
       />
-      {helper ? (
+      {inlineError ? (
+        <p className="text-sm text-status-cancelled" role="alert">
+          {inlineError}
+        </p>
+      ) : helper ? (
         <p className="text-sm text-foreground-subtle">{helper}</p>
       ) : null}
     </div>

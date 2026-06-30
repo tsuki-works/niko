@@ -66,4 +66,37 @@ describe('RestaurantInfoForm', () => {
     await screen.findByText(/E\.164/i);
     expect(updateRestaurantAction).not.toHaveBeenCalled();
   });
+
+  it('shows inline E.164 error while typing an invalid fallback number', async () => {
+    render(<RestaurantInfoForm restaurant={BASE} />);
+    const fallback = screen.getByLabelText(/fallback number/i);
+    fireEvent.change(fallback, { target: { value: 'bad' } });
+    await screen.findByText(/Must be E\.164 format/i);
+    expect(updateRestaurantAction).not.toHaveBeenCalled();
+  });
+
+  it('clears inline E.164 error when input becomes valid', async () => {
+    render(<RestaurantInfoForm restaurant={BASE} />);
+    const fallback = screen.getByLabelText(/fallback number/i);
+    fireEvent.change(fallback, { target: { value: 'bad' } });
+    await screen.findByText(/Must be E\.164 format/i);
+    fireEvent.change(fallback, { target: { value: '+15551234567' } });
+    await waitFor(() =>
+      expect(screen.queryByText(/Must be E\.164 format/i)).toBeNull(),
+    );
+  });
+
+  it('includes offers_delivery: false in patch when toggled off', async () => {
+    // BASE has offers_delivery: true — toggling the checkbox once → false
+    render(<RestaurantInfoForm restaurant={BASE} />);
+    const checkbox = screen.getByRole('checkbox', { name: /accept delivery orders/i });
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() =>
+      expect(updateRestaurantAction).toHaveBeenCalledWith(
+        expect.objectContaining({ offers_delivery: false }),
+      ),
+    );
+  });
 });

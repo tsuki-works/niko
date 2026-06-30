@@ -126,8 +126,7 @@ def test_patch_restaurant_404_when_doc_missing(client: TestClient):
 def test_patch_restaurant_validates_fallback_phone_format(client: TestClient):
     _wire_storage(_existing_doc())
 
-    # Loose validation: any non-empty E.164-like string is fine; "abc"
-    # rejected.
+    # E.164 format is enforced — non-conforming strings 422.
     resp = client.patch("/restaurants/me", json={"fallback_phone": "abc"})
     assert resp.status_code == 422
 
@@ -154,3 +153,41 @@ def test_patch_restaurant_rejects_empty_strings(client: TestClient):
     for field in ("name", "address", "display_phone"):
         resp = client.patch("/restaurants/me", json={field: ""})
         assert resp.status_code == 422, f"{field} empty should 422"
+
+
+def test_patch_restaurant_scoped_to_tenant_restaurant_id():
+    """PATCH /restaurants/me reads and writes only the authenticated tenant's
+    restaurant document — never another tenant's doc."""
+    tenant_a = Tenant(
+        uid="user-a",
+        email="owner@tenant-a.test",
+        restaurant_id="tenant-A",
+        role="owner",
+    )
+    app.dependency_overrides[current_tenant] = lambda: tenant_a
+
+    existing = {
+        "id": "tenant-A",
+        "name": "Tenant A Restaurant",
+        "display_phone": "+15550000001",
+        "twilio_phone": "+15550000002",
+        "address": "1 Tenant Ave",
+        "hours": "Mon-Sun 10-21",
+        "menu": {},
+    }
+    fs = _wire_storage(existing)
+
+    try:
+        resp = TestClient(app).patch("/restaurants/me", json={"name": "Updated"})
+    finally:
+        app.dependency_overrides.pop(current_tenant, None)
+        r_storage.set_client(None)
+        r_storage.clear_cache()
+
+    assert resp.status_code == 200
+
+    # Every document() call must reference "tenant-A" — never any other rid.
+    for call_args in fs.collection.return_value.document.call_args_list:
+        assert call_args.args[0] == "tenant-A", (
+            f"document() called with unexpected id: {call_args.args[0]!r}"
+        )
