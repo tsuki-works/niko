@@ -560,6 +560,20 @@ async def media_stream(websocket: WebSocket) -> None:
         # Auto-hangup: stop any pending grace-window timer; the call is
         # already ending so we don't need to fire the REST close (#78).
         _abort_pending_hangup(state)
+        # Let the chained init_call_session + record_event(kind="start")
+        # finish before teardown completes. A fast hangup (start
+        # immediately followed by stop) must not abandon the task
+        # mid-chain — otherwise init's parent-doc set() lands but the
+        # start event never does, and mark_call_ended below would write
+        # the call end before its start.
+        if state.session_init_task and not state.session_init_task.done():
+            try:
+                await state.session_init_task
+            except (asyncio.CancelledError, Exception):
+                logger.exception(
+                    "call_sessions: session init task failed call_sid=%s",
+                    state.call_sid,
+                )
         # Quiesce the transcript consumer FIRST so it can't spawn a new
         # state.llm_task from a late final transcript while we're cleaning
         # up the in-flight one. Closing the STT connection here also
