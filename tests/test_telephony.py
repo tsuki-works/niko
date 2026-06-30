@@ -2643,8 +2643,7 @@ async def test_schedule_silence_arm_defers_until_mark_echo(monkeypatch):
     # A turn-end mark was sent to Twilio.
     sent = [c.args[0] for c in ws.send_json.call_args_list]
     assert any(
-        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK
-        for m in sent
+        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK for m in sent
     ), "a turn-end mark must be sent so Twilio can echo it back"
 
     # Twilio echoes the mark once the audio drained → now the watchdog arms.

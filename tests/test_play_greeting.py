@@ -119,8 +119,7 @@ async def test_play_greeting_defers_silence_watchdog_to_mark_echo(state, fake_sp
     assert state.silence_arm_pending is True
     sent = [c.args[0] for c in ws.send_json.call_args_list]
     assert any(
-        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK
-        for m in sent
+        m.get("event") == "mark" and m.get("mark", {}).get("name") == TURN_END_MARK for m in sent
     )
 
     # Twilio echoes the greeting's turn-end mark → watchdog arms.
