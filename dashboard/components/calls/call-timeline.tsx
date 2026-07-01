@@ -280,36 +280,45 @@ function ConversationRow({
 }) {
   const { Icon, accent, label, body, copyText } = rendered;
 
-  return (
-    <li className="group flex items-start gap-3 border-b border-border-subtle py-4 last:border-b-0 hover:bg-surface-2/40">
-      <button
-        type="button"
-        onClick={canSeek ? onSeek : undefined}
-        disabled={!canSeek}
-        aria-label={
-          canSeek ? `Seek to ${label} at ${formatOffset(offsetSec)}` : undefined
-        }
+  const rowContent = (
+    <>
+      <div
         className={cn(
-          'flex flex-1 items-start gap-3 bg-transparent p-0 text-left',
-          canSeek &&
-            'cursor-pointer focus-visible:outline focus-visible:outline-brand-muted focus-visible:outline-offset-2',
+          'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
+          ACCENT_BG[accent],
         )}
       >
-        <div
+        <Icon className={cn('size-3.5', ACCENT_FG[accent])} aria-hidden />
+      </div>
+      <div className="flex flex-1 flex-col gap-1.5">
+        <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
+          <LocalTime date={ts} mode="absolute" /> · {label}
+        </p>
+        <div className="text-base leading-normal text-foreground">{body}</div>
+      </div>
+    </>
+  );
+
+  return (
+    <li className="group flex items-start gap-3 border-b border-border-subtle py-4 last:border-b-0 hover:bg-surface-2/40">
+      {canSeek ? (
+        <button
+          type="button"
+          onClick={onSeek}
+          aria-label={`Seek to ${label} at ${formatOffset(offsetSec)}`}
           className={cn(
-            'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full',
-            ACCENT_BG[accent],
+            'flex flex-1 items-start gap-3 bg-transparent p-0 text-left',
+            'cursor-pointer focus-visible:outline focus-visible:outline-brand-muted focus-visible:outline-offset-2',
           )}
         >
-          <Icon className={cn('size-3.5', ACCENT_FG[accent])} aria-hidden />
-        </div>
-        <div className="flex flex-1 flex-col gap-1.5">
-          <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">
-            <LocalTime date={ts} mode="absolute" /> · {label}
-          </p>
-          <div className="text-base leading-normal text-foreground">{body}</div>
-        </div>
-      </button>
+          {rowContent}
+        </button>
+      ) : (
+        // Non-seekable rows (e.g. calls with no recording) render a plain
+        // div so the transcript text stays selectable — a disabled
+        // <button> blocks text selection in most browsers (#249 review).
+        <div className="flex flex-1 items-start gap-3">{rowContent}</div>
+      )}
       {copyText ? (
         <Button
           type="button"

@@ -79,6 +79,15 @@ describe('CallTimelineView', () => {
     // Without a recording, the rows should not be buttons.
     expect(screen.queryByRole('button', { name: /Seek to caller/i })).not.toBeInTheDocument();
   });
+
+  it('keeps transcript text selectable on non-seekable rows (not in a disabled button)', () => {
+    const noRecording = { ...TIMELINE_BASE, recording_available: false };
+    render(<CallTimelineView timeline={noRecording} />);
+    // #249: a disabled <button> blocks text selection in most browsers, so
+    // non-seekable rows must render the transcript body in a plain element.
+    const callerText = screen.getByText(/Hi I want a pizza/);
+    expect(callerText.closest('button')).toBeNull();
+  });
 });
 
 describe('CallTimelineView voicemail + transfer events', () => {
