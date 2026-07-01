@@ -79,9 +79,27 @@ describe('CallTimelineView', () => {
     // Without a recording, the rows should not be buttons.
     expect(screen.queryByRole('button', { name: /Seek to caller/i })).not.toBeInTheDocument();
   });
+
+  it('keeps transcript text selectable on non-seekable rows (not in a disabled button)', () => {
+    const noRecording = { ...TIMELINE_BASE, recording_available: false };
+    render(<CallTimelineView timeline={noRecording} />);
+    // #249: a disabled <button> blocks text selection in most browsers, so
+    // non-seekable rows must render the transcript body in a plain element.
+    const callerText = screen.getByText(/Hi I want a pizza/);
+    expect(callerText.closest('button')).toBeNull();
+  });
 });
 
 describe('CallTimelineView voicemail + transfer events', () => {
+  // Transfer + voicemail are Tier 2 (telemetry) events, hidden by
+  // default. Each test flips the "Show technical events" switch on
+  // before asserting on the row content.
+  function showTelemetry() {
+    fireEvent.click(
+      screen.getByRole('switch', { name: /Show technical events/i }),
+    );
+  }
+
   it('renders a transfer_attempted event with the resolved status', () => {
     render(
       <CallTimelineView
@@ -99,6 +117,7 @@ describe('CallTimelineView voicemail + transfer events', () => {
         }}
       />,
     );
+    showTelemetry();
     expect(screen.getByText(/Transfer connected/i)).toBeInTheDocument();
     expect(screen.getByText(/\+15551234567/)).toBeInTheDocument();
   });
@@ -120,6 +139,7 @@ describe('CallTimelineView voicemail + transfer events', () => {
         }}
       />,
     );
+    showTelemetry();
     expect(screen.getByText(/18s/)).toBeInTheDocument();
     expect(screen.getByText(/Hi please call me back/)).toBeInTheDocument();
   });
@@ -141,6 +161,68 @@ describe('CallTimelineView voicemail + transfer events', () => {
         }}
       />,
     );
+    showTelemetry();
     expect(screen.getByText(/Transcript pending/i)).toBeInTheDocument();
+  });
+});
+
+describe('CallTimelineView Show technical events toggle', () => {
+  const MIXED_TIMELINE: CallTimeline = {
+    call_sid: 'CAtest',
+    recording_available: false,
+    events: [
+      {
+        timestamp: '2026-05-01T18:00:00Z',
+        kind: 'start',
+        text: '',
+        detail: {},
+      },
+      {
+        timestamp: '2026-05-01T18:00:05Z',
+        kind: 'transcript_final',
+        text: '',
+        detail: { text: 'Hello there' },
+      },
+      {
+        timestamp: '2026-05-01T18:00:08Z',
+        kind: 'agent_reply',
+        text: '',
+        detail: { text: 'How can I help?' },
+      },
+      {
+        timestamp: '2026-05-01T18:00:10Z',
+        kind: 'first_audio',
+        text: '',
+        detail: { latency_seconds: 0.6 },
+      },
+    ],
+  };
+
+  it('hides telemetry rows by default and shows the hidden count', () => {
+    render(<CallTimelineView timeline={MIXED_TIMELINE} />);
+    // Conversation rows are visible.
+    expect(screen.getByText(/Hello there/)).toBeInTheDocument();
+    expect(screen.getByText(/How can I help/)).toBeInTheDocument();
+    // Telemetry rows are not.
+    expect(
+      screen.queryByText(/Twilio media stream opened/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/600ms/)).not.toBeInTheDocument();
+    // Hidden-count parenthetical reflects telemetry events only
+    // (start + first_audio = 2).
+    expect(
+      screen.getByRole('switch', { name: /Show technical events \(2 hidden\)/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders telemetry rows inline when the switch is toggled on', () => {
+    render(<CallTimelineView timeline={MIXED_TIMELINE} />);
+    fireEvent.click(
+      screen.getByRole('switch', { name: /Show technical events/i }),
+    );
+    expect(screen.getByText(/Twilio media stream opened/i)).toBeInTheDocument();
+    expect(screen.getByText(/600ms/)).toBeInTheDocument();
+    // Hidden-count parenthetical disappears once the toggle is on.
+    expect(screen.queryByText(/\(2 hidden\)/)).not.toBeInTheDocument();
   });
 });
