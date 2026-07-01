@@ -141,7 +141,12 @@ function OrdersFeedInner({
 
       <FilterTabs active={statusFilter} counts={initialCounts} />
 
-      <OrdersTable orders={displayOrders} twilioPhone={twilioPhone} freshIds={freshIds} />
+      <OrdersTable
+        orders={displayOrders}
+        twilioPhone={twilioPhone}
+        statusFilter={statusFilter}
+        freshIds={freshIds}
+      />
 
       <div role="status" aria-live="polite" className="sr-only">
         {announcement}

@@ -104,3 +104,34 @@ describe('OrdersTable Time column', () => {
     expect(time).toHaveAttribute('data-anchor-iso', createdAt.toISOString());
   });
 });
+
+describe('OrdersTable empty states', () => {
+  it('renders the status-specific filter-empty state and keeps the table header', () => {
+    render(<OrdersTable orders={[]} twilioPhone="+14165551234" statusFilter="preparing" />);
+    // Headline is keyed off statusFilter via EMPTY_HEADLINE_BY_STATUS.
+    expect(screen.getByText('Nothing in the kitchen right now')).toBeInTheDocument();
+    expect(
+      screen.getByText('This view will update automatically as orders come in.'),
+    ).toBeInTheDocument();
+    // The table header stays mounted so the filter tabs don't jump.
+    expect(screen.getByText('Order')).toBeInTheDocument();
+    expect(screen.getByText('Status')).toBeInTheDocument();
+    // Not the "provisioning / nothing ever" all-tab surface.
+    expect(screen.queryByText('No orders yet')).not.toBeInTheDocument();
+  });
+
+  it('uses the headline that matches the active status filter', () => {
+    render(<OrdersTable orders={[]} twilioPhone="+14165551234" statusFilter="ready" />);
+    expect(screen.getByText('Nothing ready for pickup')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing in the kitchen right now')).not.toBeInTheDocument();
+  });
+
+  it('renders the all-tab provisioning empty state (no table) when there is no filter', () => {
+    render(<OrdersTable orders={[]} twilioPhone="+14165551234" />);
+    expect(screen.getByText('No orders yet')).toBeInTheDocument();
+    // The whole table (and its header) is replaced, and no filter-empty
+    // headline is shown.
+    expect(screen.queryByText('Order')).not.toBeInTheDocument();
+    expect(screen.queryByText('Nothing in the kitchen right now')).not.toBeInTheDocument();
+  });
+});

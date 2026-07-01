@@ -112,13 +112,16 @@ function CallDuration({ startedAt }: { startedAt: Date }) {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
-      <PhoneIncoming
-        className="size-8 text-foreground-faint"
-        aria-hidden
-      />
-      <p className="text-sm text-foreground-muted">
-        No callers on the line right now.
+    <div className="flex flex-col items-center justify-center py-8 text-center">
+      <div className="flex size-14 items-center justify-center rounded-[10px] bg-surface-2">
+        <PhoneIncoming
+          className="size-6 text-foreground-muted"
+          aria-hidden
+        />
+      </div>
+      <p className="mt-3 text-base text-foreground">No active calls</p>
+      <p className="mt-1.5 text-sm text-foreground-subtle">
+        Niko will surface live calls here as they come in.
       </p>
     </div>
   );
